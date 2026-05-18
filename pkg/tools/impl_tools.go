@@ -431,19 +431,113 @@ func (t *WebSearchTool) Execute(ctx context.Context, inputs map[string]string) (
 		return ToolResult{Success: false, Error: "query parameter is required"}, nil
 	}
 
-	searchURL := fmt.Sprintf("https://html.duckduckgo.com/html/?q=%s", strings.ReplaceAll(query, " ", "+"))
-	req, err := NewHTTPRequest(ctx, "GET", searchURL)
+	searchURL := fmt.Sprintf("https://html.duckduckgo.com/html/?q=%s", urlQueryEscape(query))
+	html, err := NewHTTPRequest(ctx, "GET", searchURL)
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("Search failed: %v", err)}, nil
+	}
+
+	results := parseDuckDuckGoResults(html)
+	if len(results) == 0 {
+		snippet := html
+		if len(snippet) > 500 {
+			snippet = snippet[:500] + "..."
+		}
+		results = append(results, map[string]string{"snippet": snippet})
 	}
 
 	return ToolResult{
 		Success: true,
 		Data: map[string]interface{}{
 			"query":   query,
-			"results": req,
+			"results": results,
+			"count":   len(results),
 		},
 	}, nil
+}
+
+func urlQueryEscape(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, " ", "+"), "&", "%26")
+}
+
+func parseDuckDuckGoResults(html string) []map[string]string {
+	var results []map[string]string
+
+	// DuckDuckGo HTML results use class="result" divs
+	resultMarkers := strings.Split(html, `<div class="result"`)
+	for i := 1; i < len(resultMarkers); i++ {
+		block := resultMarkers[i]
+		result := map[string]string{}
+
+		result["title"] = extractBetween(block, `result__a"`, `</a>`)
+		result["title"] = stripHTMLTags(result["title"])
+
+		result["url"] = extractBetween(block, `href="`, `"`)
+		if result["url"] != "" {
+			result["url"] = htmlUnescape(result["url"])
+		}
+
+		result["snippet"] = extractBetween(block, `class="result__snippet">`, `</`) + extractBetween(block, `class="result__snippet"`, `</`)
+		// try different snippet pattern
+		if result["snippet"] == "" {
+			result["snippet"] = extractBetween(block, `result__snippet">`, `</a>`)
+		}
+		result["snippet"] = stripHTMLTags(result["snippet"])
+
+		// Skip if completely empty
+		if result["title"] == "" && result["snippet"] == "" {
+			continue
+		}
+
+		results = append(results, result)
+		if len(results) >= 8 {
+			break
+		}
+	}
+
+	return results
+}
+
+func extractBetween(s, start, end string) string {
+	i := strings.Index(s, start)
+	if i < 0 {
+		return ""
+	}
+	s = s[i+len(start):]
+	j := strings.Index(s, end)
+	if j < 0 {
+		return ""
+	}
+	return s[:j]
+}
+
+func stripHTMLTags(s string) string {
+	var result strings.Builder
+	inTag := false
+	for _, r := range s {
+		if r == '<' {
+			inTag = true
+			continue
+		}
+		if r == '>' {
+			inTag = false
+			continue
+		}
+		if !inTag {
+			result.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(result.String())
+}
+
+func htmlUnescape(s string) string {
+	s = strings.ReplaceAll(s, "&amp;", "&")
+	s = strings.ReplaceAll(s, "&lt;", "<")
+	s = strings.ReplaceAll(s, "&gt;", ">")
+	s = strings.ReplaceAll(s, "&quot;", `"`)
+	s = strings.ReplaceAll(s, "&#x2F;", "/")
+	s = strings.ReplaceAll(s, "&#39;", "'")
+	return s
 }
 
 // ============================================================

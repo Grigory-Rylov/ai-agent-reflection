@@ -73,6 +73,8 @@ func setupTestAgent(t *testing.T) (*agentImpl, string) {
 	reg.Register(&tools.FileWriteTool{})
 	reg.Register(&tools.FileReadTool{})
 	reg.Register(&tools.CalcTool{})
+	reg.Register(&tools.WebFetchTool{})
+	reg.Register(&tools.WebSearchTool{})
 
 	config := Config{
 		LlamaServerURL: serverURL,
@@ -166,6 +168,77 @@ func TestLLMToolCall_file_write(t *testing.T) {
 		t.Logf("File was not created (may be ok if model chose different path): %v", err)
 	} else {
 		t.Logf("File content: %s", string(data))
+	}
+}
+
+// TestLLMToolCall_web_fetch проверяет web_fetch + ответ модели
+func TestLLMToolCall_web_fetch(t *testing.T) {
+	a, _ := setupTestAgent(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	response, err := a.ProcessMessage(ctx,
+		"Прочитай содержимое https://example.com используя web_fetch",
+		99905)
+	if err != nil {
+		t.Fatalf("ProcessMessage failed: %v", err)
+	}
+
+	if response == "" {
+		t.Error("Expected non-empty response")
+	}
+	t.Logf("Response length: %d", len(response))
+	if len(response) < 10 {
+		t.Errorf("Response too short: %q", response)
+	}
+}
+
+// TestLLMToolCall_github_project — точное воспроизведение сценария из лога
+// модель → web_fetch("https://github.com/JonForShort/android-tools/tree/master")
+// → tool result → модель должна ответить без 400 ошибки
+func TestLLMToolCall_github_project(t *testing.T) {
+	a, _ := setupTestAgent(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	response, err := a.ProcessMessage(ctx,
+		"можешь прочитать описание проекта https://github.com/JonForShort/android-tools/tree/master ?",
+		99906)
+	if err != nil {
+		t.Fatalf("ProcessMessage failed: %v", err)
+	}
+
+	if response == "" {
+		t.Error("Expected non-empty response")
+	}
+	t.Logf("Response length: %d", len(response))
+	if len(response) < 20 {
+		t.Errorf("Response too short or empty: %q", response)
+	}
+}
+
+// TestLLMToolCall_web_search проверяет поиск в интернете
+func TestLLMToolCall_web_search(t *testing.T) {
+	a, _ := setupTestAgent(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	response, err := a.ProcessMessage(ctx,
+		"Найди в интернете информацию про Go语言. Используй web_search.",
+		99907)
+	if err != nil {
+		t.Fatalf("ProcessMessage failed: %v", err)
+	}
+
+	if response == "" {
+		t.Error("Expected non-empty response")
+	}
+	t.Logf("Response length: %d", len(response))
+	if len(response) < 20 {
+		t.Errorf("Response too short: %q", response)
 	}
 }
 

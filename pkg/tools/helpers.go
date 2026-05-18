@@ -16,7 +16,9 @@ import (
 // HTTP Helper
 // ============================================================
 
-// NewHTTPRequest выполняет HTTP запрос и возвращает тело ответа
+const maxResponseBytes = 8192
+
+// NewHTTPRequest выполняет HTTP запрос и возвращает тело ответа (макс 8KB)
 func NewHTTPRequest(ctx context.Context, method, url string) (string, error) {
 	client := &http.Client{
 		Timeout: 30 * time.Second,
@@ -34,7 +36,8 @@ func NewHTTPRequest(ctx context.Context, method, url string) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	limited := io.LimitReader(resp.Body, maxResponseBytes)
+	body, err := io.ReadAll(limited)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
@@ -43,7 +46,12 @@ func NewHTTPRequest(ctx context.Context, method, url string) (string, error) {
 		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body[:min(len(body), 500)]))
 	}
 
-	return string(body), nil
+	result := string(body)
+	if resp.ContentLength > maxResponseBytes || len(body) >= maxResponseBytes {
+		result += "\n\n[TRUNCATED: response too large, showing first 8KB]"
+	}
+
+	return result, nil
 }
 
 func min(a, b int) int {

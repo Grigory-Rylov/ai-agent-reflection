@@ -312,40 +312,97 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	return responseText, nil
 }
 
+// buildToolCall converts parsed ToolCall to request format (arguments as object, not string)
+func buildToolCallForRequest(tc ToolCall) ToolCall {
+	argsStr := ToolCallArgumentsStr(tc)
+	if argsStr == "" {
+		return tc
+	}
+	var argsObj interface{}
+	if err := json.Unmarshal([]byte(argsStr), &argsObj); err != nil {
+		return tc
+	}
+	rawArgs, _ := json.Marshal(argsObj)
+	tc.Function.Arguments = rawArgs
+	return tc
+}
+
 // buildMessagesWithToolResults формирует массив сообщений с результатами инструментов
 // OpenAI требует: user → assistant(tool_calls) → tool(result) → assistant(ответ)
 func (a *agentImpl) buildMessagesWithToolResults(originalMessages []Message, toolCalls []ToolCall, toolResults []ToolCallResult) []Message {
 	messages := make([]Message, len(originalMessages))
 	copy(messages, originalMessages)
 
-	// Assistant message с tool_calls (обязательно для OpenAI API)
+	// Assistant message с tool_calls — arguments должны быть объектом, а не строкой
+	reqToolCalls := make([]ToolCall, len(toolCalls))
+	for i, tc := range toolCalls {
+		reqToolCalls[i] = buildToolCallForRequest(tc)
+	}
 	messages = append(messages, Message{
 		Role:      "assistant",
 		Content:   "",
-		ToolCalls: toolCalls,
+		ToolCalls: reqToolCalls,
 	})
 
 	// Результаты инструментов
 	for _, tr := range toolResults {
-		content := tr.Content
 		messages = append(messages, Message{
 			Role:    "tool",
-			Content: content,
+			Content: tr.Content,
 		})
 	}
 
 	return messages
 }
 
+// briefToolCall формирует краткое описание вызова инструмента (без содержимого файлов)
+func briefToolCall(toolName string, args map[string]string) string {
+	switch toolName {
+	case "file_read", "file_write", "file_list", "edit":
+		if path, ok := args["path"]; ok {
+			return fmt.Sprintf("%s(%q)", toolName, truncateStr(path, 80))
+		}
+	case "shell_execute":
+		if cmd, ok := args["command"]; ok {
+			return fmt.Sprintf("shell(%q)", truncateStr(cmd, 60))
+		}
+	case "web_fetch":
+		if url, ok := args["url"]; ok {
+			return fmt.Sprintf("web_fetch(%q)", truncateStr(url, 80))
+		}
+	case "web_search":
+		if q, ok := args["query"]; ok {
+			return fmt.Sprintf("web_search(%q)", truncateStr(q, 60))
+		}
+	case "search_code":
+		if p, ok := args["pattern"]; ok {
+			return fmt.Sprintf("search_code(%q)", truncateStr(p, 60))
+		}
+	case "glob":
+		if p, ok := args["pattern"]; ok {
+			return fmt.Sprintf("glob(%q)", truncateStr(p, 60))
+		}
+	case "calc":
+		if e, ok := args["expression"]; ok {
+			return fmt.Sprintf("calc(%q)", truncateStr(e, 60))
+		}
+	case "time_get":
+		return "time_get()"
+	}
+	return toolName
+}
+
+func truncateStr(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max]) + "..."
+}
+
 // executeTool выполняет инструмент с логированием и отправкой thinking
 func (a *agentImpl) executeTool(toolCall ToolCall, peerID int64) (ToolCallResult, error) {
 	toolName := ToolCallName(toolCall)
-	argsStr := ToolCallArgumentsStr(toolCall)
-
-	// Отправляем thinking о начале вызова
-	callMsg := fmt.Sprintf("[TOOL] Call: %s %s", toolName, argsStr)
-	fmt.Println(callMsg)
-	a.sendThinking(peerID, callMsg)
 
 	tool, ok := a.toolsRegistry.Get(toolName)
 	if !ok {
@@ -362,6 +419,10 @@ func (a *agentImpl) executeTool(toolCall ToolCall, peerID int64) (ToolCallResult
 		a.sendThinking(peerID, "[TOOL] Error: "+errMsg)
 		return a.createErrorResult(toolCall.ID, toolName, errMsg), err
 	}
+
+	brief := briefToolCall(toolName, args)
+	fmt.Printf("[TOOL] Call: %s\n", brief)
+	a.sendThinking(peerID, "[TOOL] Call: "+brief)
 
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
