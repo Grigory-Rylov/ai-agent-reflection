@@ -1,5 +1,6 @@
 # Build artifacts
 vk-gateway
+vk-gateway-restarter
 llama-client
 
 # Configuration files with secrets

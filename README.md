@@ -12,12 +12,26 @@ VK Bot API → Agent Gateway → llama-server (local LLM)
      Session  Tools   VK Client
 ```
 
+## Binaries
+
+| Binary | Description |
+|--------|-------------|
+| `vk-gateway` | Main AI agent with tools and LLM integration |
+| `vk-gateway-restarter` | Watchdog for remote updates via VK commands |
+
 ## Quick Start
 
 ```bash
+# Build both binaries
 go build -o vk-gateway ./cmd/vk-gateway
-# configure config.json with VK token and llama-server URL
+go build -o vk-gateway-restarter ./cmd/vk-gateway-restarter
+
+# Configure config.json with VK token
+# Run agent directly:
 ./vk-gateway
+
+# Or run via restarter (recommended for remote updates):
+./vk-gateway-restarter
 ```
 
 ## Configuration
@@ -47,12 +61,25 @@ Commands starting with `/` are handled by the bot and never sent to the model.
 ## Project Structure
 
 ```
-cmd/vk-gateway/        # Entry point
-pkg/agent/             # AI Agent: streaming, function calling
-pkg/agentloop/         # Conversation orchestration
-pkg/tools/             # 11 tool implementations
-pkg/vk/                # VK Bot API client + handler
-session/               # Session memory with persistence
-system_prompt.txt      # System prompt for the AI model
-config.json            # Configuration
+cmd/vk-gateway/              # Main AI agent entry point
+cmd/vk-gateway-restarter/    # Watchdog/restarter for remote updates
+pkg/agent/                   # AI Agent: streaming, function calling
+pkg/agentloop/               # Conversation orchestration
+pkg/tools/                   # 11 tool implementations
+pkg/vk/                      # VK Bot API client + handler
+session/                     # Session memory with persistence
+system_prompt.txt            # System prompt for the AI model
+config.json                  # Configuration
 ```
+
+## Restarter Commands
+
+These commands are handled by `vk-gateway-restarter` via VK:
+
+| Command | Description |
+|---------|-------------|
+| `/update` | Git pull, rebuild, restart agent |
+| `/b <branch>` | Force checkout branch, pull, rebuild, restart |
+| `/restart` | Restart agent without rebuild |
+| `/status` | Show agent status and current branch |
+| `/help` | Show command list |
