@@ -74,6 +74,14 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 		}
 	}
 
+	// XML fallback: проверяем responseText на наличие XML tool calls
+	if result, used, err := a.xmlFallback(ctx, responseText, messages, session); used {
+		if err != nil {
+			return FunctionCallResult{}, fmt.Errorf("xml fallback: %w", err)
+		}
+		return result, nil
+	}
+
 	if responseText == "" || a.isNonToolResponse(finishReason) {
 		// Fallback — если LLM не ответил текстом
 		if responseText == "" {
@@ -92,6 +100,106 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 		Success:  true,
 		Response: responseText,
 	}, nil
+}
+
+// xmlFallback проверяет responseText на наличие XML tool calls,
+// выполняет их и обрабатывает результаты
+func (a *agentImpl) xmlFallback(ctx context.Context, responseText string, messages []Message, session *session.Session) (FunctionCallResult, bool, error) {
+	parsed := ParseXMLToolCalls(responseText)
+	if len(parsed.ToolCalls) == 0 {
+		return FunctionCallResult{}, false, nil
+	}
+
+	toolCalls := convertXMLToolCalls(parsed.ToolCalls)
+
+	fmt.Printf("[TOOL] XML fallback: detected %d tool calls in response text\n", len(toolCalls))
+
+	result := a.executeAllTools(ctx, toolCalls, session.GetPeerID())
+	if len(result.ToolCalls) > 0 {
+		hasSuccess := false
+		for _, tr := range result.ToolCalls {
+			if !tr.IsError {
+				hasSuccess = true
+				break
+			}
+		}
+		if !hasSuccess {
+			fmt.Printf("[TOOL] XML fallback: all %d tool calls failed, skipping\n", len(toolCalls))
+			return FunctionCallResult{}, false, nil
+		}
+
+		finalResponse, err := a.processXMLToolResults(ctx, messages, parsed.Content, toolCalls, result.ToolCalls, session)
+		if err != nil {
+			return FunctionCallResult{}, true, fmt.Errorf("process xml tool results: %w", err)
+		}
+		return FunctionCallResult{Success: true, Response: finalResponse}, true, nil
+	}
+
+	return FunctionCallResult{}, false, nil
+}
+
+// processXMLToolResults отправляет результат выполнения XML инструментов обратно в AI
+func (a *agentImpl) processXMLToolResults(ctx context.Context, originalMessages []Message, cleanedContent string, toolCalls []ToolCall, toolResults []ToolCallResult, session *session.Session) (string, error) {
+	messages := make([]Message, len(originalMessages))
+	copy(messages, originalMessages)
+
+	// Assistant message: очищенный текст + tool_calls
+	reqToolCalls := make([]ToolCall, len(toolCalls))
+	for i, tc := range toolCalls {
+		reqToolCalls[i] = buildToolCallForRequest(tc)
+	}
+	messages = append(messages, Message{
+		Role:      "assistant",
+		Content:   cleanedContent,
+		ToolCalls: reqToolCalls,
+	})
+
+	// Результаты инструментов
+	for _, tr := range toolResults {
+		messages = append(messages, Message{
+			Role:    "tool",
+			Content: tr.Content,
+		})
+	}
+
+	streamConfig := StreamingConfig{
+		Model:       a.config.Model,
+		MaxTokens:   a.config.MaxTokens,
+		Temperature: a.config.Temperature,
+		Stream:      true,
+	}
+
+	chunkChan, err := a.streamingRequest(ctx, streamConfig, messages)
+	if err != nil {
+		return "", fmt.Errorf("streaming request for xml tool results: %w", err)
+	}
+
+	responseText, _ := a.collectStreamResponse(chunkChan)
+	if responseText == "" {
+		responseText = "Tools executed successfully."
+	}
+
+	session.AddAssistantMessage(responseText)
+	return responseText, nil
+}
+
+// convertXMLToolCalls конвертирует XMLToolCall в ToolCall для executeAllTools
+func convertXMLToolCalls(xmlCalls []XMLToolCall) []ToolCall {
+	toolCalls := make([]ToolCall, len(xmlCalls))
+	for i, xc := range xmlCalls {
+		argsJSON, _ := json.Marshal(xc.Args)
+		argsWrapped, _ := json.Marshal(string(argsJSON))
+		toolCalls[i] = ToolCall{
+			ID:    fmt.Sprintf("xml_call_%d", i),
+			Type:  "function",
+			Index: i,
+			Function: ToolCallFunction{
+				Name:      xc.Name,
+				Arguments: argsWrapped,
+			},
+		}
+	}
+	return toolCalls
 }
 
 // buildToolsStreamConfig создаёт конфигурацию для streaming с инструментами

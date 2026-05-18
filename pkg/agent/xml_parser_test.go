@@ -1,0 +1,554 @@
+package agent
+
+import (
+	"testing"
+)
+
+func eq(a, b XMLParseResult) bool {
+	if a.Content != b.Content {
+		return false
+	}
+	if len(a.ToolCalls) != len(b.ToolCalls) {
+		return false
+	}
+	for i, tc := range a.ToolCalls {
+		if tc.Name != b.ToolCalls[i].Name {
+			return false
+		}
+		if len(tc.Args) != len(b.ToolCalls[i].Args) {
+			return false
+		}
+		for k, v := range tc.Args {
+			if b.ToolCalls[i].Args[k] != v {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func assertParse(t *testing.T, input string, expected XMLParseResult) {
+	t.Helper()
+	result := ParseXMLToolCalls(input)
+	if !eq(result, expected) {
+		t.Errorf("ParseXMLToolCalls(%q) = %+v, want %+v", input, result, expected)
+	}
+}
+
+func TestParseXMLToolCalls_Empty(t *testing.T) {
+	assertParse(t, "", XMLParseResult{})
+}
+
+func TestParseXMLToolCalls_PlainText(t *testing.T) {
+	text := "Hello, world!"
+	assertParse(t, text, XMLParseResult{Content: text})
+}
+
+func TestParseXMLToolCalls_TimeGet(t *testing.T) {
+	input := `<tool_call>
+<function=time_get>
+</function>
+</tool_call>`
+	expected := XMLParseResult{
+		ToolCalls: []XMLToolCall{
+			{Name: "time_get", Args: map[string]string{}},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+func TestParseXMLToolCalls_FileWrite(t *testing.T) {
+	input := `<tool_call>
+<function=file_write>
+<parameter=content>Hello world</parameter>
+<parameter=path>/tmp/test.txt</parameter>
+</function>
+</tool_call>`
+	expected := XMLParseResult{
+		ToolCalls: []XMLToolCall{
+			{
+				Name: "file_write",
+				Args: map[string]string{
+					"content": "Hello world",
+					"path":    "/tmp/test.txt",
+				},
+			},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+func TestParseXMLToolCalls_TextBefore(t *testing.T) {
+	input := `Let me check the time.
+
+<tool_call>
+<function=time_get>
+</function>
+</tool_call>`
+	expected := XMLParseResult{
+		Content: "Let me check the time.\n\n",
+		ToolCalls: []XMLToolCall{
+			{Name: "time_get", Args: map[string]string{}},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+func TestParseXMLToolCalls_TextBeforeAndAfter(t *testing.T) {
+	input := `Let me check.
+
+<tool_call>
+<function=time_get>
+</function>
+</tool_call>
+
+Done!`
+	expected := XMLParseResult{
+		Content: "Let me check.\n\n\n\nDone!",
+		ToolCalls: []XMLToolCall{
+			{Name: "time_get", Args: map[string]string{}},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+func TestParseXMLToolCalls_MultipleTools(t *testing.T) {
+	input := `<tool_call>
+<function=time_get>
+</function>
+</tool_call>
+<tool_call>
+<function=calc>
+<parameter=expression>2 + 2</parameter>
+</function>
+</tool_call>`
+	expected := XMLParseResult{
+		Content: "\n",
+		ToolCalls: []XMLToolCall{
+			{Name: "time_get", Args: map[string]string{}},
+			{Name: "calc", Args: map[string]string{"expression": "2 + 2"}},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+func TestParseXMLToolCalls_MultipleToolsWithText(t *testing.T) {
+	input := `First, let me check time.
+
+<tool_call>
+<function=time_get>
+</function>
+</tool_call>
+
+Now a calculation:
+
+<tool_call>
+<function=calc>
+<parameter=expression>42 * 2</parameter>
+</function>
+</tool_call>
+
+Here is the result.`
+	expected := XMLParseResult{
+		Content: "First, let me check time.\n\n\n\nNow a calculation:\n\n\n\nHere is the result.",
+		ToolCalls: []XMLToolCall{
+			{Name: "time_get", Args: map[string]string{}},
+			{Name: "calc", Args: map[string]string{"expression": "42 * 2"}},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+func TestParseXMLToolCalls_MultilineParamValue(t *testing.T) {
+	input := `<tool_call>
+<function=file_write>
+<parameter=content>
+Hello world
+This is a multiline file.
+</parameter>
+<parameter=path>
+/tmp/test.txt
+</parameter>
+</function>
+</tool_call>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
+	}
+	tc := result.ToolCalls[0]
+	if tc.Name != "file_write" {
+		t.Errorf("expected name file_write, got %q", tc.Name)
+	}
+	if tc.Args["content"] != "Hello world\nThis is a multiline file." {
+		t.Errorf("expected multiline content, got %q", tc.Args["content"])
+	}
+	if tc.Args["path"] != "/tmp/test.txt" {
+		t.Errorf("expected /tmp/test.txt, got %q", tc.Args["path"])
+	}
+}
+
+func TestParseXMLToolCalls_ExtraWhitespace(t *testing.T) {
+	input := `  <tool_call>
+  <function=time_get>
+  </function>
+  </tool_call>  `
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].Name != "time_get" {
+		t.Errorf("expected time_get, got %q", result.ToolCalls[0].Name)
+	}
+}
+
+func TestParseXMLToolCalls_NoToolCallsJustTags(t *testing.T) {
+	input := `<some_random_tag>
+content
+</some_random_tag>`
+	expected := XMLParseResult{
+		Content: input,
+	}
+	assertParse(t, input, expected)
+}
+
+func TestParseXMLToolCalls_PartialToolCall(t *testing.T) {
+	input := `<tool_call>
+<function=time_get`
+	// Malformed — no closing tags, should return content as-is
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 0 {
+		t.Errorf("expected 0 tool calls, got %d", len(result.ToolCalls))
+	}
+	if result.Content != input {
+		t.Errorf("expected content %q, got %q", input, result.Content)
+	}
+}
+
+func TestParseXMLToolCalls_MissingCloseToolCall(t *testing.T) {
+	input := `<tool_call>
+<function=time_get>
+</function>`
+	// Missing </tool_call> — should flush all content
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 0 {
+		t.Errorf("expected 0 tool calls, got %d", len(result.ToolCalls))
+	}
+	if result.Content != input {
+		t.Errorf("expected content %q, got %q", input, result.Content)
+	}
+}
+
+func TestParseXMLToolCalls_TextBetweenParams(t *testing.T) {
+	// If there's text between <parameter> and </parameter> that looks like XML
+	input := `<tool_call>
+<function=file_write>
+<parameter=content>Hello <world> text</parameter>
+<parameter=path>/tmp/test.txt</parameter>
+</function>
+</tool_call>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
+	}
+	tc := result.ToolCalls[0]
+	if tc.Args["content"] != "Hello <world> text" {
+		t.Errorf("expected 'Hello <world> text', got %q", tc.Args["content"])
+	}
+}
+
+func TestParseXMLToolCalls_EmptyParamValue(t *testing.T) {
+	input := `<tool_call>
+<function=file_write>
+<parameter=content></parameter>
+<parameter=path>/tmp/test.txt</parameter>
+</function>
+</tool_call>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
+	}
+	tc := result.ToolCalls[0]
+	if tc.Args["content"] != "" {
+		t.Errorf("expected empty content, got %q", tc.Args["content"])
+	}
+}
+
+func TestParseXMLToolCalls_OnlyToolCallNoContent(t *testing.T) {
+	input := `<tool_call>
+<function=time_get>
+</function>
+</tool_call>`
+	expected := XMLParseResult{
+		ToolCalls: []XMLToolCall{
+			{Name: "time_get", Args: map[string]string{}},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+func TestParseXMLToolCalls_WebFetch(t *testing.T) {
+	input := `<tool_call>
+<function=web_fetch>
+<parameter=method>GET</parameter>
+<parameter=url>https://example.com</parameter>
+</function>
+</tool_call>`
+	expected := XMLParseResult{
+		ToolCalls: []XMLToolCall{
+			{
+				Name: "web_fetch",
+				Args: map[string]string{
+					"method": "GET",
+					"url":    "https://example.com",
+				},
+			},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+func TestParseXMLToolCalls_ShellExecute(t *testing.T) {
+	input := `<tool_call>
+<function=shell_execute>
+<parameter=command>ls -la</parameter>
+<parameter=timeout>10</parameter>
+</function>
+</tool_call>`
+	expected := XMLParseResult{
+		ToolCalls: []XMLToolCall{
+			{
+				Name: "shell_execute",
+				Args: map[string]string{
+					"command": "ls -la",
+					"timeout": "10",
+				},
+			},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+func TestParseXMLToolCalls_MixedContent(t *testing.T) {
+	input := `I'll help you with that.
+
+<tool_call>
+<function=web_search>
+<parameter=query>Go programming language</parameter>
+</function>
+</tool_call>
+
+Let me also check the time.
+
+<tool_call>
+<function=time_get>
+</function>
+</tool_call>
+
+Here are the results.`
+	expected := XMLParseResult{
+		Content: "I'll help you with that.\n\n\n\nLet me also check the time.\n\n\n\nHere are the results.",
+		ToolCalls: []XMLToolCall{
+			{
+				Name: "web_search",
+				Args: map[string]string{"query": "Go programming language"},
+			},
+			{Name: "time_get", Args: map[string]string{}},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+func TestParseXMLToolCalls_GlobTool(t *testing.T) {
+	input := `<tool_call>
+<function=glob>
+<parameter=pattern>**/*.go</parameter>
+<parameter=path>./src</parameter>
+</function>
+</tool_call>`
+	expected := XMLParseResult{
+		ToolCalls: []XMLToolCall{
+			{
+				Name: "glob",
+				Args: map[string]string{
+					"pattern": "**/*.go",
+					"path":    "./src",
+				},
+			},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+func TestParseXMLToolCalls_GrepTool(t *testing.T) {
+	input := `<tool_call>
+<function=search_code>
+<parameter=pattern>func main</parameter>
+<parameter=include>*.go</parameter>
+</function>
+</tool_call>`
+	expected := XMLParseResult{
+		ToolCalls: []XMLToolCall{
+			{
+				Name: "search_code",
+				Args: map[string]string{
+					"pattern": "func main",
+					"include": "*.go",
+				},
+			},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+func TestParseXMLToolCalls_EditTool(t *testing.T) {
+	input := `<tool_call>
+<function=edit>
+<parameter=path>/tmp/file.txt</parameter>
+<parameter=old_string>foo</parameter>
+<parameter=new_string>bar</parameter>
+</function>
+</tool_call>`
+	expected := XMLParseResult{
+		ToolCalls: []XMLToolCall{
+			{
+				Name: "edit",
+				Args: map[string]string{
+					"path":       "/tmp/file.txt",
+					"old_string": "foo",
+					"new_string": "bar",
+				},
+			},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+func TestParseXMLToolCalls_FileList(t *testing.T) {
+	input := `<tool_call>
+<function=file_list>
+<parameter=path>/tmp</parameter>
+</function>
+</tool_call>`
+	expected := XMLParseResult{
+		ToolCalls: []XMLToolCall{
+			{
+				Name: "file_list",
+				Args: map[string]string{"path": "/tmp"},
+			},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+func TestParseXMLToolCalls_FileRead(t *testing.T) {
+	input := `<tool_call>
+<function=file_read>
+<parameter=path>/tmp/test.txt</parameter>
+</function>
+</tool_call>`
+	expected := XMLParseResult{
+		ToolCalls: []XMLToolCall{
+			{
+				Name: "file_read",
+				Args: map[string]string{"path": "/tmp/test.txt"},
+			},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+func TestParseXMLToolCalls_ThreeToolCalls(t *testing.T) {
+	input := `<tool_call>
+<function=time_get>
+</function>
+</tool_call>
+<tool_call>
+<function=calc>
+<parameter=expression>1+1</parameter>
+</function>
+</tool_call>
+<tool_call>
+<function=file_write>
+<parameter=content>test</parameter>
+<parameter=path>/tmp/t.txt</parameter>
+</function>
+</tool_call>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 3 {
+		t.Fatalf("expected 3 tool calls, got %d", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].Name != "time_get" {
+		t.Errorf("expected time_get, got %q", result.ToolCalls[0].Name)
+	}
+	if result.ToolCalls[1].Name != "calc" {
+		t.Errorf("expected calc, got %q", result.ToolCalls[1].Name)
+	}
+	if result.ToolCalls[2].Name != "file_write" {
+		t.Errorf("expected file_write, got %q", result.ToolCalls[2].Name)
+	}
+}
+
+func TestParseXMLToolCalls_ParamValueWithSpecialChars(t *testing.T) {
+	input := `<tool_call>
+<function=web_search>
+<parameter=query>Go & Rust: сравнение языков</parameter>
+</function>
+</tool_call>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
+	}
+	tc := result.ToolCalls[0]
+	if tc.Args["query"] != "Go & Rust: сравнение языков" {
+		t.Errorf("expected query with special chars, got %q", tc.Args["query"])
+	}
+}
+
+func TestParseXMLToolCalls_NestedAngleBracketsInContent(t *testing.T) {
+	input := `<tool_call>
+<function=file_write>
+<parameter=content>if x < 10 && y > 20 { return }</parameter>
+<parameter=path>/tmp/code.go</parameter>
+</function>
+</tool_call>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
+	}
+	tc := result.ToolCalls[0]
+	expected := `if x < 10 && y > 20 { return }`
+	if tc.Args["content"] != expected {
+		t.Errorf("expected %q, got %q", expected, tc.Args["content"])
+	}
+}
+
+func TestParseXMLToolCalls_XmlInParamValue(t *testing.T) {
+	input := `<tool_call>
+<function=file_write>
+<parameter=content><note><to>Tove</to></note></parameter>
+<parameter=path>/tmp/note.xml</parameter>
+</function>
+</tool_call>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
+	}
+	tc := result.ToolCalls[0]
+	expected := `<note><to>Tove</to></note>`
+	if tc.Args["content"] != expected {
+		t.Errorf("expected %q, got %q", expected, tc.Args["content"])
+	}
+}
+
+func TestParseXMLToolCalls_ExtraSpacesInTags(t *testing.T) {
+	input := `<tool_call >
+<function = time_get>
+</function >
+</tool_call >`
+	expected := XMLParseResult{
+		ToolCalls: []XMLToolCall{
+			{Name: "time_get", Args: map[string]string{}},
+		},
+	}
+	assertParse(t, input, expected)
+}

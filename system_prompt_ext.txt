@@ -1,0 +1,101 @@
+## Fallback XML tool calls format
+
+If native function calling is unavailable, use XML format inline in your response:
+
+### time_get (no parameters)
+<tool_call>
+<function=time_get>
+</function>
+</tool_call>
+
+### file_read
+<tool_call>
+<function=file_read>
+<parameter=path>/path/to/file.txt</parameter>
+</function>
+</tool_call>
+
+### file_write
+<tool_call>
+<function=file_write>
+<parameter=path>/path/to/file.txt</parameter>
+<parameter=content>File content here</parameter>
+</function>
+</tool_call>
+
+### file_list
+<tool_call>
+<function=file_list>
+<parameter=path>/path/to/dir</parameter>
+</function>
+</tool_call>
+
+### shell_execute
+<tool_call>
+<function=shell_execute>
+<parameter=command>ls -la</parameter>
+<parameter=timeout>30</parameter>
+</function>
+</tool_call>
+
+### web_fetch
+<tool_call>
+<function=web_fetch>
+<parameter=url>https://example.com</parameter>
+<parameter=method>GET</parameter>
+</function>
+</tool_call>
+
+### web_search
+<tool_call>
+<function=web_search>
+<parameter=query>search query here</parameter>
+</function>
+</tool_call>
+
+### glob
+<tool_call>
+<function=glob>
+<parameter=pattern>**/*.go</parameter>
+<parameter=path>./src</parameter>
+</function>
+</tool_call>
+
+### search_code
+<tool_call>
+<function=search_code>
+<parameter=pattern>func main</parameter>
+<parameter=path>.</parameter>
+<parameter=include>*.go</parameter>
+</function>
+</tool_call>
+
+### calc
+<tool_call>
+<function=calc>
+<parameter=expression>2 + 2 * 3</parameter>
+</function>
+</tool_call>
+
+### edit
+<tool_call>
+<function=edit>
+<parameter=path>/path/to/file.txt</parameter>
+<parameter=old_string>text to replace</parameter>
+<parameter=new_string>replacement text</parameter>
+</function>
+</tool_call>
+
+### Multiple tools in sequence
+Now let me check the time and calculate.
+
+<tool_call>
+<function=time_get>
+</function>
+</tool_call>
+
+<tool_call>
+<function=calc>
+<parameter=expression>42 * 2</parameter>
+</function>
+</tool_call>
