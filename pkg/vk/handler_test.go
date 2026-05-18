@@ -32,6 +32,7 @@ func (m *mockAgentLoop) Stop()                               {}
 func (m *mockAgentLoop) ResetSession(peerID int64)           {}
 func (m *mockAgentLoop) GetSession(peerID int64) *session.Session { return nil }
 func (m *mockAgentLoop) SetThinkingCallback(cb func(peerID int64, content string) error) {}
+func (m *mockAgentLoop) GetContextStats(peerID int64) (int, int, error) { return 0, 0, nil }
 
 // ============================================================
 // Тесты обработки команд

@@ -41,6 +41,9 @@ type AgentLoop interface {
 
 	// SetThinkingCallback устанавливает callback для отправки thinking сообщений
 	SetThinkingCallback(cb func(peerID int64, content string) error)
+
+	// GetContextStats возвращает статистику контекста: символы, токены
+	GetContextStats(peerID int64) (charCount int, tokenCount int, err error)
 }
 
 // ============================================================
@@ -54,6 +57,7 @@ type agentLoop struct {
 	vk               VKClient
 	registry         ToolRegistry
 	contextMgr       *compress.ContextManager
+	tokenizer        tokenizers.Tokenizer
 	dispatcher       *EventDispatcher
 	stopCh           chan struct{}
 	isRunning        bool
@@ -80,10 +84,24 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 		l = NewDefaultLogger()
 	}
 
+	// Инициализируем токенайзер (всегда)
+	tokenizer := tokenizers.NewLlamaServerTokenizer(config.LlamaServerURL, config.Model, config.MaxTokens)
+
 	// Инициализируем ContextManager если включено сжатие
 	var contextMgr *compress.ContextManager
 	if config.EnableCompression {
-		contextMgr = initContextManager(config.LlamaServerURL, config.Model, config.MaxTokens, config.Temperature, config.CompressionTokenThreshold, config.CompressionPercentageThreshold)
+		compressor := compress.NewLLMCompressor(config.LlamaServerURL, config.Model, config.Temperature)
+		if config.CompressionTokenThreshold <= 0 {
+			config.CompressionTokenThreshold = 6000
+		}
+		if config.CompressionPercentageThreshold <= 0 {
+			config.CompressionPercentageThreshold = 0.75
+		}
+		trigger := compress.CompressionTrigger{
+			TokenThreshold:      config.CompressionTokenThreshold,
+			PercentageThreshold: config.CompressionPercentageThreshold,
+		}
+		contextMgr = compress.NewContextManager(compressor, tokenizer, trigger)
 	}
 
 	return &agentLoop{
@@ -91,24 +109,39 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 		vk:         vk,
 		registry:   registry,
 		contextMgr: contextMgr,
+		tokenizer:  tokenizer,
 		stopCh:     make(chan struct{}),
 		dispatcher: NewEventDispatcher(),
 		log:        l,
 	}, nil
 }
 
-// initContextManager инициализирует менеджер контекста для сжатия
-func initContextManager(serverURL, model string, maxTokens int, temperature float64, threshold int, percentage float64) *compress.ContextManager {
-	compressor := compress.NewLLMCompressor(serverURL, model, temperature)
-	tokenizer := tokenizers.NewLlamaServerTokenizer(serverURL, model, maxTokens)
-	if percentage <= 0 {
-		percentage = 0.75
+// GetContextStats возвращает статистику контекста для указанного peer
+func (al *agentLoop) GetContextStats(peerID int64) (charCount int, tokenCount int, err error) {
+	s := al.GetSession(peerID)
+	if s == nil {
+		return 0, 0, fmt.Errorf("session not found for peer %d", peerID)
 	}
-	trigger := compress.CompressionTrigger{
-		TokenThreshold:      threshold,
-		PercentageThreshold: percentage,
+
+	history := s.GetHistory()
+	var sb strings.Builder
+	for _, msg := range history {
+		sb.WriteString(string(msg.Role))
+		sb.WriteString(": ")
+		sb.WriteString(msg.Content)
+		sb.WriteString("\n")
 	}
-	return compress.NewContextManager(compressor, tokenizer, trigger)
+	text := sb.String()
+	charCount = len([]rune(text))
+
+	if al.tokenizer != nil {
+		tokenCount, err = al.tokenizer.CountTokens(text)
+		if err != nil {
+			tokenCount = 0
+		}
+	}
+
+	return charCount, tokenCount, nil
 }
 
 // ProcessMessage — алиас для ProcessPrompt (совместимость с agent.Agent)

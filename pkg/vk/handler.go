@@ -150,15 +150,20 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 			"/reset - Очистить историю диалога\n" +
 			"/newsession [path] - Сбросить сессию и сменить рабочую директорию\n" +
 			"/help - Показать эту справку\n" +
-			"/status - Показать статус агента"
+			"/status - Показать статус агента (сообщения, символы, токены)"
 
 	case "/status":
 		s := h.getSession(peerID)
 		status := "AI Agent активен и готов к работе."
 		if s != nil {
 			status += "\nPeer ID: " + fmt.Sprintf("%d", peerID) +
-				"\nИстория: " + fmt.Sprintf("%d", s.HistoryLength()) + " сообщений" +
+				"\nСообщений: " + fmt.Sprintf("%d", s.HistoryLength()) +
 				"\nРабочая директория: " + s.GetWorkingDir()
+		}
+		chars, tokens, err := h.aiAgent.GetContextStats(peerID)
+		if err == nil {
+			status += "\nСимволов в контексте: " + fmt.Sprintf("%d", chars) +
+				"\nТокенов в контексте: " + fmt.Sprintf("%d", tokens)
 		}
 		return status
 
