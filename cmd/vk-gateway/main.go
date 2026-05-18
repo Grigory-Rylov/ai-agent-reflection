@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"os"
 	"os/signal"
 	"strings"
@@ -113,6 +114,15 @@ func main() {
 		log.InfoLog("Shutting down...")
 		cancel()
 	}()
+
+	// Отправляем статус о запуске в peer_id
+	if config.PeerID > 0 {
+		startMsg := fmt.Sprintf("🤖 AI Agent запущен и готов к работе.\nРабочая директория: %s\nДоступно инструментов: %d",
+			tools.WorkingDir, len(toolRegistry.GetAll()))
+		if _, err := vkClient.SendMessage(config.PeerID, startMsg); err != nil {
+			log.WarnLogf("Failed to send startup message: %v", err)
+		}
+	}
 
 	// Запускаем Bot Handler
 	log.InfoLog("Starting VK Bot Handler...")

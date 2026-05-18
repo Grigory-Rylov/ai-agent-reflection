@@ -318,12 +318,14 @@ func (h *BotHandler) runLongPoll(ctx context.Context, server, key string, ts int
 			h.cleanupInactiveSessions()
 
 			// Получаем обновления (ждём до 25 секунд на сервере)
-			messages, newTs, err := h.vkClient.CheckUpdates(server, key, ts)
+			messages, newTs, err := h.vkClient.CheckUpdates(ctx, server, key, ts)
 			if err != nil {
-				// Проверяем, нужно ли переподключиться
+				// Проверяем отмену контекста (Ctrl+C)
+				if ctx.Err() != nil {
+					return nil
+				}
 				errStr := err.Error()
 				if strings.Contains(errStr, "long poll failed") {
-					// Ключ истёк или история устарела — нужно переподключение
 					return err
 				}
 				// Другие ошибки — короткая пауза и повтор

@@ -2,6 +2,7 @@ package vk
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -191,12 +192,15 @@ func (c *BotClient) GetLongPollServer() (string, string, int64, error) {
 }
 
 // CheckUpdates проверяет обновления через VK Long Poll API (версия 2.0)
-func (c *BotClient) CheckUpdates(server, key string, ts int64) ([]VKMessage, int64, error) {
-	// Формируем URL для long poll (без токена!)
+func (c *BotClient) CheckUpdates(ctx context.Context, server, key string, ts int64) ([]VKMessage, int64, error) {
 	lpURL := fmt.Sprintf("https://%s?act=a_check&key=%s&ts=%d&wait=25&mode=74&version=3",
 		server, key, ts)
 
-	resp, err := c.httpClient.Get(lpURL)
+	req, err := http.NewRequestWithContext(ctx, "GET", lpURL, nil)
+	if err != nil {
+		return nil, ts, fmt.Errorf("create request: %w", err)
+	}
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, ts, fmt.Errorf("long poll request failed: %w", err)
 	}

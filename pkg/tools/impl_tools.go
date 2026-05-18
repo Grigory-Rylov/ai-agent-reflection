@@ -387,6 +387,22 @@ func (t *WebFetchTool) Execute(ctx context.Context, inputs map[string]string) (T
 		method = m
 	}
 
+	// Для GitHub URL пытаемся получить raw-контент
+	fetchURL := githubToRawURL(urlStr)
+	if fetchURL != urlStr {
+		req, err := NewHTTPRequest(ctx, "GET", fetchURL)
+		if err == nil {
+			return ToolResult{
+				Success: true,
+				Data: map[string]interface{}{
+					"url":     fetchURL,
+					"source":  urlStr,
+					"content": req,
+				},
+			}, nil
+		}
+	}
+
 	req, err := NewHTTPRequest(ctx, method, urlStr)
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("Failed to create request: %v", err)}, nil
@@ -399,6 +415,50 @@ func (t *WebFetchTool) Execute(ctx context.Context, inputs map[string]string) (T
 			"content": req,
 		},
 	}, nil
+}
+
+// githubToRawURL конвертирует github.com URL в raw.githubusercontent.com
+// https://github.com/user/repo → https://raw.githubusercontent.com/user/repo/master/README.md
+// https://github.com/user/repo/tree/master → https://raw.githubusercontent.com/user/repo/master/README.md
+// https://github.com/user/repo/blob/master/path/file.md → https://raw.githubusercontent.com/user/repo/master/path/file.md
+func githubToRawURL(url string) string {
+	if !strings.Contains(url, "github.com/") {
+		return url
+	}
+
+	// Убираем протокол и домен
+	url = strings.TrimPrefix(url, "https://")
+	url = strings.TrimPrefix(url, "http://")
+	url = strings.TrimPrefix(url, "github.com/")
+
+	parts := strings.Split(url, "/")
+	if len(parts) < 2 {
+		return url
+	}
+
+	user := parts[0]
+	repo := parts[1]
+	repo = strings.TrimSuffix(repo, ".git")
+
+	if len(parts) == 2 {
+		// Просто /user/repo → /master/README.md
+		return fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/master/README.md", user, repo)
+	}
+
+	// /user/repo/tree/branch  или /user/repo/blob/branch/path
+	branch := "master"
+	path := "README.md"
+	if len(parts) >= 4 {
+		branch = parts[3]
+		if len(parts) > 4 {
+			path = strings.Join(parts[4:], "/")
+		}
+	}
+	if parts[2] == "tree" || parts[2] == "blob" {
+		return fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s", user, repo, branch, path)
+	}
+
+	return url
 }
 
 // ============================================================

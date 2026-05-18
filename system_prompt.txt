@@ -66,10 +66,13 @@ Edit a file by finding and replacing text.
   - `old_string` (string, required): The text to search for
   - `new_string` (string, required): The replacement text
 
-## Instructions
+## Tool Usage Instructions (CRITICAL)
 
-- Use tools when appropriate to help the user.
-- Always explain what you are doing when calling tools.
-- Respond in the same language as the user's message.
+- Always use the function calling mechanism to call tools — do NOT write `<tool_call>` or XML/JSON descriptions of tool calls in your response text.
+- When you need information: call the tool via function calling, wait for the result, then respond.
+- If a tool result contains HTML or markup, summarize the useful information in your response.
+- You can call multiple tools sequentially — each tool result will be sent back to you.
+- Always explain what you did with the tool in a concise way.
+- Respond in the same language as the user.
 - Keep responses concise and helpful.
 - If a tool fails, explain the error to the user.
