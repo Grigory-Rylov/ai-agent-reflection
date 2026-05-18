@@ -2,13 +2,16 @@ package agentloop
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
 	"github.com/opencode/llama-client/pkg/agent"
 	"github.com/opencode/llama-client/pkg/compress"
 	"github.com/opencode/llama-client/pkg/tokenizers"
+	"github.com/opencode/llama-client/pkg/tools"
 	"github.com/opencode/llama-client/session"
 )
 
@@ -21,6 +24,9 @@ type AgentLoop interface {
 	// ProcessPrompt обрабатывает промпт пользователя и возвращает ответ AI
 	ProcessPrompt(ctx context.Context, prompt string, peerID int64) (string, error)
 
+	// ProcessMessage — алиас для ProcessPrompt (совместимость с agent.Agent)
+	ProcessMessage(ctx context.Context, prompt string, peerID int64) (string, error)
+
 	// Start запускает цикл агента (для долгосрочных сценариев)
 	Start(ctx context.Context)
 
@@ -32,6 +38,9 @@ type AgentLoop interface {
 
 	// GetSession возвращает сессию пользователя
 	GetSession(peerID int64) *session.Session
+
+	// SetThinkingCallback устанавливает callback для отправки thinking сообщений
+	SetThinkingCallback(cb func(peerID int64, content string) error)
 }
 
 // ============================================================
@@ -40,18 +49,19 @@ type AgentLoop interface {
 
 // agentLoop — основная реализация цикла агента
 type agentLoop struct {
-	config     LoopConfig
-	sessionM   sync.Map // peerID -> *session.Session
-	vk         VKClient
-	registry   ToolRegistry
-	contextMgr *compress.ContextManager
-	dispatcher *EventDispatcher
-	stopCh     chan struct{}
-	isRunning  bool
-	mu         sync.Mutex
-	log        Logger
-	aiHistory  []string // История ответов AI для loop detection
-	historyMu  sync.Mutex
+	config           LoopConfig
+	sessionM         sync.Map // peerID -> *session.Session
+	vk               VKClient
+	registry         ToolRegistry
+	contextMgr       *compress.ContextManager
+	dispatcher       *EventDispatcher
+	stopCh           chan struct{}
+	isRunning        bool
+	mu               sync.Mutex
+	log              Logger
+	aiHistory        []string // История ответов AI для loop detection
+	historyMu        sync.Mutex
+	thinkingCallback func(peerID int64, content string) error
 }
 
 // NewAgentLoop создаёт новый цикл агента
@@ -73,7 +83,7 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 	// Инициализируем ContextManager если включено сжатие
 	var contextMgr *compress.ContextManager
 	if config.EnableCompression {
-		contextMgr = initContextManager(config.LlamaServerURL, config.Model, config.MaxTokens, config.Temperature, config.CompressionTokenThreshold)
+		contextMgr = initContextManager(config.LlamaServerURL, config.Model, config.MaxTokens, config.Temperature, config.CompressionTokenThreshold, config.CompressionPercentageThreshold)
 	}
 
 	return &agentLoop{
@@ -88,14 +98,22 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 }
 
 // initContextManager инициализирует менеджер контекста для сжатия
-func initContextManager(serverURL, model string, maxTokens int, temperature float64, threshold int) *compress.ContextManager {
+func initContextManager(serverURL, model string, maxTokens int, temperature float64, threshold int, percentage float64) *compress.ContextManager {
 	compressor := compress.NewLLMCompressor(serverURL, model, temperature)
 	tokenizer := tokenizers.NewLlamaServerTokenizer(serverURL, model, maxTokens)
+	if percentage <= 0 {
+		percentage = 0.75
+	}
 	trigger := compress.CompressionTrigger{
 		TokenThreshold:      threshold,
-		PercentageThreshold: 0.75,
+		PercentageThreshold: percentage,
 	}
 	return compress.NewContextManager(compressor, tokenizer, trigger)
+}
+
+// ProcessMessage — алиас для ProcessPrompt (совместимость с agent.Agent)
+func (al *agentLoop) ProcessMessage(ctx context.Context, prompt string, peerID int64) (string, error) {
+	return al.ProcessPrompt(ctx, prompt, peerID)
 }
 
 // ============================================================
@@ -127,7 +145,7 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 	messages := al.buildAPIMessages(sess)
 
 	// 7. Отправляем запрос в LLM
-	response, err := al.sendToLLM(ctx, messages, sess, peerID)
+	response, err := al.sendToLLM(ctx, messages, sess, peerID, prompt)
 	if err != nil {
 		if al.log != nil {
 			al.log.ErrorLogf("LLM request failed: %v", err)
@@ -155,17 +173,28 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 
 // sendThinking отправляет thinking сообщение в thinking_peer_id
 func (al *agentLoop) sendThinking(peerID int64, content string) {
-	if !al.config.EnableThinking || al.config.ThinkingPeerID <= 0 || al.vk == nil {
+	if !al.config.EnableThinking || al.config.ThinkingPeerID <= 0 {
 		return
 	}
 
-	// Отправляем thinking сообщение в thinking_peer_id
-	_, err := al.vk.SendThinking(al.config.ThinkingPeerID, content)
-	if err != nil {
-		if al.log != nil {
-			al.log.ErrorLogf("Failed to send thinking message: %v", err)
+	// Используем thinkingCallback если установлен
+	if al.thinkingCallback != nil {
+		err := al.thinkingCallback(al.config.ThinkingPeerID, content)
+		if err != nil {
+			if al.log != nil {
+				al.log.ErrorLogf("Failed to send thinking message: %v", err)
+			}
+			return
 		}
-		return
+	} else if al.vk != nil {
+		// Fallback на прямой вызов vk.SendThinking
+		_, err := al.vk.SendThinking(al.config.ThinkingPeerID, content)
+		if err != nil {
+			if al.log != nil {
+				al.log.ErrorLogf("Failed to send thinking message: %v", err)
+			}
+			return
+		}
 	}
 
 	// Эмитим событие thinking
@@ -184,6 +213,21 @@ func (al *agentLoop) getOrCreateSession(peerID int64) *session.Session {
 
 	config := al.config.SessionConfig
 	config.PeerID = peerID
+
+	// Загружаем системный промпт из файла или используем дефолтный
+	if al.config.SystemPromptFile != "" {
+		data, err := os.ReadFile(al.config.SystemPromptFile)
+		if err == nil && strings.TrimSpace(string(data)) != "" {
+			config.SystemPrompt = strings.TrimSpace(string(data))
+			if al.log != nil {
+				al.log.InfoLogf("Loaded system prompt from '%s'", al.config.SystemPromptFile)
+			}
+		} else {
+			if al.log != nil {
+				al.log.WarnLogf("Failed to read system prompt file: %v, using default", err)
+			}
+		}
+	}
 
 	sess := session.NewSession(config)
 	al.sessionM.Store(peerID, sess)
@@ -293,18 +337,32 @@ func (al *agentLoop) buildAPIMessages(sess *session.Session) []agent.Message {
 }
 
 // sendToLLM отправляет запрос в LLM и собирает ответ
-func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, sess *session.Session, peerID int64) (string, error) {
+func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, sess *session.Session, peerID int64, prompt string) (string, error) {
 	// Создаём agent для обработки
 	agentConfig := al.buildAgentConfig()
 	var a agent.Agent = agent.NewAgent(agentConfig)
+
+	// Устанавливаем callback для thinking сообщений
+	a.SetThinkingCallback(func(cbPeerID int64, content string) error {
+		if !al.config.EnableThinking || al.config.ThinkingPeerID <= 0 {
+			return nil
+		}
+		if al.thinkingCallback != nil {
+			return al.thinkingCallback(al.config.ThinkingPeerID, content)
+		} else if al.vk != nil {
+			_, err := al.vk.SendThinking(al.config.ThinkingPeerID, content)
+			return err
+		}
+		return nil
+	})
 
 	// Настраиваем инструменты если включены
 	if al.config.EnableTools && al.registry != nil {
 		al.registerToolsToAgent(a, al.registry)
 	}
 
-	// Отправляем запрос
-	response, err := a.ProcessMessage(ctx, "", peerID)
+	// Отправляем запрос с реальным сообщением пользователя
+	response, err := a.ProcessMessage(ctx, prompt, peerID)
 	if err != nil {
 		return "", err
 	}
@@ -318,22 +376,45 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 // buildAgentConfig строит конфигурацию для agent
 func (al *agentLoop) buildAgentConfig() agent.Config {
 	return agent.Config{
-		LlamaServerURL: al.config.LlamaServerURL,
-		Model:          al.config.Model,
-		MaxTokens:      al.config.MaxTokens,
-		Temperature:    al.config.Temperature,
-		SessionConfig:  al.config.SessionConfig,
-		EnableTools:    al.config.EnableTools,
-		MaxToolCalls:   al.config.MaxToolCalls,
+		LlamaServerURL:                al.config.LlamaServerURL,
+		Model:                         al.config.Model,
+		MaxTokens:                     al.config.MaxTokens,
+		Temperature:                   al.config.Temperature,
+		SessionConfig:                 al.config.SessionConfig,
+		EnableTools:                   al.config.EnableTools,
+		MaxToolCalls:                  al.config.MaxToolCalls,
+		EnableContextCompression:      false,
+		CompressionTokenThreshold:     al.config.CompressionTokenThreshold,
+		CompressionPercentageThreshold: al.config.CompressionPercentageThreshold,
 	}
 }
 
-// registerToolsToAgent регистрирует инструменты в agent
+// registerToolsToAgent регистрирует инструменты из registry в agent
 func (al *agentLoop) registerToolsToAgent(a agent.Agent, reg ToolRegistry) {
-	// TODO: Реализовать регистрацию инструментов
-	// Пока заглушка
-	_ = a
-	_ = reg
+	if reg == nil {
+		return
+	}
+
+	// Пробуем привести к *agent.agentImpl для прямого добавления инструментов
+	type toolInserter interface {
+		RegisterTools(registry *tools.Registry)
+	}
+	if inserter, ok := a.(toolInserter); ok {
+		if r, ok := reg.(*tools.Registry); ok {
+			inserter.RegisterTools(r)
+			return
+		}
+	}
+
+	// Fallback: передаём схемы через SetTools
+	toolSchemas := reg.ToOpenAISchema()
+	if len(toolSchemas) > 0 {
+		a.SetTools(toolSchemas)
+	}
+
+	if al.log != nil {
+		al.log.InfoLogf("Registered %d tools from registry", len(toolSchemas))
+	}
 }
 
 // processToolCalls обрабатывает вызовы инструментов от AI
@@ -346,46 +427,65 @@ func (al *agentLoop) processToolCalls(ctx context.Context, toolCalls []map[strin
 		al.log.InfoLogf("Processing %d tool calls for peer %d", len(toolCalls), peerID)
 	}
 
-	// Эмитим событие tool call
 	al.dispatcher.Emit(NewEvent(EventToolCall, peerID))
 
 	results := make([]map[string]interface{}, len(toolCalls))
 
 	for i, tc := range toolCalls {
 		toolName := getStringField(tc, "name")
-		_ = tc
 
 		if al.log != nil {
 			al.log.InfoLogf("Executing tool: %s", toolName)
 		}
 
-		// Отправляем thinking сообщение если включено
 		al.sendThinking(peerID, "Executing tool: "+toolName)
 
-		// Получаем инструмент из реестра
 		var result string
-		var err error
+		var execErr error
+
 		if al.registry != nil {
-			// TODO: Реализовать получение и выполнение инструмента
-			result = fmt.Sprintf(`{"success": false, "error": "tool %s not implemented yet"}`, toolName)
-			err = nil
+			tool, ok := al.registry.Get(toolName)
+			if !ok {
+				result = fmt.Sprintf(`{"success": false, "error": "tool %s not found in registry"}`, toolName)
+				execErr = fmt.Errorf("tool not found: %s", toolName)
+			} else {
+				argsRaw, _ := tc["arguments"].(string)
+				var args map[string]string
+				if argsRaw != "" {
+					if err := json.Unmarshal([]byte(argsRaw), &args); err != nil {
+						args = make(map[string]string)
+					}
+				} else {
+					args = make(map[string]string)
+				}
+
+				toolResult, err := tool.Execute(ctx, args)
+				if err != nil {
+					result = tools.MarshalToolResult(toolResult)
+					execErr = err
+				} else {
+					result = tools.MarshalToolResult(toolResult)
+					if !toolResult.Success {
+						execErr = fmt.Errorf(toolResult.Error)
+					}
+				}
+			}
 		} else {
 			result = fmt.Sprintf(`{"success": false, "error": "no tool registry"}`)
-			err = fmt.Errorf("no tool registry")
+			execErr = fmt.Errorf("no tool registry")
 		}
 
 		results[i] = map[string]interface{}{
 			"tool_name": toolName,
 			"result":    result,
-			"error":     err,
+			"error":     execErr,
 		}
 
-		// Эмитим событие tool result
 		al.dispatcher.Emit(NewEvent(EventToolResult, peerID))
 
 		if al.log != nil {
-			if err != nil {
-				al.log.ErrorLogf("Tool %s failed: %v", toolName, err)
+			if execErr != nil {
+				al.log.ErrorLogf("Tool %s failed: %v", toolName, execErr)
 			} else {
 				al.log.InfoLogf("Tool %s completed", toolName)
 			}
@@ -490,6 +590,11 @@ func (al *agentLoop) GetSession(peerID int64) *session.Session {
 		return val.(*session.Session)
 	}
 	return nil
+}
+
+// SetThinkingCallback устанавливает callback для отправки thinking сообщений
+func (al *agentLoop) SetThinkingCallback(cb func(peerID int64, content string) error) {
+	al.thinkingCallback = cb
 }
 
 // ============================================================

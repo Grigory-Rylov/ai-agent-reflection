@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,9 @@ type DirListTool = tools.DirListTool
 // AI Agent Implementation — реализация агента с подключением к llama-server
 // ============================================================
 
+// ThinkingCallback callback для отправки thinking сообщений
+type ThinkingCallback func(peerID int64, content string) error
+
 // agentImpl реализует интерфейс AI агента с подключением к llama-server
 type agentImpl struct {
 	config          Config
@@ -33,6 +37,9 @@ type agentImpl struct {
 	client          *http.Client
 	contextManager  *compress.ContextManager
 	tokenizer       tokenizers.Tokenizer
+	systemPrompt    string            // системный промпт из файла или дефолтный
+	thinkingCallback ThinkingCallback  // callback для отправки thinking сообщений
+	toolSchemas     []map[string]interface{} // схемы инструментов, переданные извне
 }
 
 // ============================================================
@@ -47,8 +54,14 @@ func NewAgent(config Config) *agentImpl {
 		toolsRegistry: tools.NewRegistry(),
 		client: &http.Client{
 			Timeout: 5 * time.Minute,
+			Transport: &http.Transport{
+				DisableKeepAlives: true,
+			},
 		},
 	}
+
+	// Загружаем системный промпт из файла или используем дефолтный
+	agent.loadSystemPrompt()
 
 	// Регистрируем инструменты по умолчанию если включены
 	if config.EnableTools {
@@ -61,6 +74,43 @@ func NewAgent(config Config) *agentImpl {
 	}
 
 	return agent
+}
+
+// loadSystemPrompt загружает системный промпт из файла или использует дефолтный
+func (a *agentImpl) loadSystemPrompt() {
+	// Дефолтный системный промпт
+	defaultPrompt := "You are a helpful assistant."
+
+	if a.config.SystemPromptFile == "" {
+		// Если путь не указан — используем дефолтный
+		a.systemPrompt = defaultPrompt
+		return
+	}
+
+	// Пытаемся прочитать файл
+	data, err := os.ReadFile(a.config.SystemPromptFile)
+	if err != nil {
+		fmt.Printf("[WARN] Could not read system prompt file '%s': %v. Using default.\n", a.config.SystemPromptFile, err)
+		a.systemPrompt = defaultPrompt
+		return
+	}
+
+	// Проверяем что файл не пустой
+	content := strings.TrimSpace(string(data))
+	if content == "" {
+		fmt.Printf("[WARN] System prompt file '%s' is empty. Using default.\n", a.config.SystemPromptFile)
+		a.systemPrompt = defaultPrompt
+		return
+	}
+
+	// Используем прочитанный промпт
+	a.systemPrompt = content
+	fmt.Printf("[INFO] Loaded system prompt from '%s' (%d bytes)\n", a.config.SystemPromptFile, len(content))
+}
+
+// GetSystemPrompt возвращает системный промпт
+func (a *agentImpl) GetSystemPrompt() string {
+	return a.systemPrompt
 }
 
 // initContextManager инициализирует менеджер контекста
@@ -83,17 +133,27 @@ func (a *agentImpl) initContextManager() {
 
 // registerDefaultTools регистрирует инструменты по умолчанию
 func (a *agentImpl) registerDefaultTools() {
-	// File read tool
 	a.toolsRegistry.Register(&FileReadTool{})
-
-	// File write tool
 	a.toolsRegistry.Register(&FileWriteTool{})
-
-	// Time get tool
 	a.toolsRegistry.Register(&TimeGetTool{})
-
-	// Dir list tool
 	a.toolsRegistry.Register(&DirListTool{})
+}
+
+// RegisterTools регистрирует инструменты из внешнего реестра
+func (a *agentImpl) RegisterTools(registry *tools.Registry) {
+	if registry == nil {
+		return
+	}
+	for _, tool := range registry.GetAll() {
+		if !a.toolsRegistry.IsRegistered(tool.Name()) {
+			a.toolsRegistry.Register(tool)
+		}
+	}
+	// Также передаём схемы для OpenAI function calling
+	schema := registry.ToOpenAISchema()
+	if len(schema) > 0 {
+		a.toolSchemas = schema
+	}
 }
 
 // ============================================================
@@ -164,6 +224,18 @@ func (a *agentImpl) GetSession(peerID int64) *session.Session {
 	return a.getSession(peerID)
 }
 
+// SetThinkingCallback устанавливает callback для отправки thinking сообщений
+func (a *agentImpl) SetThinkingCallback(cb ThinkingCallback) {
+	a.thinkingCallback = cb
+}
+
+// SetTools регистрирует инструменты, переданные из agentloop
+func (a *agentImpl) SetTools(toolSchemas []map[string]interface{}) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.toolSchemas = toolSchemas
+}
+
 // ============================================================
 // Управление сессиями
 // ============================================================
@@ -181,7 +253,7 @@ func (a *agentImpl) getSession(peerID int64) *session.Session {
 		if !exists {
 			config := a.config.SessionConfig
 			config.PeerID = peerID
-			config.SystemPrompt = "You are a helpful assistant."
+			config.SystemPrompt = a.systemPrompt
 			s = session.NewSession(config)
 			a.sessions[peerID] = s
 		}
@@ -209,20 +281,23 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 		return "", fmt.Errorf("streaming request: %w", err)
 	}
 
-	// Собираем ответ
-	var fullResponse strings.Builder
-	for event := range chunkChan {
-		if event.IsDone {
-			break
-		}
-		if event.Content != "" {
-			fullResponse.WriteString(event.Content)
+	// Собираем ответ с reasoning
+	responseText, reasoningText := a.collectStreamResponse(chunkChan)
+
+	// Отправляем reasoning в thinkingPeerID если есть
+	if reasoningText != "" && a.thinkingCallback != nil {
+		if err := a.thinkingCallback(session.GetPeerID(), reasoningText); err != nil {
+			fmt.Printf("[WARN] Failed to send thinking message: %v\n", err)
 		}
 	}
 
-	responseText := fullResponse.String()
-	session.AddAssistantMessage(responseText)
+	// Если reasoning есть но response пустой — возвращаем reasoning
+	if responseText == "" && reasoningText != "" {
+		session.AddAssistantMessage(reasoningText)
+		return reasoningText, nil
+	}
 
+	session.AddAssistantMessage(responseText)
 	return responseText, nil
 }
 

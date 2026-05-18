@@ -33,43 +33,111 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 		return FunctionCallResult{}, fmt.Errorf("streaming request: %w", err)
 	}
 
-	responseText, finishReason := a.collectStreamResponse(chunkChan)
-	if responseText == "" || a.isNonToolResponse(finishReason) {
-		return a.returnTextResponse(session, responseText), nil
-	}
+	// Собираем response, reasoning и tool_calls из streaming
+	responseText, reasoningText, finishReason, streamToolCalls := a.collectStreamResponseWithToolCalls(chunkChan)
 
-	rawToolCalls, err := a.getToolCallsFromResponse(ctx, messages, toolsSchema)
-	if err != nil || len(rawToolCalls) == 0 {
-		return a.returnTextResponse(session, responseText), nil
-	}
-
-	result := a.executeAllTools(ctx, rawToolCalls)
-	if len(result.ToolCalls) > 0 {
-		finalResponse, err := a.processToolResults(ctx, messages, result.ToolCalls, session)
-		if err != nil {
-			return FunctionCallResult{}, fmt.Errorf("process tool results: %w", err)
+	// Отправляем reasoning в thinkingPeerID если есть
+	if reasoningText != "" && a.thinkingCallback != nil {
+		if err := a.thinkingCallback(session.GetPeerID(), reasoningText); err != nil {
+			fmt.Printf("[WARN] Failed to send thinking message: %v\n", err)
 		}
-		return FunctionCallResult{Success: true, Response: finalResponse}, nil
 	}
 
-	return a.returnTextResponse(session, responseText), nil
+	// Если LLM вернул tool_calls — используем те что собрали из стриминга
+	if finishReason == "tool_calls" || len(streamToolCalls) > 0 {
+		toolCalls := streamToolCalls
+		if len(toolCalls) == 0 {
+			// Fallback: если не собрали tool_calls из стриминга — пробуем non-streaming
+			fmt.Printf("[WARN] LLM returned tool_calls but none collected from stream, trying non-streaming\n")
+			var err error
+			toolCalls, err = a.getToolCallsFromResponse(ctx, messages, toolsSchema)
+			if err != nil {
+				fmt.Printf("[WARN] Non-streaming tool_calls failed: %v\n", err)
+			}
+		}
+		if len(toolCalls) == 0 {
+			// Нет tool_calls — возвращаем пустой ответ или reasoning если есть
+			if reasoningText != "" {
+				session.AddAssistantMessage(reasoningText)
+				return FunctionCallResult{Success: true, Response: reasoningText}, nil
+			}
+			return a.returnTextResponse(session, "I'm here and ready to help! What would you like to know?"), nil
+		}
+
+		result := a.executeAllTools(ctx, toolCalls, session.GetPeerID())
+		if len(result.ToolCalls) > 0 {
+			finalResponse, err := a.processToolResults(ctx, messages, toolCalls, result.ToolCalls, session)
+			if err != nil {
+				return FunctionCallResult{}, fmt.Errorf("process tool results: %w", err)
+			}
+			return FunctionCallResult{Success: true, Response: finalResponse}, nil
+		}
+	}
+
+	if responseText == "" || a.isNonToolResponse(finishReason) {
+		// Fallback — если LLM не ответил текстом
+		if responseText == "" {
+			responseText = "I'm here and ready to help! What would you like to know?"
+		}
+		session.AddAssistantMessage(responseText)
+		return FunctionCallResult{
+			Success:  true,
+			Response: responseText,
+		}, nil
+	}
+
+	// Обычный текстовый ответ
+	session.AddAssistantMessage(responseText)
+	return FunctionCallResult{
+		Success:  true,
+		Response: responseText,
+	}, nil
 }
 
 // buildToolsStreamConfig создаёт конфигурацию для streaming с инструментами
 func (a *agentImpl) buildToolsStreamConfig(toolsSchema []map[string]interface{}) StreamingConfig {
+	// Если схемы инструментов переданы через SetTools — используем их
+	schema := toolsSchema
+	if schema == nil && len(a.toolSchemas) > 0 {
+		schema = a.toolSchemas
+	}
 	return StreamingConfig{
 		Model:       a.config.Model,
 		MaxTokens:   a.config.MaxTokens,
 		Temperature: a.config.Temperature,
-		Tools:       toolsSchema,
+		Tools:       schema,
 		Stream:      true,
 	}
 }
 
-// collectStreamResponse собирает ответ из streaming потока
+// collectStreamResponse собирает ответ из streaming потока (только response, без reasoning)
 func (a *agentImpl) collectStreamResponse(chunkChan <-chan StreamChunkEvent) (string, string) {
 	var fullResponse strings.Builder
+	var fullReasoning strings.Builder
+
+	for event := range chunkChan {
+		if event.IsDone {
+			break
+		}
+		if event.Content != "" {
+			fullResponse.WriteString(event.Content)
+		}
+		if event.ReasoningContent != "" {
+			fullReasoning.WriteString(event.ReasoningContent)
+		}
+	}
+
+	response := fullResponse.String()
+	reasoning := fullReasoning.String()
+	return response, reasoning
+}
+
+// collectStreamResponseWithToolCalls собирает ответ из streaming потока с reasoning и tool_calls
+func (a *agentImpl) collectStreamResponseWithToolCalls(chunkChan <-chan StreamChunkEvent) (string, string, string, []ToolCall) {
+	var fullResponse strings.Builder
+	var fullReasoning strings.Builder
 	var finishReason string
+	var allToolCalls []ToolCall
 
 	for event := range chunkChan {
 		if event.IsDone {
@@ -79,9 +147,17 @@ func (a *agentImpl) collectStreamResponse(chunkChan <-chan StreamChunkEvent) (st
 		if event.Content != "" {
 			fullResponse.WriteString(event.Content)
 		}
+		if event.ReasoningContent != "" {
+			fullReasoning.WriteString(event.ReasoningContent)
+		}
+		if len(event.ToolCalls) > 0 {
+			allToolCalls = MergeToolCalls(allToolCalls, event.ToolCalls)
+		}
 	}
 
-	return fullResponse.String(), finishReason
+	response := fullResponse.String()
+	reasoning := fullReasoning.String()
+	return response, reasoning, finishReason, allToolCalls
 }
 
 // isNonToolResponse проверяет, что ответ не содержит tool_calls
@@ -102,18 +178,18 @@ func (a *agentImpl) returnTextResponse(session *session.Session, responseText st
 }
 
 // executeAllTools выполняет все инструменты из ответа AI
-func (a *agentImpl) executeAllTools(ctx context.Context, toolCalls []ToolCall) FunctionCallResult {
+func (a *agentImpl) executeAllTools(ctx context.Context, toolCalls []ToolCall, peerID int64) FunctionCallResult {
 	result := FunctionCallResult{
 		Success:   true,
 		ToolCalls: make([]ToolCallResult, 0),
 	}
 
 	for _, tc := range toolCalls {
-		toolResult, execErr := a.executeTool(tc)
+		toolResult, execErr := a.executeTool(tc, peerID)
 		if execErr != nil {
 			result.ToolCalls = append(result.ToolCalls, ToolCallResult{
 				ToolCallID: tc.ID,
-				ToolName:   tc.Name,
+				ToolName:   ToolCallName(tc),
 				Content:    fmt.Sprintf("Error: %v", execErr),
 				IsError:    true,
 			})
@@ -153,8 +229,8 @@ func (a *agentImpl) getToolCallsFromResponse(ctx context.Context, messages []Mes
 
 // buildNonStreamingRequestJSON формирует JSON для non-streaming запроса
 func (a *agentImpl) buildNonStreamingRequestJSON(messages []Message, toolsSchema []map[string]interface{}) []byte {
+	// Не указываем модель — сервер использует модель по умолчанию
 	reqBody := map[string]interface{}{
-		"model":       a.config.Model,
 		"messages":    messages,
 		"temperature": a.config.Temperature,
 		"max_tokens":  a.config.MaxTokens,
@@ -210,8 +286,8 @@ func (a *agentImpl) extractToolCallsFromResponse(rawResponse map[string]interfac
 }
 
 // processToolResults отправляет результат выполнения инструментов обратно в AI
-func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []Message, toolResults []ToolCallResult, session *session.Session) (string, error) {
-	messages := a.buildMessagesWithToolResults(originalMessages, toolResults)
+func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []Message, toolCalls []ToolCall, toolResults []ToolCallResult, session *session.Session) (string, error) {
+	messages := a.buildMessagesWithToolResults(originalMessages, toolCalls, toolResults)
 
 	streamConfig := StreamingConfig{
 		Model:       a.config.Model,
@@ -226,53 +302,95 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	}
 
 	responseText, _ := a.collectStreamResponse(chunkChan)
-	session.AddAssistantMessage(responseText)
 
+	// Если модель не вернула текст — осмысленный fallback
+	if responseText == "" {
+		responseText = "Tools executed successfully."
+	}
+
+	session.AddAssistantMessage(responseText)
 	return responseText, nil
 }
 
 // buildMessagesWithToolResults формирует массив сообщений с результатами инструментов
-func (a *agentImpl) buildMessagesWithToolResults(originalMessages []Message, toolResults []ToolCallResult) []Message {
+// OpenAI требует: user → assistant(tool_calls) → tool(result) → assistant(ответ)
+func (a *agentImpl) buildMessagesWithToolResults(originalMessages []Message, toolCalls []ToolCall, toolResults []ToolCallResult) []Message {
 	messages := make([]Message, len(originalMessages))
 	copy(messages, originalMessages)
 
+	// Assistant message с tool_calls (обязательно для OpenAI API)
+	messages = append(messages, Message{
+		Role:      "assistant",
+		Content:   "",
+		ToolCalls: toolCalls,
+	})
+
+	// Результаты инструментов
 	for _, tr := range toolResults {
+		content := tr.Content
 		messages = append(messages, Message{
 			Role:    "tool",
-			Content: tr.Content,
+			Content: content,
 		})
 	}
 
 	return messages
 }
 
-// executeTool выполняет инструмент
-func (a *agentImpl) executeTool(toolCall ToolCall) (ToolCallResult, error) {
-	tool, ok := a.toolsRegistry.Get(toolCall.Name)
+// executeTool выполняет инструмент с логированием и отправкой thinking
+func (a *agentImpl) executeTool(toolCall ToolCall, peerID int64) (ToolCallResult, error) {
+	toolName := ToolCallName(toolCall)
+	argsStr := ToolCallArgumentsStr(toolCall)
+
+	// Отправляем thinking о начале вызова
+	callMsg := fmt.Sprintf("[TOOL] Call: %s %s", toolName, argsStr)
+	fmt.Println(callMsg)
+	a.sendThinking(peerID, callMsg)
+
+	tool, ok := a.toolsRegistry.Get(toolName)
 	if !ok {
-		return a.createErrorResult(toolCall.ID, toolCall.Name, fmt.Sprintf("Tool not found: %s", toolCall.Name)), fmt.Errorf("tool not found: %s", toolCall.Name)
+		errMsg := fmt.Sprintf("Tool not found: %s", toolName)
+		fmt.Printf("[TOOL] Error: %s\n", errMsg)
+		a.sendThinking(peerID, "[TOOL] Error: "+errMsg)
+		return a.createErrorResult(toolCall.ID, toolName, errMsg), fmt.Errorf(errMsg)
 	}
 
-	args, err := a.parseToolArguments(toolCall)
+	args, err := parseToolArguments(toolCall)
 	if err != nil {
-		return a.createErrorResult(toolCall.ID, toolCall.Name, fmt.Sprintf("Invalid arguments: %v", err)), err
+		errMsg := fmt.Sprintf("Invalid arguments for %s: %v", toolName, err)
+		fmt.Printf("[TOOL] Error: %s\n", errMsg)
+		a.sendThinking(peerID, "[TOOL] Error: "+errMsg)
+		return a.createErrorResult(toolCall.ID, toolName, errMsg), err
 	}
 
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
-		return a.createErrorResult(toolCall.ID, toolCall.Name, fmt.Sprintf("Execution error: %v", err)), err
+		errMsg := fmt.Sprintf("Execution error for %s: %v", toolName, err)
+		fmt.Printf("[TOOL] Error: %s\n", errMsg)
+		a.sendThinking(peerID, "[TOOL] Error: "+errMsg)
+		return a.createErrorResult(toolCall.ID, toolName, errMsg), err
 	}
 
 	content := tools.MarshalToolResult(result)
+	resultMsg := fmt.Sprintf("[TOOL] Result: %s success=%v", toolName, result.Success)
+	fmt.Println(resultMsg)
+	a.sendThinking(peerID, resultMsg)
+
 	return ToolCallResult{
 		ToolCallID: toolCall.ID,
-		ToolName:   toolCall.Name,
+		ToolName:   toolName,
 		Content:    content,
 		IsError:    !result.Success,
 	}, nil
 }
 
-// createErrorResult создаёт результат с ошибкой
+// sendThinking отправляет thinking сообщение через callback
+func (a *agentImpl) sendThinking(peerID int64, content string) {
+	if a.thinkingCallback != nil {
+		a.thinkingCallback(peerID, content)
+	}
+}
+
 func (a *agentImpl) createErrorResult(toolCallID, toolName, errorMsg string) ToolCallResult {
 	return ToolCallResult{
 		ToolCallID: toolCallID,
@@ -280,17 +398,4 @@ func (a *agentImpl) createErrorResult(toolCallID, toolName, errorMsg string) Too
 		Content:    errorMsg,
 		IsError:    true,
 	}
-}
-
-// parseToolArguments парсит аргументы инструмента
-func (a *agentImpl) parseToolArguments(toolCall ToolCall) (map[string]string, error) {
-	if len(toolCall.Arguments) == 0 {
-		return make(map[string]string), nil
-	}
-
-	var args map[string]string
-	if err := json.Unmarshal(toolCall.Arguments, &args); err != nil {
-		return nil, err
-	}
-	return args, nil
 }

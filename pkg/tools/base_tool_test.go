@@ -137,11 +137,19 @@ func TestRegistryToOpenAISchema(t *testing.T) {
 		}
 
 		item := schema[0]
-		if item["name"] != "test_tool" {
-			t.Errorf("expected name 'test_tool', got '%v'", item["name"])
+		if item["type"] != "function" {
+			t.Errorf("expected type 'function', got '%v'", item["type"])
 		}
-		if item["description"] != "Test tool" {
-			t.Errorf("expected description 'Test tool', got '%v'", item["description"])
+
+		fn, ok := item["function"].(map[string]interface{})
+		if !ok {
+			t.Fatal("expected function key to be a map")
+		}
+		if fn["name"] != "test_tool" {
+			t.Errorf("expected name 'test_tool', got '%v'", fn["name"])
+		}
+		if fn["description"] != "Test tool" {
+			t.Errorf("expected description 'Test tool', got '%v'", fn["description"])
 		}
 	})
 }

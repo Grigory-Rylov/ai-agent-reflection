@@ -1,0 +1,23 @@
+# Build artifacts
+vk-gateway
+llama-client
+
+# Configuration files with secrets
+config.json
+config.jsonc
+.env
+*.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

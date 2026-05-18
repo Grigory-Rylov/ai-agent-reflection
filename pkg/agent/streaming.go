@@ -12,39 +12,33 @@ import (
 	"time"
 )
 
-// Message представляет сообщение в формате OpenAI
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role      string     `json:"role"`
+	Content   string     `json:"content"`
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 }
 
-// ============================================================
-// SSE Streaming — SSE-стриминг ответов от llama-server
-// ============================================================
-
-// StreamingConfig содержит настройки для streaming запроса
 type StreamingConfig struct {
 	Model       string
 	MaxTokens   int
 	Temperature float64
-	// Tools для function calling
 	Tools       []map[string]interface{}
-	// Stream — флаг включения streaming
 	Stream      bool
 }
 
-// StreamChunkEvent представляет событие из streaming ответа
 type StreamChunkEvent struct {
-	Content      string
-	FinishReason string
-	IsDone       bool
-	Timestamp    time.Time
+	Content          string
+	ReasoningContent string
+	ToolCalls        []ToolCall
+	FinishReason     string
+	IsDone           bool
+	Timestamp        time.Time
 }
 
-// streamingRequest отправляет streaming запрос к llama-server
 func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig, messages []Message) (<-chan StreamChunkEvent, error) {
 	reqBody := a.buildRequestJSON(config, messages)
-	req, err := a.createStreamingRequest(reqBody)
+
+	req, err := a.createStreamingRequest(ctx, reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -56,19 +50,16 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API error: status %d, body: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("API error: status %d", resp.StatusCode)
 	}
 
 	chunkChan := make(chan StreamChunkEvent, 100)
-	go a.readStreamResponse(resp, chunkChan)
+	go a.readStreamResponse(ctx, resp, chunkChan)
 	return chunkChan, nil
 }
 
-// buildRequestJSON формирует JSON тело для streaming запроса
 func (a *agentImpl) buildRequestJSON(config StreamingConfig, messages []Message) []byte {
 	reqBody := map[string]interface{}{
-		"model":       config.Model,
 		"messages":    messages,
 		"temperature": config.Temperature,
 		"max_tokens":  config.MaxTokens,
@@ -83,10 +74,9 @@ func (a *agentImpl) buildRequestJSON(config StreamingConfig, messages []Message)
 	return jsonData
 }
 
-// createStreamingRequest создаёт HTTP запрос для streaming
-func (a *agentImpl) createStreamingRequest(jsonData []byte) (*http.Request, error) {
+func (a *agentImpl) createStreamingRequest(ctx context.Context, jsonData []byte) (*http.Request, error) {
 	reqURL := fmt.Sprintf("%s/v1/chat/completions", a.config.LlamaServerURL)
-	req, err := http.NewRequestWithContext(context.Background(), "POST", reqURL, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -95,27 +85,41 @@ func (a *agentImpl) createStreamingRequest(jsonData []byte) (*http.Request, erro
 	return req, nil
 }
 
-// readStreamResponse читает SSE-поток и отправляет события в канал
-func (a *agentImpl) readStreamResponse(resp *http.Response, chunkChan chan StreamChunkEvent) {
+func (a *agentImpl) readStreamResponse(ctx context.Context, resp *http.Response, chunkChan chan StreamChunkEvent) {
 	defer resp.Body.Close()
 	defer close(chunkChan)
 
 	reader := bufio.NewReader(resp.Body)
+	readCh := make(chan struct {
+		line []byte
+		err  error
+	}, 1)
+
 	for {
-		line, err := reader.ReadSlice('\n')
-		if err != nil {
-			if err == io.EOF {
+		go func() {
+			line, err := reader.ReadSlice('\n')
+			readCh <- struct {
+				line []byte
+				err  error
+			}{line, err}
+		}()
+
+		select {
+		case <-ctx.Done():
+			return
+		case result := <-readCh:
+			if result.err != nil {
+				if result.err == io.EOF {
+					return
+				}
+				a.sendStreamError(chunkChan, result.err)
 				return
 			}
-			a.sendStreamError(chunkChan, err)
-			return
+			a.processStreamLine(result.line, chunkChan)
 		}
-
-		a.processStreamLine(line, chunkChan)
 	}
 }
 
-// processStreamLine обрабатывает одну строку из потока
 func (a *agentImpl) processStreamLine(line []byte, chunkChan chan StreamChunkEvent) {
 	lineStr := strings.TrimSpace(string(line))
 
@@ -133,7 +137,6 @@ func (a *agentImpl) processStreamLine(line []byte, chunkChan chan StreamChunkEve
 	a.processSSEData(lineStr, chunkChan)
 }
 
-// sendStreamError отправляет событие ошибки
 func (a *agentImpl) sendStreamError(chunkChan chan StreamChunkEvent, err error) {
 	chunkChan <- StreamChunkEvent{
 		Content:   fmt.Sprintf("Stream error: %v", err),
@@ -142,7 +145,6 @@ func (a *agentImpl) sendStreamError(chunkChan chan StreamChunkEvent, err error) 
 	}
 }
 
-// sendDoneEvent отправляет событие завершения
 func (a *agentImpl) sendDoneEvent(chunkChan chan StreamChunkEvent) {
 	chunkChan <- StreamChunkEvent{
 		Content:  "",
@@ -151,7 +153,6 @@ func (a *agentImpl) sendDoneEvent(chunkChan chan StreamChunkEvent) {
 	}
 }
 
-// processSSEData обрабатывает данные из SSE события
 func (a *agentImpl) processSSEData(lineStr string, chunkChan chan StreamChunkEvent) {
 	jsonData := strings.TrimPrefix(lineStr, "data: ")
 	if len(jsonData) == 0 {
@@ -165,35 +166,47 @@ func (a *agentImpl) processSSEData(lineStr string, chunkChan chan StreamChunkEve
 
 	choice := event.Choices[0]
 	content := choice.Delta.Content
-	if content == "" {
-		return
-	}
+	toolCalls := choice.Delta.ToolCalls
 
 	finishReason := ""
 	if choice.FinishReason != nil {
 		finishReason = *choice.FinishReason
 	}
 
+	if finishReason != "" {
+		chunkChan <- StreamChunkEvent{
+			FinishReason: finishReason,
+			IsDone:       true,
+			Timestamp:    time.Now(),
+		}
+		return
+	}
+
+	if content == "" && choice.Delta.ReasoningContent == "" && len(toolCalls) == 0 {
+		return
+	}
+
 	chunkChan <- StreamChunkEvent{
-		Content:      content,
-		FinishReason: finishReason,
-		IsDone:       choice.FinishReason != nil,
-		Timestamp:    time.Now(),
+		Content:          content,
+		ReasoningContent: choice.Delta.ReasoningContent,
+		ToolCalls:        toolCalls,
+		IsDone:           false,
+		Timestamp:        time.Now(),
 	}
 }
 
-// SSEEvent структура для парсинга SSE данных
 type SSEEvent struct {
 	Choices []struct {
 		Delta struct {
-			Content      string     `json:"content"`
-			ToolCalls    []ToolCall `json:"tool_calls"`
+			Content          string     `json:"content"`
+			ReasoningContent string     `json:"reasoning_content"`
+			ToolCalls        []ToolCall `json:"tool_calls"`
+			ToolCallID       string     `json:"tool_call_id"`
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
 }
 
-// parseSSEEvent парсит JSON из SSE события
 func (a *agentImpl) parseSSEEvent(jsonData string) *SSEEvent {
 	var event SSEEvent
 	if err := json.Unmarshal([]byte(jsonData), &event); err != nil {

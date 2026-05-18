@@ -20,6 +20,12 @@ type Agent interface {
 
 	// GetSession возвращает сессию пользователя
 	GetSession(peerID int64) *session.Session
+
+	// SetThinkingCallback устанавливает callback для отправки thinking сообщений
+	SetThinkingCallback(cb ThinkingCallback)
+
+	// SetTools регистрирует инструменты из реестра
+	SetTools(tools []map[string]interface{})
 }
 
 // ============================================================
@@ -38,6 +44,8 @@ type Config struct {
 	Temperature float64
 	// SessionConfig — конфигурация сессии
 	SessionConfig session.Config
+	// SystemPromptFile — путь к файлу системного промпта (если пустой — используется дефолтный)
+	SystemPromptFile string
 	// EnableLoopAlert — включать alert при обнаружении цикла
 	EnableLoopAlert bool
 	// EnableTools — использовать инструменты (function calling)

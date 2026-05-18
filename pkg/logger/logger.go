@@ -95,7 +95,7 @@ func New(config Config) (*Logger, error) {
 	// Настраиваем форматирование
 	handlerOptions := &slog.HandlerOptions{
 		Level:     slog.LevelInfo,
-		AddSource: true,
+		AddSource: false,
 	}
 
 	// Консольный логгер (всегда активен)

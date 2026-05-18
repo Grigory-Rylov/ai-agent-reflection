@@ -21,7 +21,8 @@ type LoopConfig struct {
 	Temperature    float64
 
 	// Session Management
-	SessionConfig session.Config
+	SessionConfig  session.Config
+	SystemPromptFile string // Путь к файлу системного промпта
 
 	// Loop Detection
 	EnableLoopDetection bool
@@ -44,6 +45,7 @@ type LoopConfig struct {
 	EnableCompression         bool
 	CompressionStrategy       compress.CompressionStrategy
 	CompressionTokenThreshold int
+	CompressionPercentageThreshold float64
 }
 
 // DefaultLoopConfig возвращает конфигурацию по умолчанию
@@ -62,9 +64,10 @@ func DefaultLoopConfig() LoopConfig {
 		ThinkingPeerID:            0,
 		EnableThinking:            false,
 		EnableLogging:             true,
-		EnableCompression:         true,
-		CompressionStrategy:       compress.SummarizeStrategy,
-		CompressionTokenThreshold: 6000,
+		EnableCompression:              false,
+		CompressionStrategy:            compress.SummarizeStrategy,
+		CompressionTokenThreshold:      6000,
+		CompressionPercentageThreshold: 0.75,
 	}
 }
 

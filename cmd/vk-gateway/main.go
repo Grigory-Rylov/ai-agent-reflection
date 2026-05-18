@@ -6,10 +6,12 @@ import (
 	"flag"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
-	"github.com/opencode/llama-client/pkg/agent"
+	"github.com/opencode/llama-client/pkg/agentloop"
 	"github.com/opencode/llama-client/pkg/logger"
+	"github.com/opencode/llama-client/pkg/tools"
 	"github.com/opencode/llama-client/pkg/vk"
 )
 
@@ -46,19 +48,58 @@ func main() {
 	// Создаём VK Bot Client
 	vkClient := vk.NewBotClient(config.TokenVK)
 
-	// Создаём AI Agent
-	agentConfig := agent.DefaultConfig()
-	agentConfig.LlamaServerURL = config.LlamaServerURL
-	agentConfig.Model = config.Model
-	agentConfig.MaxTokens = config.MaxTokens
-	agentConfig.Temperature = config.Temperature
-	agentConfig.SessionConfig.SessionFile = "./sessions/vk_session.json"
-	agentConfig.SessionConfig.AutoSave = true
+	// Создаём реестр инструментов
+	toolRegistry := tools.NewRegistry()
+	toolRegistry.Register(&tools.FileReadTool{})
+	toolRegistry.Register(&tools.FileWriteTool{})
+	toolRegistry.Register(&tools.TimeGetTool{})
+	toolRegistry.Register(&tools.DirListTool{})
+	toolRegistry.Register(&tools.ShellExecuteTool{})
+	toolRegistry.Register(&tools.WebFetchTool{})
+	toolRegistry.Register(&tools.WebSearchTool{})
+	toolRegistry.Register(&tools.GlobTool{})
+	toolRegistry.Register(&tools.GrepTool{})
+	toolRegistry.Register(&tools.CalcTool{})
+	toolRegistry.Register(&tools.EditTool{})
 
-	aiAgent := agent.NewAgent(agentConfig)
+// Создаём конфигурацию AgentLoop
+	loopConfig := agentloop.DefaultLoopConfig()
+	// Добавляем http:// если нет
+	llamaURL := config.LlamaServerURL
+	if !strings.HasPrefix(llamaURL, "http://") && !strings.HasPrefix(llamaURL, "https://") {
+		llamaURL = "http://" + llamaURL
+	}
+	loopConfig.LlamaServerURL = llamaURL
+	loopConfig.Model = config.Model
+	loopConfig.MaxTokens = config.MaxTokens
+	loopConfig.Temperature = config.Temperature
+	loopConfig.SessionConfig.SessionFile = "./sessions/vk_session.json"
+	loopConfig.SessionConfig.AutoSave = true
+	loopConfig.SessionConfig.WorkingDir = tools.WorkingDir
+	loopConfig.SystemPromptFile = "system_prompt.txt"
+	loopConfig.EnableTools = true
+	loopConfig.EnableThinking = true
+	loopConfig.ThinkingPeerID = config.ThinkingPeerID
+	loopConfig.EnableLogging = true
 
-	// Создаём Bot Handler
-	botHandler := vk.NewBotHandler(vkClient, aiAgent, log)
+	// Создаём AgentLoop
+	agentLoop, err := agentloop.NewAgentLoop(loopConfig, vkClient, toolRegistry)
+	if err != nil {
+		println("Error creating AgentLoop:", err.Error())
+		os.Exit(1)
+	}
+
+	// Устанавливаем callback для отправки thinking сообщений
+	agentLoop.SetThinkingCallback(func(peerID int64, content string) error {
+		if vkClient == nil || config.ThinkingPeerID <= 0 {
+			return nil
+		}
+		_, err := vkClient.SendThinking(config.ThinkingPeerID, content)
+		return err
+	})
+
+	// Создаём Bot Handler с mainPeerID
+	botHandler := vk.NewBotHandlerWithPeerID(vkClient, agentLoop, log, config.PeerID, config.ThinkingPeerID)
 
 	// Настраиваем обработку сигналов
 	ctx, cancel := context.WithCancel(context.Background())
@@ -94,6 +135,8 @@ type Config struct {
 	MaxTokens      int     `json:"max_tokens"`
 	Temperature    float64 `json:"temperature"`
 	TokenVK        string  `json:"token_vk"`
+	PeerID         int64   `json:"peer_id"`          // Основной чат для ответов
+	ThinkingPeerID int64   `json:"thinking_peer_id"` // Чат для thinking сообщений
 }
 
 // loadConfig загружает конфигурацию из файла

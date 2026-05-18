@@ -1,18 +1,61 @@
 package tools
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
+
+// ============================================================
+// File globals & helpers for all tools
+// ============================================================
+
+var (
+	// WorkingDir — рабочая директория для относительных путей
+	WorkingDir string
+)
+
+func init() {
+	wd, err := os.Getwd()
+	if err == nil {
+		WorkingDir = wd
+	}
+}
+
+// SetWorkingDir изменяет рабочую директорию для инструментов
+func SetWorkingDir(dir string) {
+	if dir != "" {
+		WorkingDir = dir
+	}
+}
+
+// resolvePath приводит путь к абсолютному, защищая от path traversal
+func resolvePath(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("path is empty")
+	}
+
+	cleaned := filepath.Clean(path)
+
+	// Если путь относительный, делаем его абсолютным относительно WorkingDir
+	if !filepath.IsAbs(cleaned) {
+		cleaned = filepath.Join(WorkingDir, cleaned)
+	}
+
+	cleaned = filepath.Clean(cleaned)
+
+	return cleaned, nil
+}
 
 // ============================================================
 // File Read Tool
 // ============================================================
 
-// FileReadTool позволяет читать содержимое файлов
 type FileReadTool struct{}
 
 func (t *FileReadTool) Name() string {
@@ -29,6 +72,7 @@ func (t *FileReadTool) Schema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"path": CreateStringParameter("path", "The file path to read (absolute or relative)", true),
 		},
+		"required": []string{"path"},
 	}
 }
 
@@ -38,14 +82,12 @@ func (t *FileReadTool) Execute(ctx context.Context, inputs map[string]string) (T
 		return ToolResult{Success: false, Error: "path parameter is required"}, nil
 	}
 
-	// Sanitize path
-	sanitizedPath := sanitizePath(path)
-	if sanitizedPath == "" {
-		return ToolResult{Success: false, Error: "Invalid path: path traversal detected"}, nil
+	resolvedPath, err := resolvePath(path)
+	if err != nil {
+		return ToolResult{Success: false, Error: fmt.Sprintf("Invalid path: %v", err)}, nil
 	}
 
-	// Read file
-	data, err := os.ReadFile(sanitizedPath)
+	data, err := os.ReadFile(resolvedPath)
 	if err != nil {
 		return ToolResult{
 			Success: false,
@@ -58,6 +100,7 @@ func (t *FileReadTool) Execute(ctx context.Context, inputs map[string]string) (T
 		Data: map[string]interface{}{
 			"content": string(data),
 			"size":    len(data),
+			"path":    resolvedPath,
 		},
 	}, nil
 }
@@ -66,7 +109,6 @@ func (t *FileReadTool) Execute(ctx context.Context, inputs map[string]string) (T
 // File Write Tool
 // ============================================================
 
-// FileWriteTool позволяет записывать данные в файлы
 type FileWriteTool struct{}
 
 func (t *FileWriteTool) Name() string {
@@ -84,6 +126,7 @@ func (t *FileWriteTool) Schema() map[string]interface{} {
 			"path":    CreateStringParameter("path", "The file path to write to (absolute or relative)", true),
 			"content": CreateStringParameter("content", "The content to write to the file", true),
 		},
+		"required": []string{"path", "content"},
 	}
 }
 
@@ -98,14 +141,12 @@ func (t *FileWriteTool) Execute(ctx context.Context, inputs map[string]string) (
 		return ToolResult{Success: false, Error: "content parameter is required"}, nil
 	}
 
-	// Sanitize path
-	sanitizedPath := sanitizePath(path)
-	if sanitizedPath == "" {
-		return ToolResult{Success: false, Error: "Invalid path: path traversal detected"}, nil
+	resolvedPath, err := resolvePath(path)
+	if err != nil {
+		return ToolResult{Success: false, Error: fmt.Sprintf("Invalid path: %v", err)}, nil
 	}
 
-	// Create directory if needed
-	dir := filepath.Dir(sanitizedPath)
+	dir := filepath.Dir(resolvedPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return ToolResult{
 			Success: false,
@@ -113,8 +154,7 @@ func (t *FileWriteTool) Execute(ctx context.Context, inputs map[string]string) (
 		}, nil
 	}
 
-	// Write file atomically via temp file
-	tmpFile := sanitizedPath + ".tmp"
+	tmpFile := resolvedPath + ".tmp"
 	if err := os.WriteFile(tmpFile, []byte(content), 0644); err != nil {
 		return ToolResult{
 			Success: false,
@@ -122,7 +162,8 @@ func (t *FileWriteTool) Execute(ctx context.Context, inputs map[string]string) (
 		}, nil
 	}
 
-	if err := os.Rename(tmpFile, sanitizedPath); err != nil {
+	if err := os.Rename(tmpFile, resolvedPath); err != nil {
+		os.Remove(tmpFile)
 		return ToolResult{
 			Success: false,
 			Error:   fmt.Sprintf("Failed to rename file: %v", err),
@@ -132,7 +173,7 @@ func (t *FileWriteTool) Execute(ctx context.Context, inputs map[string]string) (
 	return ToolResult{
 		Success: true,
 		Data: map[string]interface{}{
-			"path": sanitizedPath,
+			"path": resolvedPath,
 			"size": len(content),
 		},
 	}, nil
@@ -142,7 +183,6 @@ func (t *FileWriteTool) Execute(ctx context.Context, inputs map[string]string) (
 // Shell Execute Tool
 // ============================================================
 
-// ShellExecuteTool позволяет выполнять shell команды
 type ShellExecuteTool struct{}
 
 func (t *ShellExecuteTool) Name() string {
@@ -160,6 +200,7 @@ func (t *ShellExecuteTool) Schema() map[string]interface{} {
 			"command": CreateStringParameter("command", "The shell command to execute", true),
 			"timeout": CreateIntegerParameter("timeout", "Execution timeout in seconds (default: 30)", false),
 		},
+		"required": []string{"command"},
 	}
 }
 
@@ -169,30 +210,37 @@ func (t *ShellExecuteTool) Execute(ctx context.Context, inputs map[string]string
 		return ToolResult{Success: false, Error: "command parameter is required"}, nil
 	}
 
-	// Check for unsafe characters
-	if !isSafeCommand(command) {
-		return ToolResult{
-			Success: false,
-			Error:   "Command contains unsafe characters",
-		}, nil
-	}
-
-	// Set timeout
 	timeout := 30
 	if timeoutStr, ok := inputs["timeout"]; ok {
-		if _, err := fmt.Sscanf(timeoutStr, "%d", &timeout); err != nil {
+		if _, err := fmt.Sscanf(timeoutStr, "%d", &timeout); err != nil || timeout <= 0 {
 			timeout = 30
 		}
 	}
 
-	// Execute command (placeholder — real implementation uses os/exec)
-	output := fmt.Sprintf("Command execution: %s (timeout: %ds)", command, timeout)
+	execCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(execCtx, "sh", "-c", command)
+	output, err := cmd.CombinedOutput()
+
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			return ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("Failed to execute command: %v", err),
+			}, nil
+		}
+	}
 
 	return ToolResult{
 		Success: true,
 		Data: map[string]interface{}{
-			"output":  output,
-			"timeout": timeout,
+			"output":    string(output),
+			"exit_code": exitCode,
+			"timeout":   timeout,
 		},
 	}, nil
 }
@@ -201,7 +249,6 @@ func (t *ShellExecuteTool) Execute(ctx context.Context, inputs map[string]string
 // Time Get Tool
 // ============================================================
 
-// TimeGetTool возвращает текущее время
 type TimeGetTool struct{}
 
 func (t *TimeGetTool) Name() string {
@@ -215,6 +262,7 @@ func (t *TimeGetTool) Description() string {
 func (t *TimeGetTool) Schema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
+		"properties": map[string]interface{}{},
 	}
 }
 
@@ -236,7 +284,6 @@ func (t *TimeGetTool) Execute(ctx context.Context, inputs map[string]string) (To
 // Directory List Tool
 // ============================================================
 
-// DirListTool позволяет просматривать содержимое директорий
 type DirListTool struct{}
 
 func (t *DirListTool) Name() string {
@@ -262,13 +309,12 @@ func (t *DirListTool) Execute(ctx context.Context, inputs map[string]string) (To
 		path = p
 	}
 
-	sanitizedPath := sanitizePath(path)
-	if sanitizedPath == "" {
-		return ToolResult{Success: false, Error: "Invalid path: path traversal detected"}, nil
+	resolvedPath, err := resolvePath(path)
+	if err != nil {
+		return ToolResult{Success: false, Error: fmt.Sprintf("Invalid path: %v", err)}, nil
 	}
 
-	// Read directory contents
-	entries, err := os.ReadDir(sanitizedPath)
+	entries, err := os.ReadDir(resolvedPath)
 	if err != nil {
 		return ToolResult{
 			Success: false,
@@ -298,7 +344,7 @@ func (t *DirListTool) Execute(ctx context.Context, inputs map[string]string) (To
 	return ToolResult{
 		Success: true,
 		Data: map[string]interface{}{
-			"path":  sanitizedPath,
+			"path":  resolvedPath,
 			"items": items,
 			"count": len(items),
 		},
@@ -306,27 +352,395 @@ func (t *DirListTool) Execute(ctx context.Context, inputs map[string]string) (To
 }
 
 // ============================================================
-// Утилиты
+// Web Fetch Tool
 // ============================================================
 
-// sanitizePath очищает путь от попыток выхода за пределы
-func sanitizePath(path string) string {
-	// Убираем .. из начала пути
-	cleaned := filepath.Clean(path)
+type WebFetchTool struct{}
 
-	// Проверяем path traversal
-	if cleaned == ".." || filepath.IsAbs(cleaned) && len(cleaned) > 1 {
-		return cleaned
-	}
-
-	return cleaned
+func (t *WebFetchTool) Name() string {
+	return "web_fetch"
 }
 
-// isSafeCommand проверяет безопасность команды
-func isSafeCommand(cmd string) bool {
-	// Check command length
-	if len(cmd) > 200 {
-		return false
+func (t *WebFetchTool) Description() string {
+	return "Fetch content from a URL. Returns the response body as text."
+}
+
+func (t *WebFetchTool) Schema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"url":  CreateStringParameter("url", "The URL to fetch", true),
+			"method": CreateEnumParameter("method", "HTTP method", []string{"GET", "POST"}, false),
+		},
+		"required": []string{"url"},
 	}
-	return true
+}
+
+func (t *WebFetchTool) Execute(ctx context.Context, inputs map[string]string) (ToolResult, error) {
+	urlStr, ok := inputs["url"]
+	if !ok || urlStr == "" {
+		return ToolResult{Success: false, Error: "url parameter is required"}, nil
+	}
+
+	method := "GET"
+	if m, ok := inputs["method"]; ok && m != "" {
+		method = m
+	}
+
+	req, err := NewHTTPRequest(ctx, method, urlStr)
+	if err != nil {
+		return ToolResult{Success: false, Error: fmt.Sprintf("Failed to create request: %v", err)}, nil
+	}
+
+	return ToolResult{
+		Success: true,
+		Data: map[string]interface{}{
+			"url":     urlStr,
+			"content": req,
+		},
+	}, nil
+}
+
+// ============================================================
+// Web Search Tool
+// ============================================================
+
+type WebSearchTool struct{}
+
+func (t *WebSearchTool) Name() string {
+	return "web_search"
+}
+
+func (t *WebSearchTool) Description() string {
+	return "Search the web for information. Returns search results with snippets."
+}
+
+func (t *WebSearchTool) Schema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"query": CreateStringParameter("query", "The search query", true),
+		},
+		"required": []string{"query"},
+	}
+}
+
+func (t *WebSearchTool) Execute(ctx context.Context, inputs map[string]string) (ToolResult, error) {
+	query, ok := inputs["query"]
+	if !ok || query == "" {
+		return ToolResult{Success: false, Error: "query parameter is required"}, nil
+	}
+
+	searchURL := fmt.Sprintf("https://html.duckduckgo.com/html/?q=%s", strings.ReplaceAll(query, " ", "+"))
+	req, err := NewHTTPRequest(ctx, "GET", searchURL)
+	if err != nil {
+		return ToolResult{Success: false, Error: fmt.Sprintf("Search failed: %v", err)}, nil
+	}
+
+	return ToolResult{
+		Success: true,
+		Data: map[string]interface{}{
+			"query":   query,
+			"results": req,
+		},
+	}, nil
+}
+
+// ============================================================
+// Glob Tool — find files by pattern
+// ============================================================
+
+type GlobTool struct{}
+
+func (t *GlobTool) Name() string {
+	return "glob"
+}
+
+func (t *GlobTool) Description() string {
+	return "Find files matching a glob pattern. Returns list of matching file paths."
+}
+
+func (t *GlobTool) Schema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"pattern": CreateStringParameter("pattern", "The glob pattern to match (e.g. **/*.go)", true),
+			"path":    CreateStringParameter("path", "The directory to search in (default: current directory)", false),
+		},
+		"required": []string{"pattern"},
+	}
+}
+
+func (t *GlobTool) Execute(ctx context.Context, inputs map[string]string) (ToolResult, error) {
+	pattern, ok := inputs["pattern"]
+	if !ok || pattern == "" {
+		return ToolResult{Success: false, Error: "pattern parameter is required"}, nil
+	}
+
+	searchPath := "."
+	if p, ok := inputs["path"]; ok && p != "" {
+		searchPath = p
+	}
+
+	resolvedPath, err := resolvePath(searchPath)
+	if err != nil {
+		return ToolResult{Success: false, Error: fmt.Sprintf("Invalid path: %v", err)}, nil
+	}
+
+	fullPattern := filepath.Join(resolvedPath, pattern)
+	matches, err := filepath.Glob(fullPattern)
+	if err != nil {
+		return ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("Glob failed: %v", err),
+		}, nil
+	}
+
+	return ToolResult{
+		Success: true,
+		Data: map[string]interface{}{
+			"pattern": pattern,
+			"path":    resolvedPath,
+			"matches": matches,
+			"count":   len(matches),
+		},
+	}, nil
+}
+
+// ============================================================
+// Grep Tool — search content in files
+// ============================================================
+
+type GrepTool struct{}
+
+func (t *GrepTool) Name() string {
+	return "search_code"
+}
+
+func (t *GrepTool) Description() string {
+	return "Search for a pattern in files. Returns matching file paths with line numbers."
+}
+
+func (t *GrepTool) Schema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"pattern": CreateStringParameter("pattern", "The regex pattern to search for", true),
+			"path":    CreateStringParameter("path", "The directory to search in (default: current directory)", false),
+			"include": CreateStringParameter("include", "File pattern to include (e.g. *.go)", false),
+		},
+		"required": []string{"pattern"},
+	}
+}
+
+func (t *GrepTool) Execute(ctx context.Context, inputs map[string]string) (ToolResult, error) {
+	pattern, ok := inputs["pattern"]
+	if !ok || pattern == "" {
+		return ToolResult{Success: false, Error: "pattern parameter is required"}, nil
+	}
+
+	searchPath := "."
+	if p, ok := inputs["path"]; ok && p != "" {
+		searchPath = p
+	}
+
+	include := ""
+	if inc, ok := inputs["include"]; ok {
+		include = inc
+	}
+
+	resolvedPath, err := resolvePath(searchPath)
+	if err != nil {
+		return ToolResult{Success: false, Error: fmt.Sprintf("Invalid path: %v", err)}, nil
+	}
+
+	var results []map[string]interface{}
+
+	walkFn := func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+
+		if include != "" {
+			match, err := filepath.Match(include, info.Name())
+			if err != nil || !match {
+				return nil
+			}
+		}
+
+		file, err := os.Open(path)
+		if err != nil {
+			return nil
+		}
+		defer file.Close()
+
+		scanner := bufio.NewScanner(file)
+		lineNum := 0
+		for scanner.Scan() {
+			lineNum++
+			line := scanner.Text()
+			if strings.Contains(line, pattern) {
+				results = append(results, map[string]interface{}{
+					"file":   path,
+					"line":   lineNum,
+					"content": strings.TrimSpace(line),
+				})
+			}
+		}
+
+		return nil
+	}
+
+	filepath.Walk(resolvedPath, walkFn)
+
+	return ToolResult{
+		Success: true,
+		Data: map[string]interface{}{
+			"pattern": pattern,
+			"path":    resolvedPath,
+			"results": results,
+			"count":   len(results),
+		},
+	}, nil
+}
+
+// ============================================================
+// Calc Tool — evaluate math expressions
+// ============================================================
+
+type CalcTool struct{}
+
+func (t *CalcTool) Name() string {
+	return "calc"
+}
+
+func (t *CalcTool) Description() string {
+	return "Evaluate a mathematical expression and return the result."
+}
+
+func (t *CalcTool) Schema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"expression": CreateStringParameter("expression", "The mathematical expression to evaluate (e.g. 2 + 2 * 3)", true),
+		},
+		"required": []string{"expression"},
+	}
+}
+
+func (t *CalcTool) Execute(ctx context.Context, inputs map[string]string) (ToolResult, error) {
+	expr, ok := inputs["expression"]
+	if !ok || expr == "" {
+		return ToolResult{Success: false, Error: "expression parameter is required"}, nil
+	}
+
+	result, err := EvaluateExpression(expr)
+	if err != nil {
+		return ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to evaluate expression: %v", err),
+		}, nil
+	}
+
+	return ToolResult{
+		Success: true,
+		Data: map[string]interface{}{
+			"expression": expr,
+			"result":     result,
+		},
+	}, nil
+}
+
+// ============================================================
+// Edit Tool — edit file content with search/replace
+// ============================================================
+
+type EditTool struct{}
+
+func (t *EditTool) Name() string {
+	return "edit"
+}
+
+func (t *EditTool) Description() string {
+	return "Edit a file by finding and replacing text. Searches for oldString and replaces it with newString."
+}
+
+func (t *EditTool) Schema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"path":      CreateStringParameter("path", "The file path to edit (absolute or relative)", true),
+			"old_string": CreateStringParameter("old_string", "The text to search for", true),
+			"new_string": CreateStringParameter("new_string", "The replacement text", true),
+		},
+		"required": []string{"path", "old_string", "new_string"},
+	}
+}
+
+func (t *EditTool) Execute(ctx context.Context, inputs map[string]string) (ToolResult, error) {
+	path, ok := inputs["path"]
+	if !ok || path == "" {
+		return ToolResult{Success: false, Error: "path parameter is required"}, nil
+	}
+
+	oldString, ok := inputs["old_string"]
+	if !ok || oldString == "" {
+		return ToolResult{Success: false, Error: "old_string parameter is required"}, nil
+	}
+
+	newString := inputs["new_string"]
+
+	resolvedPath, err := resolvePath(path)
+	if err != nil {
+		return ToolResult{Success: false, Error: fmt.Sprintf("Invalid path: %v", err)}, nil
+	}
+
+	data, err := os.ReadFile(resolvedPath)
+	if err != nil {
+		return ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to read file: %v", err),
+		}, nil
+	}
+
+	content := string(data)
+	if !strings.Contains(content, oldString) {
+		return ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("old_string not found in file: %s", resolvedPath),
+		}, nil
+	}
+
+	newContent := strings.ReplaceAll(content, oldString, newString)
+
+	tmpFile := resolvedPath + ".tmp"
+	if err := os.WriteFile(tmpFile, []byte(newContent), 0644); err != nil {
+		return ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to write edited file: %v", err),
+		}, nil
+	}
+
+	if err := os.Rename(tmpFile, resolvedPath); err != nil {
+		os.Remove(tmpFile)
+		return ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to save edited file: %v", err),
+		}, nil
+	}
+
+	occurrences := strings.Count(content, oldString)
+
+	return ToolResult{
+		Success: true,
+		Data: map[string]interface{}{
+			"path":         resolvedPath,
+			"occurrences":  occurrences,
+			"old_length":   len(oldString),
+			"new_length":   len(newString),
+		},
+	}, nil
 }

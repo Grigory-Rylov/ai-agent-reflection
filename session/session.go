@@ -54,6 +54,8 @@ type Config struct {
 	LoopAlertEnabled bool
 	// LoopAlertMessage — пользовательский alert при обнаружении цикла
 	LoopAlertMessage string
+	// WorkingDir — текущая рабочая директория для инструментов
+	WorkingDir string
 }
 
 // DefaultConfig возвращает конфигурацию по умолчанию
@@ -85,23 +87,25 @@ type Session struct {
 	mu         sync.RWMutex
 	createdAt  time.Time
 	updatedAt  time.Time
+	workingDir string  // текущая рабочая директория для инструментов
 }
 
 // NewSession создаёт новую сессию
 func NewSession(config Config) *Session {
 	s := &Session{
-		config:    config,
-		messages:  make([]Message, 0),
+		config:     config,
+		messages:   make([]Message, 0),
 		loopHistory: make([]string, 0, config.MaxLoopHistory),
-		createdAt: time.Now(),
-		updatedAt: time.Now(),
+		createdAt:  time.Now(),
+		updatedAt:  time.Now(),
+		workingDir: config.WorkingDir,
 	}
 
-	// Добавляем системное сообщение
+	// Добавляем системное сообщение с рабочей директорией
 	if config.SystemPrompt != "" {
 		s.messages = append(s.messages, Message{
 			Role:    SystemRole,
-			Content: config.SystemPrompt,
+			Content: s.buildSystemMessage(),
 			Timestamp: time.Now(),
 		})
 	}
@@ -109,9 +113,64 @@ func NewSession(config Config) *Session {
 	// Если указан файл сессии — загружаем существующую
 	if config.SessionFile != "" {
 		s.Load()
+		// Обновляем системный промпт после загрузки (на случай если промпт изменился)
+		if config.SystemPrompt != "" {
+			s.UpdateSystemPrompt(config.SystemPrompt)
+		}
 	}
 
 	return s
+}
+
+// ============================================================
+// Обновление системного промпта
+// ============================================================
+
+// buildSystemMessage возвращает системный промпт с добавлением рабочей директории
+func (s *Session) buildSystemMessage() string {
+	content := s.config.SystemPrompt
+	if content == "" {
+		return ""
+	}
+	if s.workingDir != "" {
+		content += "\n\nWorking directory: " + s.workingDir
+	}
+	return content
+}
+
+// UpdateSystemPrompt обновляет системный промпт в истории сессии
+func (s *Session) UpdateSystemPrompt(newPrompt string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.config.SystemPrompt = newPrompt
+	updated := s.buildSystemMessage()
+
+	// Обновляем первое сообщение (системное) если оно есть
+	if len(s.messages) > 0 && s.messages[0].Role == SystemRole {
+		s.messages[0].Content = updated
+	} else {
+		// Добавляем системное сообщение если его нет
+		s.messages = append([]Message{{
+			Role:      SystemRole,
+			Content:   updated,
+			Timestamp: time.Now(),
+		}}, s.messages...)
+	}
+
+	if s.config.AutoSave {
+		s.saveNow()
+	}
+}
+
+// getSystemMessageIndex возвращает индекс системного сообщения в истории
+func (s *Session) getSystemMessageIndex() int {
+	for i, msg := range s.messages {
+		if msg.Role == SystemRole {
+			return i
+		}
+	}
+	return -1
 }
 
 // ============================================================
@@ -376,10 +435,11 @@ func (s *Session) Reset() {
 
 // SessionData представляет сериализуемую структуру сессии
 type SessionData struct {
-	PeerID    int64         `json:"peer_id"`
-	CreatedAt time.Time     `json:"created_at"`
-	UpdatedAt time.Time     `json:"updated_at"`
-	Messages  []MessageData `json:"messages"`
+	PeerID     int64         `json:"peer_id"`
+	CreatedAt  time.Time     `json:"created_at"`
+	UpdatedAt  time.Time     `json:"updated_at"`
+	Messages   []MessageData `json:"messages"`
+	WorkingDir string        `json:"working_dir,omitempty"`
 	// Loop detection state
 	LoopCount  int    `json:"loop_count"`
 	IsLooped   bool   `json:"is_looped"`
@@ -429,12 +489,13 @@ func (s *Session) saveInternal() error {
 	}
 
 	session := SessionData{
-		PeerID:    s.config.PeerID,
-		CreatedAt: s.createdAt,
-		UpdatedAt: s.updatedAt,
-		Messages:  messages,
-		LoopCount: s.loopCount,
-		IsLooped:  s.isLooped,
+		PeerID:     s.config.PeerID,
+		CreatedAt:  s.createdAt,
+		UpdatedAt:  s.updatedAt,
+		Messages:   messages,
+		WorkingDir: s.workingDir,
+		LoopCount:  s.loopCount,
+		IsLooped:   s.isLooped,
 	}
 
 	// Сохраняем последний ответ AI если цикл обнаружен
@@ -491,6 +552,11 @@ func (s *Session) Load() error {
 		}
 	}
 
+	// Восстанавливаем рабочую директорию
+	if session.WorkingDir != "" {
+		s.workingDir = session.WorkingDir
+	}
+
 	// Восстанавливаем состояние loop detection
 	s.loopCount = session.LoopCount
 	s.isLooped = session.IsLooped
@@ -503,6 +569,30 @@ func (s *Session) Load() error {
 	}
 
 	return nil
+}
+
+// ============================================================
+// Working Directory — управление рабочей директорией сессии
+// ============================================================
+
+// GetWorkingDir возвращает текущую рабочую директорию сессии
+func (s *Session) GetWorkingDir() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.workingDir
+}
+
+// SetWorkingDir изменяет рабочую директорию сессии и обновляет системное сообщение
+func (s *Session) SetWorkingDir(dir string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.workingDir = dir
+
+	// Обновляем системное сообщение с новой директорией
+	idx := s.getSystemMessageIndex()
+	if idx >= 0 {
+		s.messages[idx].Content = s.buildSystemMessage()
+	}
 }
 
 // ============================================================

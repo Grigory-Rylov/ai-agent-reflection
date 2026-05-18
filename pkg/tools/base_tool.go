@@ -79,10 +79,14 @@ func (r *Registry) ToOpenAISchema() []map[string]interface{} {
 	schema := make([]map[string]interface{}, 0)
 
 	for _, tool := range r.GetAll() {
+		// Правильный формат OpenAI: {"type": "function", "function": {...}}
 		item := map[string]interface{}{
-			"name":        tool.Name(),
-			"description": tool.Description(),
-			"parameters":  tool.Schema(),
+			"type": "function",
+			"function": map[string]interface{}{
+				"name":        tool.Name(),
+				"description": tool.Description(),
+				"parameters":  tool.Schema(),
+			},
 		}
 		schema = append(schema, item)
 	}

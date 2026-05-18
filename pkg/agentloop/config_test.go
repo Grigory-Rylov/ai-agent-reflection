@@ -51,14 +51,17 @@ func TestDefaultLoopConfig(t *testing.T) {
 	if !config.EnableLogging {
 		t.Error("expected EnableLogging to be true")
 	}
-	if !config.EnableCompression {
-		t.Error("expected EnableCompression to be true")
+	if config.EnableCompression {
+		t.Error("expected EnableCompression to be false (256k context, no need)")
 	}
 	if config.CompressionStrategy != compress.SummarizeStrategy {
 		t.Errorf("expected CompressionStrategy SummarizeStrategy, got %s", config.CompressionStrategy)
 	}
 	if config.CompressionTokenThreshold != 6000 {
 		t.Errorf("expected CompressionTokenThreshold 6000, got %d", config.CompressionTokenThreshold)
+	}
+	if config.CompressionPercentageThreshold != 0.75 {
+		t.Errorf("expected CompressionPercentageThreshold 0.75, got %f", config.CompressionPercentageThreshold)
 	}
 }
 
