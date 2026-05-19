@@ -179,16 +179,97 @@ func TestParseJSONToolCalls_NoToolCallsPartialJSON(t *testing.T) {
 
 func TestParseJSONToolCalls_JsonInCodeBlock(t *testing.T) {
 	input := "```json\n{\"name\": \"shell_execute\", \"arguments\": {\"command\": \"ls\"}}\n```"
+	// JSON inside code block should be ignored
 	expected := XMLParseResult{
-		Content: "```json\n\n```",
-		ToolCalls: []XMLToolCall{
-			{
-				Name: "shell_execute",
-				Args: map[string]string{"command": "ls"},
-			},
-		},
+		Content: input,
 	}
 	assertJSONParse(t, input, expected)
+}
+
+func TestParseJSONToolCalls_OutsideAndInsideCodeBlock(t *testing.T) {
+	input := "First: {\"name\": \"time_get\", \"arguments\": {}}\n\n```json\n{\"name\": \"shell_execute\", \"arguments\": {\"command\": \"ls\"}}\n```\n\nThen done."
+	result := ParseJSONToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call (only outside code block), got %d", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].Name != "time_get" {
+		t.Errorf("expected time_get, got %q", result.ToolCalls[0].Name)
+	}
+}
+
+func TestParseJSONToolCalls_CodeBlockNoLanguage(t *testing.T) {
+	input := "```\n{\"name\": \"shell_execute\", \"arguments\": {\"command\": \"ls\"}}\n```"
+	result := ParseJSONToolCalls(input)
+	if len(result.ToolCalls) != 0 {
+		t.Errorf("expected 0 tool calls inside code block, got %d", len(result.ToolCalls))
+	}
+	if result.Content != input {
+		t.Errorf("content should be unchanged inside code block")
+	}
+}
+
+func TestParseJSONToolCalls_InlineTripleBacktick(t *testing.T) {
+	// Triple backtick inline (not at line start) does NOT start a code block
+	input := "a```\n{\"name\": \"time_get\", \"arguments\": {}}\n```b"
+	result := ParseJSONToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call (inline backticks don't start code blocks), got %d", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].Name != "time_get" {
+		t.Errorf("expected time_get, got %q", result.ToolCalls[0].Name)
+	}
+}
+
+func TestParseJSONToolCalls_CodeBlockThenOutside(t *testing.T) {
+	input := "```\ncode here\n```\n{\"name\": \"time_get\", \"arguments\": {}}"
+	result := ParseJSONToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call outside code block, got %d", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].Name != "time_get" {
+		t.Errorf("expected time_get, got %q", result.ToolCalls[0].Name)
+	}
+}
+
+func TestParseJSONToolCalls_InlineBacktickNotCodeBlock(t *testing.T) {
+	input := "`json` {\"name\": \"time_get\", \"arguments\": {}}"
+	result := ParseJSONToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call (single backtick is not a code block), got %d", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].Name != "time_get" {
+		t.Errorf("expected time_get, got %q", result.ToolCalls[0].Name)
+	}
+}
+
+func TestParseJSONToolCalls_EmptyCodeBlock(t *testing.T) {
+	input := "before\n```\n```\nafter"
+	result := ParseJSONToolCalls(input)
+	if len(result.ToolCalls) != 0 {
+		t.Errorf("expected 0 tool calls, got %d", len(result.ToolCalls))
+	}
+	if result.Content != input {
+		t.Errorf("content should be unchanged for empty code block")
+	}
+}
+
+func TestParseJSONToolCalls_ToolCallBeforeCodeBlock(t *testing.T) {
+	input := "{\"name\": \"time_get\", \"arguments\": {}}\n```\n{\"name\": \"calc\", \"arguments\": {\"expression\": \"1\"}}\n```"
+	result := ParseJSONToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call (before code block), got %d", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].Name != "time_get" {
+		t.Errorf("expected time_get, got %q", result.ToolCalls[0].Name)
+	}
+}
+
+func TestParseJSONToolCalls_IndentedCodeBlock(t *testing.T) {
+	input := "   ```\n{\"name\": \"time_get\", \"arguments\": {}}\n   ```"
+	result := ParseJSONToolCalls(input)
+	if len(result.ToolCalls) != 0 {
+		t.Errorf("expected 0 tool calls inside indented code block, got %d", len(result.ToolCalls))
+	}
 }
 
 func TestParseJSONToolCalls_BoolArg(t *testing.T) {
