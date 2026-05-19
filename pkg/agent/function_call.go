@@ -74,6 +74,14 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 		}
 	}
 
+	// JSON fallback: проверяем responseText на наличие JSON tool calls
+	if result, used, err := a.jsonFallback(ctx, responseText, messages, session); used {
+		if err != nil {
+			return FunctionCallResult{}, fmt.Errorf("json fallback: %w", err)
+		}
+		return result, nil
+	}
+
 	// XML fallback: проверяем responseText на наличие XML tool calls
 	if result, used, err := a.xmlFallback(ctx, responseText, messages, session); used {
 		if err != nil {
@@ -131,6 +139,42 @@ func (a *agentImpl) xmlFallback(ctx context.Context, responseText string, messag
 		finalResponse, err := a.processXMLToolResults(ctx, messages, parsed.Content, toolCalls, result.ToolCalls, session)
 		if err != nil {
 			return FunctionCallResult{}, true, fmt.Errorf("process xml tool results: %w", err)
+		}
+		return FunctionCallResult{Success: true, Response: finalResponse}, true, nil
+	}
+
+	return FunctionCallResult{}, false, nil
+}
+
+// jsonFallback проверяет responseText на наличие JSON tool calls,
+// выполняет их и обрабатывает результаты
+func (a *agentImpl) jsonFallback(ctx context.Context, responseText string, messages []Message, session *session.Session) (FunctionCallResult, bool, error) {
+	parsed := ParseJSONToolCalls(responseText)
+	if len(parsed.ToolCalls) == 0 {
+		return FunctionCallResult{}, false, nil
+	}
+
+	toolCalls := convertXMLToolCalls(parsed.ToolCalls)
+
+	fmt.Printf("[TOOL] JSON fallback: detected %d tool calls in response text\n", len(toolCalls))
+
+	result := a.executeAllTools(ctx, toolCalls, session.GetPeerID())
+	if len(result.ToolCalls) > 0 {
+		hasSuccess := false
+		for _, tr := range result.ToolCalls {
+			if !tr.IsError {
+				hasSuccess = true
+				break
+			}
+		}
+		if !hasSuccess {
+			fmt.Printf("[TOOL] JSON fallback: all %d tool calls failed, skipping\n", len(toolCalls))
+			return FunctionCallResult{}, false, nil
+		}
+
+		finalResponse, err := a.processXMLToolResults(ctx, messages, parsed.Content, toolCalls, result.ToolCalls, session)
+		if err != nil {
+			return FunctionCallResult{}, true, fmt.Errorf("process json tool results: %w", err)
 		}
 		return FunctionCallResult{Success: true, Response: finalResponse}, true, nil
 	}
