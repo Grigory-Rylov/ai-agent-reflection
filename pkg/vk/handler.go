@@ -64,16 +64,19 @@ func NewBotHandlerWithPeerID(vkClient *BotClient, aiAgent agentloop.AgentLoop, l
 func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	h.ensureSession(peerID)
 
+	// Извлекаем команду из сообщения (удаляем mention если есть)
+	command := extractCommand(message)
+
 	// Команды бота не передаются модели
-	if strings.HasPrefix(message, "/") {
-		result := h.handleCommand(message, peerID)
+	if strings.HasPrefix(command, "/") {
+		result := h.handleCommand(command, peerID)
 		if result != "" {
 			return result
 		}
-		return fmt.Sprintf("Неизвестная команда: %s. Напишите /help для списка команд.", message)
+		return fmt.Sprintf("Неизвестная команда: %s. Напишите /help для списка команд.", command)
 	}
 
-	s := h.getSession(peerID)
+	s := h.aiAgent.GetSession(peerID)
 	if s != nil && s.IsLoopDetected() {
 		alert := s.GetLoopAlertMessage()
 		if alert != "" {
@@ -93,6 +96,25 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	return response
 }
 
+// extractCommand извлекает команду из сообщения, удаляя mention группы если есть
+// Формат mention: [clubXXXXXXXX|@clubXXXXXXXX] или [publicXXXXXXXX|@publicXXXXXXXX]
+func extractCommand(message string) string {
+	message = strings.TrimSpace(message)
+
+	// Проверяем наличие mention в начале: [xxx|@xxx]
+	if len(message) > 0 && message[0] == '[' {
+		// Ищем закрывающую скобку
+		closeIdx := strings.Index(message, "]")
+		if closeIdx > 0 && closeIdx < len(message)-1 {
+			// Извлекаем текст после mention
+			rest := strings.TrimSpace(message[closeIdx+1:])
+			return rest
+		}
+	}
+
+	return message
+}
+
 // ProcessMessageWithTimeout обрабатывает сообщение с таймаутом
 func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, timeout time.Duration) string {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -100,15 +122,18 @@ func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, tim
 
 	h.ensureSession(peerID)
 
-	if strings.HasPrefix(message, "/") {
-		result := h.handleCommand(message, peerID)
+	// Извлекаем команду из сообщения (удаляем mention если есть)
+	command := extractCommand(message)
+
+	if strings.HasPrefix(command, "/") {
+		result := h.handleCommand(command, peerID)
 		if result != "" {
 			return result
 		}
-		return fmt.Sprintf("Неизвестная команда: %s. Напишите /help для списка команд.", message)
+		return fmt.Sprintf("Неизвестная команда: %s. Напишите /help для списка команд.", command)
 	}
 
-	s := h.getSession(peerID)
+	s := h.aiAgent.GetSession(peerID)
 	if s != nil && s.IsLoopDetected() {
 		alert := s.GetLoopAlertMessage()
 		if alert != "" {
@@ -150,10 +175,16 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 			"/reset - Очистить историю диалога\n" +
 			"/newsession [path] - Сбросить сессию и сменить рабочую директорию\n" +
 			"/help - Показать эту справку\n" +
-			"/status - Показать статус агента (сообщения, символы, токены)"
+			"/status - Показать статус агента (сообщения, символы, токены)\n" +
+			"/test-llama - Тест соединения с llama-server"
+
+	case "/test-llama":
+		return h.handleTestLlama()
 
 	case "/status":
-		s := h.getSession(peerID)
+		// Сначала убедимся что сессия существует (загрузится из файла если есть)
+		h.aiAgent.EnsureSession(peerID)
+		s := h.aiAgent.GetSession(peerID)
 		status := "AI Agent активен и готов к работе."
 		if s != nil {
 			status += "\nPeer ID: " + fmt.Sprintf("%d", peerID) +
@@ -219,6 +250,28 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 	return fmt.Sprintf("Сессия сброшена.\nРабочая директория: %s", absPath)
 }
 
+// handleTestLlama тестирует соединение с llama-server
+func (h *BotHandler) handleTestLlama() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	defer cancel()
+
+	model, responseTime, tokensPerSec, err := h.aiAgent.TestLlamaServer(ctx)
+	if err != nil {
+		return fmt.Sprintf("Llama-server: ОШИБКА\n%v", err)
+	}
+
+	result := fmt.Sprintf("Llama-server: OK\n"+
+		"Модель: %s\n"+
+		"Время ответа: %v\n",
+		model, responseTime.Round(time.Millisecond))
+
+	if tokensPerSec > 0 {
+		result += fmt.Sprintf("Скорость: %.1f токенов/сек", tokensPerSec)
+	}
+
+	return result
+}
+
 // clearHandlerSession удаляет локальную сессию хендлера
 func (h *BotHandler) clearHandlerSession(peerID int64) {
 	h.sessionMu.Lock()
@@ -231,41 +284,23 @@ func (h *BotHandler) clearHandlerSession(peerID int64) {
 // ============================================================
 
 // ensureSession гарантирует существование сессии для пользователя
+// Делегирует создание сессии в AgentLoop
 func (h *BotHandler) ensureSession(peerID int64) {
-	h.sessionMu.Lock()
-	defer h.sessionMu.Unlock()
-
-	if _, exists := h.sessions[peerID]; !exists {
-		// Создаём новую сессию с PeerID
-		config := session.DefaultConfig()
-		config.PeerID = peerID
-		// SessionFile можно указать в конфиге для персистентности
-		h.sessions[peerID] = session.NewSession(config)
+	// Сессия создаётся в AgentLoop при обработке сообщений
+	// Здесь только проверяем, что AgentLoop инициализирован
+	if h.aiAgent == nil {
 		if h.log != nil {
-			h.log.InfoLogf("Created new session for peer %d", peerID)
+			h.log.WarnLogf("AgentLoop is nil, cannot ensure session for peer %d", peerID)
 		}
 	}
 }
 
-// getSession возвращает сессию пользователя
+// getSession возвращает сессию пользователя из AgentLoop
 func (h *BotHandler) getSession(peerID int64) *session.Session {
-	h.sessionMu.RLock()
-	defer h.sessionMu.RUnlock()
-	return h.sessions[peerID]
-}
-
-// cleanupInactiveSessions удаляет неактивные сессии (старше 24 часов)
-func (h *BotHandler) cleanupInactiveSessions() {
-	h.sessionMu.Lock()
-	defer h.sessionMu.Unlock()
-
-	// Сессии теперь управляются session.Session — просто очищаем map
-	// если нужно ограничить количество сессий в памяти
-	for peerID, s := range h.sessions {
-		// Можно добавить логику очистки на основе updatedAt
-		_ = s
-		_ = peerID
+	if h.aiAgent != nil {
+		return h.aiAgent.GetSession(peerID)
 	}
+	return nil
 }
 
 // ============================================================
@@ -319,9 +354,6 @@ func (h *BotHandler) runLongPoll(ctx context.Context, server, key string, ts int
 		case <-ctx.Done():
 			return nil
 		default:
-			// Очистка неактивных сессий
-			h.cleanupInactiveSessions()
-
 			// Получаем обновления (ждём до 25 секунд на сервере)
 			messages, newTs, err := h.vkClient.CheckUpdates(ctx, server, key, ts)
 			if err != nil {

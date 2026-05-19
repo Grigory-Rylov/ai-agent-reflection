@@ -6,6 +6,10 @@ llama-client
 # Configuration files with secrets
 config.json
 config.jsonc
+mcp_config.json
+
+# Session files (JSON)
+sessions/*.json
 .env
 *.env
 
@@ -22,3 +26,4 @@ Thumbs.db
 
 # Logs
 *.log
+debug_prompt.txt

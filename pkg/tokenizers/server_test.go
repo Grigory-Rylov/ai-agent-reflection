@@ -90,3 +90,41 @@ func TestLlamaServerTokenizerMaxContextLength(t *testing.T) {
 		t.Errorf("expected 4096, got %d", length)
 	}
 }
+
+func TestLlamaServerTokenizerCountMessagesTokens(t *testing.T) {
+	// Создаём тестовый сервер
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{
+			"usage": {
+				"prompt_tokens": 100
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	tokenizer := NewLlamaServerTokenizer(server.URL, "test", 8192)
+	messages := []Message{
+		{Role: "user", Content: "Hello"},
+		{Role: "assistant", Content: "Hi there!"},
+	}
+	count, err := tokenizer.CountMessagesTokens(messages)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if count != 100 {
+		t.Errorf("expected 100 tokens, got %d", count)
+	}
+}
+
+func TestLlamaServerTokenizerCountMessagesTokensEmpty(t *testing.T) {
+	tokenizer := NewLlamaServerTokenizer("http://localhost:8081", "test", 8192)
+	count, err := tokenizer.CountMessagesTokens([]Message{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected 0 tokens for empty messages, got %d", count)
+	}
+}

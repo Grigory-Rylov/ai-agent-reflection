@@ -8,14 +8,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
 
 type Message struct {
-	Role      string     `json:"role"`
-	Content   string     `json:"content"`
-	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"` // ID инструмента для сообщений с role=tool
+	Name       string     `json:"name,omitempty"`         // Имя инструмента для сообщений с role=tool
 }
 
 type StreamingConfig struct {
@@ -32,6 +35,8 @@ type StreamChunkEvent struct {
 	ToolCalls        []ToolCall
 	FinishReason     string
 	IsDone           bool
+	IsError          bool
+	ErrorCode        string
 	Timestamp        time.Time
 }
 
@@ -49,8 +54,11 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		// Читаем тело ответа для логирования ошибки
+		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("API error: status %d", resp.StatusCode)
+		fmt.Printf("[API ERROR] Status %d, response: %s\n", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("API error: status %d, body: %s", resp.StatusCode, string(body))
 	}
 
 	chunkChan := make(chan StreamChunkEvent, 100)
@@ -71,7 +79,24 @@ func (a *agentImpl) buildRequestJSON(config StreamingConfig, messages []Message)
 	}
 
 	jsonData, _ := json.Marshal(reqBody)
+
+	// В режиме отладки сохраняем промпт в файл
+	if a.config.Debug {
+		a.saveDebugPrompt(jsonData)
+	}
+
 	return jsonData
+}
+
+// saveDebugPrompt сохраняет промпт в debug_prompt.txt
+func (a *agentImpl) saveDebugPrompt(jsonData []byte) {
+	var prettyJSON bytes.Buffer
+	if err := json.Indent(&prettyJSON, jsonData, "", "  "); err != nil {
+		// Если не удалось форматировать - сохраняем как есть
+		os.WriteFile("debug_prompt.txt", jsonData, 0644)
+		return
+	}
+	os.WriteFile("debug_prompt.txt", prettyJSON.Bytes(), 0644)
 }
 
 func (a *agentImpl) createStreamingRequest(ctx context.Context, jsonData []byte) (*http.Request, error) {
@@ -160,6 +185,19 @@ func (a *agentImpl) processSSEData(lineStr string, chunkChan chan StreamChunkEve
 	}
 
 	event := a.parseSSEEvent(jsonData)
+
+	// Проверяем на ошибку (например, context_length_exceeded)
+	if event != nil && event.Error != nil {
+		chunkChan <- StreamChunkEvent{
+			Content:      fmt.Sprintf("API Error: %s", event.Error.Message),
+			IsError:      true,
+			ErrorCode:    event.Error.Code,
+			IsDone:       true,
+			Timestamp:    time.Now(),
+		}
+		return
+	}
+
 	if event == nil || len(event.Choices) == 0 {
 		return
 	}
@@ -196,6 +234,11 @@ func (a *agentImpl) processSSEData(lineStr string, chunkChan chan StreamChunkEve
 }
 
 type SSEEvent struct {
+	Error *struct {
+		Message string `json:"message"`
+		Type    string `json:"type"`
+		Code    string `json:"code"`
+	} `json:"error"`
 	Choices []struct {
 		Delta struct {
 			Content          string     `json:"content"`

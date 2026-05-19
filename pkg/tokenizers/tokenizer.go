@@ -11,6 +11,9 @@ type Tokenizer interface {
 	// CountTokens возвращает количество токенов в тексте
 	CountTokens(text string) (int, error)
 
+	// CountMessagesTokens возвращает количество токенов в массиве сообщений
+	CountMessagesTokens(messages []Message) (int, error)
+
 	// Encode кодирует текст в массив токенов
 	Encode(text string) ([]int, error)
 

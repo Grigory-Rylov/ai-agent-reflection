@@ -112,6 +112,67 @@ func TestRegistryGet(t *testing.T) {
 	})
 }
 
+func TestRegistryGetAliases(t *testing.T) {
+	t.Run("read_file finds file_read", func(t *testing.T) {
+		registry := NewRegistry()
+		registry.Register(&FileReadTool{})
+
+		tool, ok := registry.Get("read_file")
+		if !ok {
+			t.Error("expected read_file alias to find file_read")
+		}
+		if tool.Name() != "file_read" {
+			t.Errorf("expected file_read, got %q", tool.Name())
+		}
+	})
+
+	t.Run("write_file finds file_write", func(t *testing.T) {
+		registry := NewRegistry()
+		registry.Register(&FileWriteTool{})
+
+		tool, ok := registry.Get("write_file")
+		if !ok {
+			t.Error("expected write_file alias to find file_write")
+		}
+		if tool.Name() != "file_write" {
+			t.Errorf("expected file_write, got %q", tool.Name())
+		}
+	})
+
+	t.Run("list_dir finds file_list", func(t *testing.T) {
+		registry := NewRegistry()
+		registry.Register(&DirListTool{})
+
+		tool, ok := registry.Get("list_dir")
+		if !ok {
+			t.Error("expected list_dir alias to find file_list")
+		}
+		if tool.Name() != "file_list" {
+			t.Errorf("expected file_list, got %q", tool.Name())
+		}
+	})
+
+	t.Run("file_list alias works", func(t *testing.T) {
+		registry := NewRegistry()
+		registry.Register(&DirListTool{})
+
+		_, ok := registry.Get("file_list")
+		if !ok {
+			t.Error("expected file_list to be found")
+		}
+	})
+
+	t.Run("shell finds shell_execute", func(t *testing.T) {
+		registry := NewRegistry()
+		registry.Register(&ShellExecuteTool{})
+
+		_, ok := registry.Get("shell")
+		if !ok {
+			t.Error("expected shell alias to find shell_execute")
+		}
+	})
+}
+
 func TestRegistryToOpenAISchema(t *testing.T) {
 	t.Run("converts tools to OpenAI schema", func(t *testing.T) {
 		registry := NewRegistry()

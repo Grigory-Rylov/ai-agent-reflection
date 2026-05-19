@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/opencode/llama-client/pkg/tokenizers"
 )
 
 // ============================================================
@@ -180,6 +182,18 @@ func (m *mockTokenizer) CountTokens(text string) (int, error) {
 		return m.countFunc(text)
 	}
 	return len(text), nil
+}
+
+func (m *mockTokenizer) CountMessagesTokens(messages []tokenizers.Message) (int, error) {
+	total := 0
+	for _, msg := range messages {
+		count, err := m.CountTokens(msg.Content)
+		if err != nil {
+			return 0, err
+		}
+		total += count
+	}
+	return total, nil
 }
 
 func (m *mockTokenizer) Encode(text string) ([]int, error) {

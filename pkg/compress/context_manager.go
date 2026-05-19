@@ -112,15 +112,10 @@ func (m *ContextManager) CheckAndCompress(ctx context.Context, peerID int64, mes
 
 // countTokens подсчитывает токены в сообщениях
 func (m *ContextManager) countTokens(messages []tokenizers.Message) (int, error) {
-	total := 0
-	for _, msg := range messages {
-		count, err := m.tokenizer.CountTokens(msg.Content)
-		if err != nil {
-			return 0, err
-		}
-		total += count
+	if len(messages) == 0 {
+		return 0, nil
 	}
-	return total, nil
+	return m.tokenizer.CountMessagesTokens(messages)
 }
 
 // compressContext выполняет сжатие контекста

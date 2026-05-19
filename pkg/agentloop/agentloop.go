@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/opencode/llama-client/pkg/agent"
 	"github.com/opencode/llama-client/pkg/compress"
@@ -36,14 +37,20 @@ type AgentLoop interface {
 	// ResetSession сбрасывает сессию пользователя
 	ResetSession(peerID int64)
 
-	// GetSession возвращает сессию пользователя
+	// GetSession возвращает сессию пользователя (nil если не существует)
 	GetSession(peerID int64) *session.Session
+
+	// EnsureSession гарантирует существование сессии (загружает из файла если нужно)
+	EnsureSession(peerID int64) *session.Session
 
 	// SetThinkingCallback устанавливает callback для отправки thinking сообщений
 	SetThinkingCallback(cb func(peerID int64, content string) error)
 
 	// GetContextStats возвращает статистику контекста: символы, токены
 	GetContextStats(peerID int64) (charCount int, tokenCount int, err error)
+
+	// TestLlamaServer тестирует соединение с llama-server и возвращает информацию о модели
+	TestLlamaServer(ctx context.Context) (model string, responseTime time.Duration, tokensPerSec float64, err error)
 }
 
 // ============================================================
@@ -86,6 +93,9 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 
 	// Инициализируем токенайзер (всегда)
 	tokenizer := tokenizers.NewLlamaServerTokenizer(config.LlamaServerURL, config.Model, config.MaxTokens)
+	if config.EnableLogging {
+		tokenizer.SetDebug(true)
+	}
 
 	// Инициализируем ContextManager если включено сжатие
 	var contextMgr *compress.ContextManager
@@ -124,20 +134,32 @@ func (al *agentLoop) GetContextStats(peerID int64) (charCount int, tokenCount in
 	}
 
 	history := s.GetHistory()
-	var sb strings.Builder
-	for _, msg := range history {
-		sb.WriteString(string(msg.Role))
-		sb.WriteString(": ")
-		sb.WriteString(msg.Content)
-		sb.WriteString("\n")
-	}
-	text := sb.String()
-	charCount = len([]rune(text))
 
-	if al.tokenizer != nil {
-		tokenCount, err = al.tokenizer.CountTokens(text)
+	// Подсчёт символов
+	for _, msg := range history {
+		charCount += len([]rune(msg.Content))
+	}
+
+	// Подсчёт токенов через новый метод
+	if al.tokenizer != nil && len(history) > 0 {
+		// Конвертируем историю в формат tokenizers.Message
+		messages := make([]tokenizers.Message, len(history))
+		for i, msg := range history {
+			messages[i] = tokenizers.Message{
+				Role:    string(msg.Role),
+				Content: msg.Content,
+			}
+		}
+		tokenCount, err = al.tokenizer.CountMessagesTokens(messages)
 		if err != nil {
+			if al.log != nil {
+				al.log.WarnLogf("Failed to count tokens for peer %d: %v", peerID, err)
+			}
 			tokenCount = 0
+		}
+	} else if al.tokenizer == nil && len(history) > 0 {
+		if al.log != nil {
+			al.log.WarnLogf("Tokenizer is nil, cannot count tokens for peer %d", peerID)
 		}
 	}
 
@@ -262,12 +284,18 @@ func (al *agentLoop) getOrCreateSession(peerID int64) *session.Session {
 		}
 	}
 
+	// Логируем информацию о файле сессии
+	if al.log != nil {
+		al.log.InfoLogf("Creating session for peer %d, SessionFile: '%s'", peerID, config.SessionFile)
+	}
+
 	sess := session.NewSession(config)
-	al.sessionM.Store(peerID, sess)
 
 	if al.log != nil {
-		al.log.InfoLogf("Created new session for peer %d", peerID)
+		al.log.InfoLogf("Created new session for peer %d, history length: %d", peerID, sess.HistoryLength())
 	}
+
+	al.sessionM.Store(peerID, sess)
 
 	return sess
 }
@@ -419,6 +447,7 @@ func (al *agentLoop) buildAgentConfig() agent.Config {
 		EnableContextCompression:      false,
 		CompressionTokenThreshold:     al.config.CompressionTokenThreshold,
 		CompressionPercentageThreshold: al.config.CompressionPercentageThreshold,
+		Debug:                         al.config.Debug,
 	}
 }
 
@@ -620,14 +649,32 @@ func (al *agentLoop) ResetSession(peerID int64) {
 // GetSession возвращает сессию пользователя
 func (al *agentLoop) GetSession(peerID int64) *session.Session {
 	if val, ok := al.sessionM.Load(peerID); ok {
-		return val.(*session.Session)
+		sess := val.(*session.Session)
+		if al.log != nil {
+			al.log.DebugLogf("GetSession: found session for peer %d, history length: %d", peerID, sess.HistoryLength())
+		}
+		return sess
+	}
+	if al.log != nil {
+		al.log.DebugLogf("GetSession: no session found for peer %d", peerID)
 	}
 	return nil
+}
+
+// EnsureSession гарантирует существование сессии (загружает из файла если нужно)
+func (al *agentLoop) EnsureSession(peerID int64) *session.Session {
+	return al.getOrCreateSession(peerID)
 }
 
 // SetThinkingCallback устанавливает callback для отправки thinking сообщений
 func (al *agentLoop) SetThinkingCallback(cb func(peerID int64, content string) error) {
 	al.thinkingCallback = cb
+}
+
+// TestLlamaServer тестирует соединение с llama-server
+func (al *agentLoop) TestLlamaServer(ctx context.Context) (model string, responseTime time.Duration, tokensPerSec float64, err error) {
+	result := TestLlamaServer(ctx, al.config.LlamaServerURL, al.config.Model)
+	return result.Model, result.ResponseTime, result.TokensPerSec, result.Error
 }
 
 // ============================================================

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -173,8 +174,8 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 		}
 	}
 
-	// Добавляем сообщение пользователя в сессию
-	s.AddUserMessage(message)
+	// ПРИМЕЧАНИЕ: сообщение уже добавлено в сессию на уровне agentloop
+	// Если используете agent напрямую - добавьте сообщение в сессию перед вызовом ProcessMessage
 
 	// Получаем историю для отправки в API
 	history := s.GetHistory()
@@ -282,12 +283,35 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 	}
 
 	// Собираем ответ с reasoning
-	responseText, reasoningText := a.collectStreamResponse(chunkChan)
+	responseText, reasoningText, err := a.collectStreamResponse(chunkChan)
+	if err != nil {
+		return "", err
+	}
 
-	// Отправляем reasoning в thinkingPeerID если есть
+	// Проверяем на XML tool calls в reasoning
+	if reasoningText != "" {
+		parsed := ParseXMLToolCalls(reasoningText)
+		if len(parsed.ToolCalls) > 0 {
+			// Есть XML tool calls - нужно переключиться на processWithTools
+			result, err := a.processWithTools(ctx, messages, session, 5)
+			if err != nil {
+				return "", err
+			}
+			return result.Response, nil
+		}
+	}
+
+	// Отправляем очищенный reasoning в thinkingPeerID (без XML тегов)
 	if reasoningText != "" && a.thinkingCallback != nil {
-		if err := a.thinkingCallback(session.GetPeerID(), reasoningText); err != nil {
-			fmt.Printf("[WARN] Failed to send thinking message: %v\n", err)
+		cleanedReasoning := reasoningText
+		parsed := ParseXMLToolCalls(reasoningText)
+		if len(parsed.ToolCalls) > 0 {
+			cleanedReasoning = parsed.Content
+		}
+		if cleanedReasoning != "" {
+			if err := a.thinkingCallback(session.GetPeerID(), cleanedReasoning); err != nil {
+				fmt.Printf("[WARN] Failed to send thinking message: %v\n", err)
+			}
 		}
 	}
 
@@ -309,10 +333,27 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 func (a *agentImpl) convertHistoryToAPIMessages(history []session.Message) []Message {
 	apiMessages := make([]Message, len(history))
 	for i, msg := range history {
-		apiMessages[i] = Message{
-			Role:    string(msg.Role),
-			Content: msg.Content,
+		apiMsg := Message{
+			Role:       string(msg.Role),
+			Content:    msg.Content,
+			ToolCallID: msg.ToolCallID,
+			Name:       msg.Name,
 		}
+		// Конвертируем tool_calls если есть
+		if len(msg.ToolCalls) > 0 {
+			apiMsg.ToolCalls = make([]ToolCall, len(msg.ToolCalls))
+			for j, tc := range msg.ToolCalls {
+				apiMsg.ToolCalls[j] = ToolCall{
+					ID:   tc.ID,
+					Type: tc.Type,
+					Function: ToolCallFunction{
+						Name:      tc.Function.Name,
+						Arguments: json.RawMessage(tc.Function.Arguments),
+					},
+				}
+			}
+		}
+		apiMessages[i] = apiMsg
 	}
 	return apiMessages
 }

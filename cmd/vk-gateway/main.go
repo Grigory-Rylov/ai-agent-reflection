@@ -12,9 +12,13 @@ import (
 
 	"github.com/opencode/llama-client/pkg/agentloop"
 	"github.com/opencode/llama-client/pkg/logger"
+	"github.com/opencode/llama-client/pkg/mcp"
 	"github.com/opencode/llama-client/pkg/tools"
 	"github.com/opencode/llama-client/pkg/vk"
 )
+
+// Version - текущая версия бота, инкрементируйте при изменениях
+const Version = "2026.05.19.184501"
 
 // ============================================================
 // VK Gateway — точка входа для VK Bot Gateway режима
@@ -35,7 +39,9 @@ func main() {
 	// Инициализируем логгер
 	logConfig := logger.DefaultConfig()
 	logConfig.Level = logger.LevelDebug
-	if !*debug {
+	if *debug {
+		logConfig.File = "debug.log"
+	} else {
 		logConfig.Level = logger.LevelInfo
 	}
 	log, err := logger.New(logConfig)
@@ -44,7 +50,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	log.InfoLog("VK Bot Gateway starting...")
+	// Инициализируем глобальный логгер для DebugToFile
+	logger.InitGlobalLogger(logConfig)
+
+	log.InfoLog("VK Bot Gateway starting... (v%s)", Version)
 
 	// Создаём VK Bot Client
 	vkClient := vk.NewBotClient(config.TokenVK)
@@ -62,6 +71,22 @@ func main() {
 	toolRegistry.Register(&tools.GrepTool{})
 	toolRegistry.Register(&tools.CalcTool{})
 	toolRegistry.Register(&tools.EditTool{})
+
+	// Инициализируем MCP Manager если указан конфиг
+	var mcpManager *mcp.Manager
+	if config.MCPConfigPath != "" {
+		mcpManager = mcp.NewManager(toolRegistry, log)
+		mcpConfig, err := loadMCPConfig(config.MCPConfigPath)
+		if err != nil {
+			log.WarnLogf("Failed to load MCP config: %v", err)
+		} else {
+			if err := mcpManager.LoadConfig(context.Background(), mcpConfig); err != nil {
+				log.WarnLogf("Failed to initialize MCP servers: %v", err)
+			} else {
+				log.InfoLogf("MCP servers initialized: %s", mcpManager.Stats())
+			}
+		}
+	}
 
 // Создаём конфигурацию AgentLoop
 	loopConfig := agentloop.DefaultLoopConfig()
@@ -82,12 +107,18 @@ func main() {
 	loopConfig.EnableThinking = true
 	loopConfig.ThinkingPeerID = config.ThinkingPeerID
 	loopConfig.EnableLogging = true
+	loopConfig.Debug = *debug
 
 	// Создаём AgentLoop
 	agentLoop, err := agentloop.NewAgentLoop(loopConfig, vkClient, toolRegistry)
 	if err != nil {
 		println("Error creating AgentLoop:", err.Error())
 		os.Exit(1)
+	}
+
+	// Загружаем сессию для основного peerID при старте
+	if config.PeerID > 0 {
+		agentLoop.EnsureSession(config.PeerID)
 	}
 
 	// Устанавливаем callback для отправки thinking сообщений
@@ -112,6 +143,9 @@ func main() {
 	go func() {
 		<-sigChan
 		log.InfoLog("Shutting down...")
+		if mcpManager != nil {
+			mcpManager.Close()
+		}
 		cancel()
 	}()
 
@@ -119,7 +153,8 @@ func main() {
 	if config.PeerID > 0 {
 		startMsg := fmt.Sprintf("🤖 AI Agent запущен и готов к работе.\nРабочая директория: %s\nДоступно инструментов: %d",
 			tools.WorkingDir, len(toolRegistry.GetAll()))
-		if _, err := vkClient.SendMessage(config.PeerID, startMsg); err != nil {
+		keyboard := vk.CreateCommandKeyboard()
+		if _, err := vkClient.SendMessageWithKeyboard(config.PeerID, startMsg, keyboard); err != nil {
 			log.WarnLogf("Failed to send startup message: %v", err)
 		}
 	}
@@ -147,6 +182,7 @@ type Config struct {
 	TokenVK        string  `json:"token_vk"`
 	PeerID         int64   `json:"peer_id"`          // Основной чат для ответов
 	ThinkingPeerID int64   `json:"thinking_peer_id"` // Чат для thinking сообщений
+	MCPConfigPath  string  `json:"mcp_config_path"`  // Путь к конфигурации MCP серверов
 }
 
 // loadConfig загружает конфигурацию из файла
@@ -162,4 +198,19 @@ func loadConfig(path string) (Config, error) {
 	}
 
 	return config, nil
+}
+
+// loadMCPConfig загружает конфигурацию MCP серверов
+func loadMCPConfig(path string) (*mcp.Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var config mcp.Config
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, err
+	}
+
+	return &config, nil
 }

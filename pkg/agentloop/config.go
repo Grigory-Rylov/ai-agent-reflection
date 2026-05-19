@@ -41,6 +41,9 @@ type LoopConfig struct {
 	EnableLogging bool
 	Logger        Logger
 
+	// Debug
+	Debug bool // Сохранять промпт в debug_prompt.txt
+
 	// Context Compression
 	EnableCompression         bool
 	CompressionStrategy       compress.CompressionStrategy

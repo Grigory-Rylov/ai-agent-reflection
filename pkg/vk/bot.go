@@ -512,8 +512,7 @@ func (c *BotClient) SendThinking(peerID int64, content string) (int64, error) {
 		return 0, fmt.Errorf("empty thinking content")
 	}
 
-	thinkingText := fmt.Sprintf("[THINKING] %s", content)
-	return c.SendMessage(peerID, thinkingText)
+	return c.SendMessage(peerID, content)
 }
 
 // ============================================================
@@ -549,5 +548,22 @@ func CreateKeyboard(buttons [][]map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{
 		"inline": false,
 		"buttons": buttons,
+	}
+}
+
+// CreateCommandKeyboard создаёт клавиатуру с командами бота
+func CreateCommandKeyboard() map[string]interface{} {
+	return map[string]interface{}{
+		"inline": false,
+		"buttons": [][]map[string]interface{}{
+			{
+				{"action": map[string]interface{}{"type": "text", "label": "/help"}, "color": "primary"},
+				{"action": map[string]interface{}{"type": "text", "label": "/status"}, "color": "secondary"},
+			},
+			{
+				{"action": map[string]interface{}{"type": "text", "label": "/test-llama"}, "color": "secondary"},
+				{"action": map[string]interface{}{"type": "text", "label": "/reset"}, "color": "negative"},
+			},
+		},
 	}
 }

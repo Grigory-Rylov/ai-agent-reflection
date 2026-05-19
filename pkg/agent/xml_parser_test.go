@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -225,16 +226,16 @@ func TestParseXMLToolCalls_PartialToolCall(t *testing.T) {
 }
 
 func TestParseXMLToolCalls_MissingCloseToolCall(t *testing.T) {
-	input := `<tool_call>
-<function=time_get>
+	input := `<tool_call<function=time_get>
 </function>`
-	// Missing </tool_call> — should flush all content
+	// Has <tool_call< opening but missing </tool_call< closing
+	// Parser should still find the tool call via fallback to no-wrapper format
 	result := ParseXMLToolCalls(input)
-	if len(result.ToolCalls) != 0 {
-		t.Errorf("expected 0 tool calls, got %d", len(result.ToolCalls))
+	if len(result.ToolCalls) != 1 {
+		t.Errorf("expected 1 tool call, got %d", len(result.ToolCalls))
 	}
-	if result.Content != input {
-		t.Errorf("expected content %q, got %q", input, result.Content)
+	if result.ToolCalls[0].Name != "time_get" {
+		t.Errorf("expected time_get, got %q", result.ToolCalls[0].Name)
 	}
 }
 
@@ -551,4 +552,199 @@ func TestParseXMLToolCalls_ExtraSpacesInTags(t *testing.T) {
 		},
 	}
 	assertParse(t, input, expected)
+}
+
+// ============================================================
+// Тесты для формата БЕЗ ิ обёртки
+// ============================================================
+
+func TestParseXMLToolCalls_NoWrapper_FileRead(t *testing.T) {
+	input := `<function=read_file>
+<parameter=path>
+/Users/g.rylov/Documents/projects/go/confluence_exporter/out/VK Android • Automation.html
+</parameter>
+</function>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
+	}
+	tc := result.ToolCalls[0]
+	if tc.Name != "read_file" {
+		t.Errorf("expected read_file, got %q", tc.Name)
+	}
+	expectedPath := "/Users/g.rylov/Documents/projects/go/confluence_exporter/out/VK Android • Automation.html"
+	if tc.Args["path"] != expectedPath {
+		t.Errorf("expected path %q, got %q", expectedPath, tc.Args["path"])
+	}
+}
+
+func TestParseXMLToolCalls_NoWrapper_Simple(t *testing.T) {
+	input := `<function=time_get>
+</function>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].Name != "time_get" {
+		t.Errorf("expected time_get, got %q", result.ToolCalls[0].Name)
+	}
+}
+
+func TestParseXMLToolCalls_NoWrapper_WithParams(t *testing.T) {
+	input := `<function=file_write>
+<parameter=path>/tmp/test.txt</parameter>
+<parameter=content>Hello world</parameter>
+</function>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
+	}
+	tc := result.ToolCalls[0]
+	if tc.Name != "file_write" {
+		t.Errorf("expected file_write, got %q", tc.Name)
+	}
+	if tc.Args["path"] != "/tmp/test.txt" {
+		t.Errorf("expected path /tmp/test.txt, got %q", tc.Args["path"])
+	}
+	if tc.Args["content"] != "Hello world" {
+		t.Errorf("expected content Hello world, got %q", tc.Args["content"])
+	}
+}
+
+func TestParseXMLToolCalls_NoWrapper_MultipleTools(t *testing.T) {
+	input := `<function=time_get>
+</function>
+<function=calc>
+<parameter=expression>2 + 2</parameter>
+</function>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 2 {
+		t.Fatalf("expected 2 tool calls, got %d", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].Name != "time_get" {
+		t.Errorf("expected time_get, got %q", result.ToolCalls[0].Name)
+	}
+	if result.ToolCalls[1].Name != "calc" {
+		t.Errorf("expected calc, got %q", result.ToolCalls[1].Name)
+	}
+}
+
+func TestParseXMLToolCalls_NoWrapper_WithText(t *testing.T) {
+	input := `Let me read the file.
+
+<function=read_file>
+<parameter=path>/tmp/test.txt</parameter>
+</function>
+
+Here is the result.`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].Name != "read_file" {
+		t.Errorf("expected read_file, got %q", result.ToolCalls[0].Name)
+	}
+	// Content должен содержать текст до и после
+	if !strings.Contains(result.Content, "Let me read the file") {
+		t.Errorf("content should contain 'Let me read the file', got %q", result.Content)
+	}
+}
+
+func TestParseXMLToolCalls_NoWrapper_MultilineParam(t *testing.T) {
+	input := `<function=file_write>
+<parameter=content>
+Line 1
+Line 2
+Line 3
+</parameter>
+<parameter=path>/tmp/test.txt</parameter>
+</function>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
+	}
+	tc := result.ToolCalls[0]
+	if !strings.Contains(tc.Args["content"], "Line 1") {
+		t.Errorf("content should contain 'Line 1', got %q", tc.Args["content"])
+	}
+}
+
+func TestParseXMLToolCalls_NoWrapper_NestedTags(t *testing.T) {
+	input := `<function=file_write>
+<parameter=content><div><p>Hello</p></div></parameter>
+<parameter=path>/tmp/test.html</parameter>
+</function>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
+	}
+	tc := result.ToolCalls[0]
+	expected := "<div><p>Hello</p></div>"
+	if tc.Args["content"] != expected {
+		t.Errorf("expected %q, got %q", expected, tc.Args["content"])
+	}
+}
+
+// ============================================================
+// Тесты для игнорирования XML в code blocks
+// ============================================================
+
+func TestParseXMLToolCalls_CodeBlockIgnored(t *testing.T) {
+	input := "Here is an example:\n```xml\n<function=time_get>\n</function>\n```\nNo tool calls here."
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 0 {
+		t.Errorf("expected 0 tool calls inside code block, got %d", len(result.ToolCalls))
+	}
+}
+
+func TestParseXMLToolCalls_CodeBlockWithRealToolAfter(t *testing.T) {
+	input := "```xml\n<function=time_get>\n</function>\n```\n\n<function=calc>\n<parameter=expression>1+1</parameter>\n</function>"
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call outside code block, got %d", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].Name != "calc" {
+		t.Errorf("expected calc, got %q", result.ToolCalls[0].Name)
+	}
+}
+
+func TestParseXMLToolCalls_CodeBlockWithRealToolBefore(t *testing.T) {
+	input := "<function=time_get>\n</function>\n\n```xml\n<function=calc>\n<parameter=expression>1+1</parameter>\n</function>\n```"
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call outside code block, got %d", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].Name != "time_get" {
+		t.Errorf("expected time_get, got %q", result.ToolCalls[0].Name)
+	}
+}
+
+func TestParseXMLToolCalls_MultipleCodeBlocks(t *testing.T) {
+	input := "```xml\n<function=time_get>\n</function>\n```\nSome text\n```xml\n<function=calc>\n</function>\n```\n<function=file_read>\n<parameter=path>/tmp/test.txt</parameter>\n</function>"
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call outside code blocks, got %d", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].Name != "file_read" {
+		t.Errorf("expected file_read, got %q", result.ToolCalls[0].Name)
+	}
+}
+
+// Тест формата который модель реально выдаёт с префиксом
+func TestParseXMLToolCalls_NoWrapper_WithContentStartPrefix(t *testing.T) {
+	input := `_CONTENT_START__
+<function=read_file>
+<parameter=path>
+/Users/g.rylov/Documents/projects/go/confluence_exporter/out/Разработка_ Документация/Android.html
+</parameter>
+</function>
+___`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d (content: %q)", len(result.ToolCalls), result.Content)
+	}
+	tc := result.ToolCalls[0]
+	if tc.Name != "read_file" {
+		t.Errorf("expected read_file, got %q", tc.Name)
+	}
 }

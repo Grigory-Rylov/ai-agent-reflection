@@ -53,10 +53,38 @@ func (r *Registry) Register(tool Tool) {
 	r.tools[tool.Name()] = tool
 }
 
-// Get возвращает инструмент по имени
+// Get возвращает инструмент по имени с поддержкой алиасов
 func (r *Registry) Get(name string) (Tool, bool) {
-	tool, ok := r.tools[name]
-	return tool, ok
+	// Прямой поиск
+	if tool, ok := r.tools[name]; ok {
+		return tool, true
+	}
+
+	// Алиасы для совместимости с разными форматами вызова
+	aliases := map[string]string{
+		"read_file":    "file_read",
+		"write_file":   "file_write",
+		"list_dir":     "file_list",
+		"list_files":   "file_list",
+		"dir_list":     "file_list",
+		"shell":        "shell_execute",
+		"execute":      "shell_execute",
+		"web_fetch":    "web_fetch",
+		"fetch":        "web_fetch",
+		"web_search":   "web_search",
+		"search":       "web_search",
+		"grep_search":  "grep",
+		"find_files":   "glob",
+		"calculate":    "calc",
+		"edit_file":    "edit",
+	}
+
+	if alias, ok := aliases[name]; ok {
+		tool, ok := r.tools[alias]
+		return tool, ok
+	}
+
+	return nil, false
 }
 
 // GetAll возвращает все зарегистрированные инструменты

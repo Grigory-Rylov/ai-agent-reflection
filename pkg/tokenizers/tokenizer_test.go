@@ -125,6 +125,10 @@ func (m *mockTokenizer) CountTokens(text string) (int, error) {
 	return m.count, m.err
 }
 
+func (m *mockTokenizer) CountMessagesTokens(messages []Message) (int, error) {
+	return m.count * len(messages), m.err
+}
+
 func (m *mockTokenizer) Encode(text string) ([]int, error) {
 	return nil, nil
 }

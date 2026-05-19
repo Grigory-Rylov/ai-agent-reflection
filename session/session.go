@@ -21,13 +21,30 @@ const (
 	SystemRole    Role = "system"
 	UserRole      Role = "user"
 	AssistantRole Role = "assistant"
+	ToolRole      Role = "tool"
 )
+
+// MsgToolCall представляет вызов инструмента в сообщении ассистента
+type MsgToolCall struct {
+	ID       string             `json:"id"`
+	Type     string             `json:"type,omitempty"`
+	Function MsgToolCallFunc    `json:"function,omitempty"`
+}
+
+// MsgToolCallFunc представляет функцию в tool call
+type MsgToolCallFunc struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
 
 // Message представляет одно сообщение в истории диалога
 type Message struct {
-	Role    Role   `json:"role"`
-	Content string `json:"content"`
-	Timestamp time.Time `json:"timestamp,omitempty"`
+	Role       Role          `json:"role"`
+	Content    string        `json:"content"`
+	ToolCalls  []MsgToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string        `json:"tool_call_id,omitempty"` // ID инструмента для сообщений с role=tool
+	Name       string        `json:"name,omitempty"`         // Имя инструмента для сообщений с role=tool
+	Timestamp  time.Time     `json:"timestamp,omitempty"`
 }
 
 // ============================================================
@@ -212,6 +229,47 @@ func (s *Session) AddAssistantMessage(content string) {
 
 	// Проверка на зацикливание
 	s.checkLoop(content)
+
+	if s.config.AutoSave {
+		s.saveNow()
+	}
+}
+
+// AddAssistantMessageWithToolCalls добавляет сообщение ассистента с вызовами инструментов
+func (s *Session) AddAssistantMessageWithToolCalls(content string, toolCalls []MsgToolCall) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	msg := Message{
+		Role:      AssistantRole,
+		Content:   content,
+		ToolCalls: toolCalls,
+		Timestamp: time.Now(),
+	}
+	s.messages = append(s.messages, msg)
+	s.enforceHistoryLimit()
+	s.updatedAt = time.Now()
+
+	if s.config.AutoSave {
+		s.saveNow()
+	}
+}
+
+// AddToolMessage добавляет результат выполнения инструмента в историю
+func (s *Session) AddToolMessage(toolCallID, toolName, content string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	msg := Message{
+		Role:       ToolRole,
+		Content:    content,
+		ToolCallID: toolCallID,
+		Name:       toolName,
+		Timestamp:  time.Now(),
+	}
+	s.messages = append(s.messages, msg)
+	s.enforceHistoryLimit()
+	s.updatedAt = time.Now()
 
 	if s.config.AutoSave {
 		s.saveNow()
@@ -448,9 +506,25 @@ type SessionData struct {
 
 // MessageData — сериализуемая версия Message
 type MessageData struct {
-	Role      string `json:"role"`
-	Content   string `json:"content"`
-	Timestamp string `json:"timestamp,omitempty"`
+	Role       string                   `json:"role"`
+	Content    string                   `json:"content"`
+	ToolCalls  []ToolCallData           `json:"tool_calls,omitempty"`
+	ToolCallID string                   `json:"tool_call_id,omitempty"`
+	Name       string                   `json:"name,omitempty"`
+	Timestamp  string                   `json:"timestamp,omitempty"`
+}
+
+// ToolCallData — сериализуемая версия ToolCall
+type ToolCallData struct {
+	ID       string             `json:"id"`
+	Type     string             `json:"type,omitempty"`
+	Function ToolCallFuncData   `json:"function,omitempty"`
+}
+
+// ToolCallFuncData — сериализуемая версия ToolCallFunction
+type ToolCallFuncData struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 // Save сохраняет сессию в файл
@@ -481,11 +555,28 @@ func (s *Session) saveInternal() error {
 	// Собираем данные для сериализации
 	messages := make([]MessageData, len(s.messages))
 	for i, msg := range s.messages {
-		messages[i] = MessageData{
-			Role:      string(msg.Role),
-			Content:   msg.Content,
-			Timestamp: msg.Timestamp.Format(time.RFC3339),
+		msgData := MessageData{
+			Role:       string(msg.Role),
+			Content:    msg.Content,
+			ToolCallID: msg.ToolCallID,
+			Name:       msg.Name,
+			Timestamp:  msg.Timestamp.Format(time.RFC3339),
 		}
+		// Сериализуем tool_calls если есть
+		if len(msg.ToolCalls) > 0 {
+			msgData.ToolCalls = make([]ToolCallData, len(msg.ToolCalls))
+			for j, tc := range msg.ToolCalls {
+				msgData.ToolCalls[j] = ToolCallData{
+					ID:   tc.ID,
+					Type: tc.Type,
+					Function: ToolCallFuncData{
+						Name:      tc.Function.Name,
+						Arguments: tc.Function.Arguments,
+					},
+				}
+			}
+		}
+		messages[i] = msgData
 	}
 
 	session := SessionData{
@@ -531,6 +622,7 @@ func (s *Session) Load() error {
 	if err != nil {
 		// Если файл не существует — создаём новую сессию
 		if os.IsNotExist(err) {
+			fmt.Printf("[SESSION] File not found: %s, creating new session\n", s.config.SessionFile)
 			return nil
 		}
 		return fmt.Errorf("read session file: %w", err)
@@ -541,20 +633,44 @@ func (s *Session) Load() error {
 		return fmt.Errorf("parse session file: %w", err)
 	}
 
+	fmt.Printf("[SESSION] Loaded %d messages from %s (peer_id from file: %d)\n",
+		len(session.Messages), s.config.SessionFile, session.PeerID)
+
 	// Восстанавливаем сообщения
 	s.messages = make([]Message, len(session.Messages))
 	for i, msg := range session.Messages {
 		timestamp, _ := time.Parse(time.RFC3339, msg.Timestamp)
-		s.messages[i] = Message{
-			Role:      Role(msg.Role),
-			Content:   msg.Content,
-			Timestamp: timestamp,
+		message := Message{
+			Role:       Role(msg.Role),
+			Content:    msg.Content,
+			ToolCallID: msg.ToolCallID,
+			Name:       msg.Name,
+			Timestamp:  timestamp,
 		}
+		// Восстанавливаем tool_calls если есть
+		if len(msg.ToolCalls) > 0 {
+			message.ToolCalls = make([]MsgToolCall, len(msg.ToolCalls))
+			for j, tc := range msg.ToolCalls {
+				message.ToolCalls[j] = MsgToolCall{
+					ID:   tc.ID,
+					Type: tc.Type,
+					Function: MsgToolCallFunc{
+						Name:      tc.Function.Name,
+						Arguments: tc.Function.Arguments,
+					},
+				}
+			}
+		}
+		s.messages[i] = message
 	}
 
-	// Восстанавливаем рабочую директорию
+	// Восстанавливаем рабочую директорию (только если существует)
 	if session.WorkingDir != "" {
-		s.workingDir = session.WorkingDir
+		if _, err := os.Stat(session.WorkingDir); err == nil {
+			s.workingDir = session.WorkingDir
+		} else {
+			fmt.Printf("[SESSION] Working dir '%s' does not exist, using default\n", session.WorkingDir)
+		}
 	}
 
 	// Восстанавливаем состояние loop detection

@@ -1,0 +1,27 @@
+{
+  "mcpServers": {
+    "vk-messenger": {
+      "type": "stdio",
+      "command": "/Users/g.rylov/Documents/projects/go/mcp-vkmsg/mcp-vkmsg",
+      "env": ["VK_TOKEN", "VK_PEER_ID"],
+      "enabled": true
+    },
+    "filesystem": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+      "enabled": false
+    },
+    "brave-search": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "env": ["BRAVE_API_KEY"],
+      "enabled": false
+    }
+  },
+  "settings": {
+    "initTimeout": 10,
+    "toolTimeout": 60
+  }
+}

@@ -459,3 +459,127 @@ func TestConvertXMLToolCalls_NilArgs(t *testing.T) {
 		t.Errorf("expected empty args, got %v", args)
 	}
 }
+
+// TestXMLInReasoning проверяет что XML в reasoningText распознаётся и выполняется
+func TestXMLInReasoning(t *testing.T) {
+	reasoningText := "I need to read a file.\n\n<function=read_file>\n<parameter=path>/tmp/test.txt</parameter>\n</function>"
+
+	parsed := ParseXMLToolCalls(reasoningText)
+	if len(parsed.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call in reasoning, got %d", len(parsed.ToolCalls))
+	}
+	if parsed.ToolCalls[0].Name != "read_file" {
+		t.Errorf("expected read_file, got %q", parsed.ToolCalls[0].Name)
+	}
+	if parsed.ToolCalls[0].Args["path"] != "/tmp/test.txt" {
+		t.Errorf("expected /tmp/test.txt, got %q", parsed.ToolCalls[0].Args["path"])
+	}
+	// Проверяем что content очищен от XML
+	if strings.Contains(parsed.Content, "<function>") {
+		t.Errorf("content should not contain XML tags, got %q", parsed.Content)
+	}
+}
+
+// TestXMLDuplicateFiltering проверяет что дубли NATIVE+XML пропускаются
+func TestXMLDuplicateFiltering(t *testing.T) {
+	// NATIVE tool call
+	nativeTC := ToolCall{
+		ID:   "call_1",
+		Type: "function",
+		Function: ToolCallFunction{
+			Name:      "file_read",
+			Arguments: []byte(`{"path":"/tmp/test.txt"}`),
+		},
+	}
+
+	// XML tool call с теми же аргументами
+	xmlTC := XMLToolCall{
+		Name: "file_read",
+		Args: map[string]string{"path": "/tmp/test.txt"},
+	}
+
+	nativeSig := toolCallSignature(nativeTC)
+	xmlSig := xmlToolCallSignature(xmlTC)
+
+	// Сигнатуры должны совпадать
+	if nativeSig != xmlSig {
+		t.Errorf("signatures should match:\nnative: %q\nxml: %q", nativeSig, xmlSig)
+	}
+
+	// При фильтрации дубли должны пропускаться
+	executed := map[string]bool{nativeSig: true}
+	if executed[xmlSig] {
+		t.Log("Duplicate correctly detected")
+	} else {
+		t.Error("Duplicate should be detected")
+	}
+}
+
+// TestXMLDifferentArgsNotFiltered проверяет что разные аргументы НЕ фильтруются
+func TestXMLDifferentArgsNotFiltered(t *testing.T) {
+	// NATIVE tool call
+	nativeTC := ToolCall{
+		ID:   "call_1",
+		Type: "function",
+		Function: ToolCallFunction{
+			Name:      "file_read",
+			Arguments: []byte(`{"path":"/tmp/a.txt"}`),
+		},
+	}
+
+	// XML tool call с ДРУГИМ путём
+	xmlTC := XMLToolCall{
+		Name: "file_read",
+		Args: map[string]string{"path": "/tmp/b.txt"},
+	}
+
+	nativeSig := toolCallSignature(nativeTC)
+	xmlSig := xmlToolCallSignature(xmlTC)
+
+	// Сигнатуры НЕ должны совпадать
+	if nativeSig == xmlSig {
+		t.Errorf("signatures should NOT match for different args:\nnative: %q\nxml: %q", nativeSig, xmlSig)
+	}
+}
+
+// TestXMLDifferentToolsNotFiltered проверяет что разные инструменты НЕ фильтруются
+func TestXMLDifferentToolsNotFiltered(t *testing.T) {
+	// NATIVE tool call - file_read
+	nativeTC := ToolCall{
+		ID:   "call_1",
+		Type: "function",
+		Function: ToolCallFunction{
+			Name:      "file_read",
+			Arguments: []byte(`{"path":"/tmp/test.txt"}`),
+		},
+	}
+
+	// XML tool call - file_write (другой инструмент)
+	xmlTC := XMLToolCall{
+		Name: "file_write",
+		Args: map[string]string{"path": "/tmp/test.txt"},
+	}
+
+	nativeSig := toolCallSignature(nativeTC)
+	xmlSig := xmlToolCallSignature(xmlTC)
+
+	// Сигнатуры НЕ должны совпадать
+	if nativeSig == xmlSig {
+		t.Errorf("signatures should NOT match for different tools:\nnative: %q\nxml: %q", nativeSig, xmlSig)
+	}
+}
+
+// TestCleanedReasoningSentToThinking проверяет что очищенный reasoning отправляется в thinking
+func TestCleanedReasoningSentToThinking(t *testing.T) {
+	reasoningText := "I will check the time.\n\n<function=time_get>\n</function>"
+
+	parsed := ParseXMLToolCalls(reasoningText)
+
+	// Content должен содержать текст без XML тегов
+	if strings.Contains(parsed.Content, "<function>") {
+		t.Errorf("content should not contain XML tags, got %q", parsed.Content)
+	}
+	if !strings.Contains(parsed.Content, "I will check the time") {
+		t.Errorf("content should contain reasoning text, got %q", parsed.Content)
+	}
+}

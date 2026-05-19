@@ -2,6 +2,8 @@ package agent
 
 import (
 	"strings"
+
+	"github.com/opencode/llama-client/pkg/logger"
 )
 
 type XMLToolCall struct {
@@ -21,9 +23,40 @@ const (
 	stateToolCall
 	stateFunction
 	stateParam
+	stateFunctionNoWrapper // для формата без ิ обёртки
 )
 
+// ParseXMLToolCalls парсит XML tool calls в двух форматах:
+// 1. С обёрткой ิ: <tool_call<function=name<parameter=key>value>>>
+// 2. Без обёртки: <function=name><parameter=key>value</parameter></function>
+// Пропускает XML внутри code blocks (``` ... ```)
 func ParseXMLToolCalls(input string) XMLParseResult {
+	// Сначала пробуем парсить с обёрткой ิ
+	result := parseWithWrapper(input)
+	if len(result.ToolCalls) > 0 {
+		logger.DebugToFile("ParseXMLToolCalls: found %d tool calls with wrapper", len(result.ToolCalls))
+		return result
+	}
+	// Если не нашли — пробуем парсить без обёртки
+	result = parseWithoutWrapper(input)
+	logger.DebugToFile("ParseXMLToolCalls: found %d tool calls without wrapper", len(result.ToolCalls))
+	return result
+}
+
+// isInCodeBlock проверяет, находится ли позиция внутри code block
+func isInCodeBlock(input string, pos int) bool {
+	count := 0
+	for i := 0; i < pos && i+2 < len(input); i++ {
+		if input[i:i+3] == "```" {
+			count++
+		}
+	}
+	// Нечётное количество означает, что мы внутри code block
+	return count%2 == 1
+}
+
+// parseWithWrapper парсит формат с ิ обёрткой
+func parseWithWrapper(input string) XMLParseResult {
 	var result XMLParseResult
 	var content strings.Builder
 	var pendingContent strings.Builder
@@ -36,6 +69,13 @@ func ParseXMLToolCalls(input string) XMLParseResult {
 
 	i := 0
 	for i < len(input) {
+		// Пропускаем парсинг если внутри code block
+		if isInCodeBlock(input, i) {
+			content.WriteByte(input[i])
+			i++
+			continue
+		}
+
 		switch state {
 		case stateText:
 			if n := matchOpenTag(input, i, "tool_call"); n > 0 {
@@ -154,6 +194,98 @@ func ParseXMLToolCalls(input string) XMLParseResult {
 	return result
 }
 
+// parseWithoutWrapper парсит формат БЕЗ ิ обёртки
+// Формат: <function=name><parameter=key>value</parameter></function>
+func parseWithoutWrapper(input string) XMLParseResult {
+	var result XMLParseResult
+	var content strings.Builder
+	state := stateText
+
+	var funcName string
+	var paramName string
+	var paramValue strings.Builder
+	var args map[string]string
+	var depth int // глубина вложенности тегов в content
+
+	i := 0
+	for i < len(input) {
+		// Пропускаем парсинг если внутри code block
+		if isInCodeBlock(input, i) {
+			content.WriteByte(input[i])
+			i++
+			continue
+		}
+
+		switch state {
+		case stateText:
+			// Ищем <function=name>
+			if name, n := parseTagWithValue(input, i, "function"); n > 0 {
+				logger.DebugToFile("parseWithoutWrapper: found <function=%s> at pos %d", name, i)
+				funcName = name
+				args = make(map[string]string)
+				state = stateFunctionNoWrapper
+				i = n
+				continue
+			}
+			content.WriteByte(input[i])
+			i++
+
+		case stateFunctionNoWrapper:
+			// Ищем </function> или <parameter=name>
+			if n := matchCloseTag(input, i, "function"); n > 0 {
+				// Сохраняем tool call
+				if funcName != "" {
+					logger.DebugToFile("parseWithoutWrapper: completed tool call %s with %d args", funcName, len(args))
+					result.ToolCalls = append(result.ToolCalls, XMLToolCall{
+						Name: funcName,
+						Args: args,
+					})
+				}
+				funcName = ""
+				args = nil
+				state = stateText
+				i = n
+				continue
+			}
+			if name, n := parseTagWithValue(input, i, "parameter"); n > 0 {
+				logger.DebugToFile("parseWithoutWrapper: found <parameter=%s>", name)
+				paramName = name
+				paramValue.Reset()
+				depth = 0
+				state = stateParam
+				i = n
+				continue
+			}
+			i++
+
+		case stateParam:
+			// Ищем </parameter>, учитывая возможные вложенные теги в значении
+			if n := matchCloseTag(input, i, "parameter"); n > 0 && depth == 0 {
+				if paramName != "" {
+					args[paramName] = strings.TrimSpace(paramValue.String())
+				}
+				paramName = ""
+				state = stateFunctionNoWrapper
+				i = n
+				continue
+			}
+			// Отслеживаем вложенные теги в значении параметра
+			if i < len(input) && input[i] == '<' {
+				if i+1 < len(input) && input[i+1] == '/' {
+					depth--
+				} else {
+					depth++
+				}
+			}
+			paramValue.WriteByte(input[i])
+			i++
+		}
+	}
+
+	result.Content = content.String()
+	return result
+}
+
 func matchOpenTag(input string, i int, tagName string) int {
 	prefix := "<" + tagName + ">"
 	if hasPrefixAt(input, i, prefix) {
@@ -230,6 +362,7 @@ func parseTagWithValue(input string, i int, tagName string) (string, int) {
 	}
 
 	name := strings.TrimSpace(input[i:end])
+	logger.DebugToFile("parseTagWithValue(tagName=%s): parsed name=%q", tagName, name)
 	return name, end + 1
 }
 

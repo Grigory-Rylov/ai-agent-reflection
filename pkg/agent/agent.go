@@ -60,6 +60,8 @@ type Config struct {
 	CompressionTokenThreshold int
 	// CompressionPercentageThreshold — порог в процентах (0.0-1.0)
 	CompressionPercentageThreshold float64
+	// Debug — режим отладки (сохранять промпт в debug_prompt.txt)
+	Debug bool
 }
 
 // DefaultConfig возвращает конфигурацию по умолчанию

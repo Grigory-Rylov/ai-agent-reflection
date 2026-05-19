@@ -110,8 +110,8 @@ func New(config Config) (*Logger, error) {
 			return nil, fmt.Errorf("failed to create log directory: %w", err)
 		}
 
-		// Открываем файл (добавляем время запуска для уникальности)
-		logFile, err := os.OpenFile(config.File, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		// Открываем файл (TRUNC очищает файл при старте)
+		logFile, err := os.OpenFile(config.File, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 		if err != nil {
 			return nil, fmt.Errorf("failed to open log file: %w", err)
 		}
@@ -389,5 +389,28 @@ func WarnLogfGlobal(format string, args ...interface{}) {
 func ErrorLogfGlobal(format string, args ...interface{}) {
 	if globalLogger != nil {
 		globalLogger.ErrorLogf(format, args...)
+	}
+}
+
+// DebugToFile пишет дебаг-сообщение в файл и консоль
+// Используется для детального логирования в debug режиме
+func DebugToFile(format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	// Всегда пишем в консоль
+	fmt.Printf("%s\n", msg)
+	// Если есть глобальный логгер с файлом - пишем в файл
+	if globalLogger != nil && globalLogger.IsFileLogging() {
+		timestamp := time.Now().Format("2006-01-02 15:04:05")
+		fullMsg := fmt.Sprintf("[%s] [DEBUG] %s", timestamp, msg)
+		globalLogger.WriteToFile(fullMsg)
+	}
+}
+
+// WriteToFile пишет сообщение в лог-файл
+func (l *Logger) WriteToFile(msg string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.file != nil {
+		fmt.Fprintln(l.file, msg)
 	}
 }
