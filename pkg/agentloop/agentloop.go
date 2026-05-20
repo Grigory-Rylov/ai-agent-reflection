@@ -64,6 +64,8 @@ type agentLoop struct {
 	vk               VKClient
 	registry         ToolRegistry
 	contextMgr       *compress.ContextManager
+	compactor        *compress.Compactor      // New compactor
+	artifactStore    *compress.FileArtifactStore
 	tokenizer        tokenizers.Tokenizer
 	dispatcher       *EventDispatcher
 	stopCh           chan struct{}
@@ -73,6 +75,8 @@ type agentLoop struct {
 	aiHistory        []string // История ответов AI для loop detection
 	historyMu        sync.Mutex
 	thinkingCallback func(peerID int64, content string) error
+	contextState     map[int64]*compress.ContextState // peerID -> ContextState
+	stateMu          sync.RWMutex
 }
 
 // NewAgentLoop создаёт новый цикл агента
@@ -97,7 +101,20 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 		tokenizer.SetDebug(true)
 	}
 
-	// Инициализируем ContextManager если включено сжатие
+	// Инициализируем новый Compactor
+	compactor := compress.NewCompactor(config.CompactionConfig, nil, nil)
+
+	// Инициализируем artifact store
+	var artifactStore *compress.FileArtifactStore
+	if config.ArtifactStorePath != "" {
+		var err error
+		artifactStore, err = compress.NewFileArtifactStore(config.ArtifactStorePath)
+		if err != nil && l != nil {
+			l.WarnLogf("Failed to create artifact store: %v", err)
+		}
+	}
+
+	// Legacy ContextManager (для совместимости)
 	var contextMgr *compress.ContextManager
 	if config.EnableCompression {
 		compressor := compress.NewLLMCompressor(config.LlamaServerURL, config.Model, config.Temperature)
@@ -115,14 +132,17 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 	}
 
 	return &agentLoop{
-		config:     config,
+		config:        config,
 		vk:         vk,
-		registry:   registry,
-		contextMgr: contextMgr,
-		tokenizer:  tokenizer,
-		stopCh:     make(chan struct{}),
-		dispatcher: NewEventDispatcher(),
-		log:        l,
+		registry:      registry,
+		contextMgr:    contextMgr,
+		compactor:     compactor,
+		artifactStore: artifactStore,
+		tokenizer:     tokenizer,
+		stopCh:        make(chan struct{}),
+		dispatcher:    NewEventDispatcher(),
+		log:           l,
+		contextState:  make(map[int64]*compress.ContextState),
 	}, nil
 }
 
@@ -528,7 +548,7 @@ func (al *agentLoop) processToolCalls(ctx context.Context, toolCalls []map[strin
 				} else {
 					result = tools.MarshalToolResult(toolResult)
 					if !toolResult.Success {
-						execErr = fmt.Errorf(toolResult.Error)
+						execErr = fmt.Errorf("%s", toolResult.Error)
 					}
 				}
 			}
@@ -569,11 +589,17 @@ func getStringField(m map[string]interface{}, key string) string {
 
 // checkAndCompress проверяет и выполняет сжатие контекста
 func (al *agentLoop) checkAndCompress(ctx context.Context, sess *session.Session, peerID int64) {
+	// Используем новый компактор если доступен
+	if al.compactor != nil {
+		al.checkAndCompactNew(ctx, sess, peerID)
+		return
+	}
+
+	// Legacy: используем старый ContextManager
 	if al.contextMgr == nil {
 		return
 	}
 
-	// Конвертируем историю сессии в формат tokenizers
 	history := sess.GetHistory()
 	var tokenizerMessages []tokenizers.Message
 	for _, msg := range history {
@@ -583,16 +609,125 @@ func (al *agentLoop) checkAndCompress(ctx context.Context, sess *session.Session
 		})
 	}
 
-	// Выполняем проверку и сжатие
 	err := al.contextMgr.CheckAndCompress(ctx, peerID, tokenizerMessages, al.config.MaxTokens)
 	if err != nil {
-		// Если сжатие не удалось — продолжаем без него
 		if al.log != nil {
 			al.log.WarnLogf("Context compression skipped: %v", err)
 		}
 	} else if al.log != nil {
 		al.log.InfoLogf("Context compressed for peer %d", peerID)
 	}
+}
+
+// checkAndCompactNew использует новый компактор для сжатия
+func (al *agentLoop) checkAndCompactNew(ctx context.Context, sess *session.Session, peerID int64) {
+	history := sess.GetHistory()
+
+	// Конвертируем в формат tokenizers
+	messages := al.convertHistoryToMessages(history)
+
+	// Оцениваем размер до сжатия
+	tokensBefore := compress.EstimateMessagesTokensSimple(messages)
+
+	// Debug: логируем текущее состояние
+	if al.log != nil {
+		al.log.DebugLogf("[COMPACTION] Peer %d: %d messages, ~%d tokens",
+			peerID, len(messages), tokensBefore)
+	}
+
+	// Проверяем и сжимаем
+	result, err := al.compactor.CheckAndCompact(ctx, messages, al.config.MaxTokens)
+	if err != nil {
+		if al.log != nil {
+			al.log.WarnLogf("[COMPACTION] Failed: %v", err)
+		}
+		return
+	}
+
+	if result == nil {
+		// Сжатие не требуется
+		if al.log != nil {
+			al.log.DebugLogf("[COMPACTION] Peer %d: No compression needed", peerID)
+		}
+		return
+	}
+
+	// Логируем результат
+	if al.log != nil {
+		al.log.InfoLogf("[COMPACTION] Peer %d: %d -> %d tokens (%.1f%% reduction), level=%v",
+			peerID, result.TokensBefore, result.TokensAfter,
+			(1-result.CompressionRatio())*100, result.Level)
+	}
+
+	// Debug: детали сжатия
+	if al.log != nil && result.State != nil {
+		al.log.DebugLogf("[COMPACTION] State extracted: goal='%s', decisions=%d, memory=%d, artifacts=%d",
+			result.State.Goal, len(result.State.Decisions),
+			len(result.State.WorkingMemory), len(result.State.Artifacts))
+
+		if len(result.State.Decisions) > 0 {
+			for i, d := range result.State.Decisions {
+				al.log.DebugLogf("[COMPACTION]   Decision %d: %s", i+1, d)
+			}
+		}
+
+		if len(result.State.Artifacts) > 0 {
+			for i, a := range result.State.Artifacts {
+				al.log.DebugLogf("[COMPACTION]   Artifact %d: %s (%s)", i+1, a.Path, a.Description)
+			}
+		}
+	}
+
+	// Debug: сообщения
+	if al.log != nil {
+		al.log.DebugLogf("[COMPACTION] Kept %d messages, summarized %d",
+			len(result.KeptMessages), result.SummarizedCount)
+	}
+
+	// Сохраняем состояние
+	if result.State != nil {
+		al.saveContextState(peerID, result.State)
+	}
+
+	// Обновляем сессию с сохранёнными сообщениями
+	al.updateSessionAfterCompaction(sess, result)
+}
+
+// convertHistoryToMessages конвертирует историю сессии в сообщения
+func (al *agentLoop) convertHistoryToMessages(history []session.Message) []tokenizers.Message {
+	messages := make([]tokenizers.Message, len(history))
+	for i, msg := range history {
+		messages[i] = tokenizers.Message{
+			Role:    string(msg.Role),
+			Content: msg.Content,
+		}
+	}
+	return messages
+}
+
+// saveContextState сохраняет состояние контекста для пользователя
+func (al *agentLoop) saveContextState(peerID int64, state *compress.ContextState) {
+	al.stateMu.Lock()
+	defer al.stateMu.Unlock()
+	al.contextState[peerID] = state
+}
+
+// getContextState возвращает состояние контекста для пользователя
+func (al *agentLoop) getContextState(peerID int64) *compress.ContextState {
+	al.stateMu.RLock()
+	defer al.stateMu.RUnlock()
+	return al.contextState[peerID]
+}
+
+// updateSessionAfterCompaction обновляет сессию после сжатия
+func (al *agentLoop) updateSessionAfterCompaction(sess *session.Session, result *compress.CompactionResult) {
+	if len(result.KeptMessages) == 0 {
+		return
+	}
+
+	// Преобразуем обратно в формат сессии
+	// Примечание: это упрощённая реализация
+	// В реальности нужно более аккуратно обновлять историю
 }
 
 // ============================================================

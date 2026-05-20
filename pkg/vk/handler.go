@@ -401,6 +401,10 @@ func (h *BotHandler) runLongPoll(ctx context.Context, server, key string, ts int
 				// Обрабатываем сообщение в отдельной goroutine
 				go func(messageText string, peerID int64, targetPeer int64) {
 					response := h.ProcessMessage(messageText, peerID)
+					// Не отправляем пустые сообщения
+					if response == "" {
+						return
+					}
 					_, err := h.vkClient.SendMessage(targetPeer, response)
 					if err != nil && h.log != nil {
 						h.log.ErrorLogf("Failed to send response to peer %d: %v", targetPeer, err)

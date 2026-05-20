@@ -18,7 +18,7 @@ import (
 )
 
 // Version - текущая версия бота, инкрементируйте при изменениях
-const Version = "2026.05.19.184501"
+const Version = "2026.05.20-18:28"
 
 // ============================================================
 // VK Gateway — точка входа для VK Bot Gateway режима
@@ -27,6 +27,7 @@ const Version = "2026.05.19.184501"
 func main() {
 	// Парсим флаги
 	debug := flag.Bool("d", false, "Enable debug mode")
+	reset := flag.Bool("r", false, "Reset session on startup (clear history)")
 	flag.Parse()
 
 	// Загружаем конфигурацию
@@ -54,6 +55,18 @@ func main() {
 	logger.InitGlobalLogger(logConfig)
 
 	log.InfoLog("VK Bot Gateway starting... (v%s)", Version)
+
+	// Сброс сессии если указан флаг -r
+	if *reset {
+		sessionFile := "./sessions/vk_session.json"
+		if _, err := os.Stat(sessionFile); err == nil {
+			if err := os.Remove(sessionFile); err != nil {
+				log.WarnLogf("Failed to remove session file: %v", err)
+			} else {
+				log.InfoLog("Session reset: history cleared")
+			}
+		}
+	}
 
 	// Создаём VK Bot Client
 	vkClient := vk.NewBotClient(config.TokenVK)

@@ -17,6 +17,9 @@ import (
 // Function Calling — оркестрация вызовов инструментов
 // ============================================================
 
+// MaxToolResultSize — максимальный размер результата инструмента в символах
+const MaxToolResultSize = 50000
+
 // FunctionCallResult представляет результат function calling
 type FunctionCallResult struct {
 	Success  bool
@@ -56,9 +59,11 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 	// Если LLM вернул tool_calls — используем те что собрали из стриминга
 	if finishReason == "tool_calls" || len(streamToolCalls) > 0 {
 		toolCalls := streamToolCalls
+		logger.DebugToFile("[FLOW] Entering tool_calls branch: finishReason=%q, len(streamToolCalls)=%d", finishReason, len(streamToolCalls))
 		if len(toolCalls) == 0 {
 			// Fallback: если не собрали tool_calls из стриминга — пробуем non-streaming
 			fmt.Printf("[WARN] LLM returned tool_calls but none collected from stream, trying non-streaming\n")
+			logger.DebugToFile("[FLOW] Trying non-streaming fallback")
 			var err error
 			toolCalls, err = a.getToolCallsFromResponse(ctx, messages, toolsSchema)
 			if err != nil {
@@ -67,15 +72,17 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 		}
 		if len(toolCalls) == 0 {
 			// Нет tool_calls — возвращаем пустой ответ или reasoning если есть
+			logger.DebugToFile("[FLOW] No tool_calls after all attempts, returning empty")
 			if reasoningText != "" {
 				session.AddAssistantMessage(reasoningText)
 				return FunctionCallResult{Success: true, Response: reasoningText}, nil
 			}
-			return a.returnTextResponse(session, "I'm here and ready to help! What would you like to know?"), nil
+			// Модель не ответила — возвращаем пустой ответ
+			return FunctionCallResult{Success: true, Response: ""}, nil
 		}
 
 		// Логируем формат инструментов
-		fmt.Printf("[TOOL] NATIVE format: detected %d tool calls\n", len(toolCalls))
+		logger.DebugToFile("[TOOL] NATIVE format: detected %d tool calls", len(toolCalls))
 
 		// Сохраняем сигнатуры выполненных инструментов
 		for _, tc := range toolCalls {
@@ -83,7 +90,9 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 			executedToolCalls[sig] = true
 		}
 
+		logger.DebugToFile("[FLOW] Calling executeAllTools with %d tool calls", len(toolCalls))
 		result := a.executeAllTools(ctx, toolCalls, session.GetPeerID())
+		logger.DebugToFile("[FLOW] executeAllTools returned %d results", len(result.ToolCalls))
 		if len(result.ToolCalls) > 0 {
 			finalResponse, err := a.processToolResults(ctx, messages, toolCalls, result.ToolCalls, session)
 			if err != nil {
@@ -92,6 +101,7 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 			// processToolResults уже обработал всё включая XML - возвращаем результат
 			return FunctionCallResult{Success: true, Response: finalResponse}, nil
 		}
+		logger.DebugToFile("[FLOW] No tool results, continuing...")
 	}
 
 	// Проверяем reasoning на наличие XML tool calls
@@ -162,9 +172,9 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 	}
 
 	if responseText == "" || a.isNonToolResponse(finishReason) {
-		// Fallback — если LLM не ответил текстом
+		// Fallback — если LLM не ответил текстом, возвращаем пустой ответ
 		if responseText == "" {
-			responseText = "I'm here and ready to help! What would you like to know?"
+			return FunctionCallResult{Success: true, Response: ""}, nil
 		}
 		session.AddAssistantMessage(responseText)
 		return FunctionCallResult{
@@ -249,7 +259,20 @@ func (a *agentImpl) xmlFallback(ctx context.Context, responseText string, messag
 
 	result := a.executeAllTools(ctx, toolCalls, session.GetPeerID())
 	if len(result.ToolCalls) > 0 {
-		// Всегда отправляем результаты модели - даже если были ошибки
+		// Проверяем что не все инструменты завершились с ошибкой
+		allFailed := true
+		for _, tr := range result.ToolCalls {
+			if !tr.IsError {
+				allFailed = false
+				break
+			}
+		}
+		if allFailed {
+			// Все инструменты завершились с ошибкой — возвращаем что не использовали fallback
+			return FunctionCallResult{}, false, nil
+		}
+
+		// Отправляем результаты модели
 		finalResponse, err := a.processXMLToolResults(ctx, messages, parsed.Content, toolCalls, result.ToolCalls, session)
 		if err != nil {
 			return FunctionCallResult{}, true, fmt.Errorf("process xml tool results: %w", err)
@@ -287,6 +310,11 @@ func (a *agentImpl) jsonFallback(ctx context.Context, responseText string, messa
 
 // processXMLToolResults отправляет результат выполнения XML инструментов обратно в AI
 func (a *agentImpl) processXMLToolResults(ctx context.Context, originalMessages []Message, cleanedContent string, toolCalls []ToolCall, toolResults []ToolCallResult, session *sess.Session) (string, error) {
+	// Проверяем что LlamaServerURL настроен
+	if a.config.LlamaServerURL == "" {
+		return "", nil
+	}
+
 	// Сохраняем сообщение ассистента с tool_calls в историю сессии
 	sessionToolCalls := make([]sess.MsgToolCall, len(toolCalls))
 	for i, tc := range toolCalls {
@@ -346,38 +374,26 @@ func (a *agentImpl) processXMLToolResults(ctx context.Context, originalMessages 
 	if err != nil {
 		return "", err
 	}
-	if responseText == "" {
-		responseText = "Tools executed successfully."
-	}
 
-	// Защита: проверяем responseText на оставшийся XML-код
-	// Модель может сгенерировать новые XML tool calls в ответе
+	// Проверяем responseText на новые XML tool calls
+	// Модель может сгенерировать новые tool calls в ответе — выполняем их рекурсивно
 	finalCheck := ParseXMLToolCalls(responseText)
 	if len(finalCheck.ToolCalls) > 0 {
-		logger.DebugToFile("processXMLToolResults: XML detected in response, using cleaned content")
+		logger.DebugToFile("processXMLToolResults: XML tool calls detected in response, executing...")
+		toolCalls := convertXMLToolCalls(finalCheck.ToolCalls)
+		result := a.executeAllTools(ctx, toolCalls, session.GetPeerID())
+		if len(result.ToolCalls) > 0 {
+			// Рекурсивно обрабатываем результаты новых инструментов
+			return a.processXMLToolResults(ctx, messages, finalCheck.Content, toolCalls, result.ToolCalls, session)
+		}
+		// Если инструменты выполнились без результатов — используем очищенный контент
 		responseText = finalCheck.Content
 	}
 
-	// Если после очистки пусто - отправляем результат инструментов как ответ
-	// Это лучше чем пустое сообщение
-	if responseText == "" {
-		logger.DebugToFile("processXMLToolResults: responseText is empty, using tool results summary")
-		// Формируем краткий отчёт о выполненных инструментах
-		var summary strings.Builder
-		for _, tr := range toolResults {
-			if tr.IsError {
-				summary.WriteString(fmt.Sprintf("❌ %s: failed\n", tr.ToolName))
-			} else {
-				summary.WriteString(fmt.Sprintf("✅ %s: success\n", tr.ToolName))
-			}
-		}
-		responseText = strings.TrimSpace(summary.String())
-		if responseText == "" {
-			responseText = "Инструменты выполнены."
-		}
+	// Добавляем ответ в сессию только если есть текст
+	if responseText != "" {
+		session.AddAssistantMessage(responseText)
 	}
-
-	session.AddAssistantMessage(responseText)
 	return responseText, nil
 }
 
@@ -418,11 +434,13 @@ func (a *agentImpl) buildToolsStreamConfig(toolsSchema []map[string]interface{})
 
 // collectStreamResponse собирает ответ из streaming потока (только response, без reasoning)
 func (a *agentImpl) collectStreamResponse(chunkChan <-chan StreamChunkEvent) (string, string, error) {
+	logger.DebugToFile("[LLM RESPONSE] Starting to collect stream response...")
 	var fullResponse strings.Builder
 	var fullReasoning strings.Builder
 
 	for event := range chunkChan {
 		if event.IsError {
+			logger.DebugToFile("[LLM RESPONSE] Stream error: %s", event.Content)
 			return "", "", fmt.Errorf("API error: %s (code: %s)", event.Content, event.ErrorCode)
 		}
 		if event.IsDone {
@@ -438,6 +456,7 @@ func (a *agentImpl) collectStreamResponse(chunkChan <-chan StreamChunkEvent) (st
 
 	response := fullResponse.String()
 	reasoning := fullReasoning.String()
+	logger.DebugToFile("[LLM RESPONSE] Collected: content=%d chars, reasoning=%d chars", len(response), len(reasoning))
 	return response, reasoning, nil
 }
 
@@ -491,12 +510,14 @@ func (a *agentImpl) returnTextResponse(session *sess.Session, responseText strin
 
 // executeAllTools выполняет все инструменты из ответа AI
 func (a *agentImpl) executeAllTools(ctx context.Context, toolCalls []ToolCall, peerID int64) FunctionCallResult {
+	logger.DebugToFile("[executeAllTools] Starting with %d tool calls", len(toolCalls))
 	result := FunctionCallResult{
 		Success:   true,
 		ToolCalls: make([]ToolCallResult, 0),
 	}
 
-	for _, tc := range toolCalls {
+	for i, tc := range toolCalls {
+		logger.DebugToFile("[executeAllTools] Executing tool %d/%d: %s", i+1, len(toolCalls), ToolCallName(tc))
 		toolResult, execErr := a.executeTool(tc, peerID)
 		if execErr != nil {
 			result.ToolCalls = append(result.ToolCalls, ToolCallResult{
@@ -773,9 +794,13 @@ func (a *agentImpl) buildMessagesWithToolResults(originalMessages []Message, too
 func briefToolCall(toolName string, args map[string]string) string {
 	switch toolName {
 	case "file_read", "read_file":
-		if path, ok := args["path"]; ok {
-			return fmt.Sprintf("read_file(%q)", truncateStr(path, 80))
+		path := args["path"]
+		offset := args["offset"]
+		limit := args["limit"]
+		if offset != "" || limit != "" {
+			return fmt.Sprintf("read_file(%q, offset=%s, limit=%s)", truncateStr(path, 60), offset, limit)
 		}
+		return fmt.Sprintf("read_file(%q)", truncateStr(path, 60))
 	case "file_write", "write_file":
 		if path, ok := args["path"]; ok {
 			return fmt.Sprintf("write_file(%q)", truncateStr(path, 80))
@@ -864,9 +889,8 @@ func (a *agentImpl) executeTool(toolCall ToolCall, peerID int64) (ToolCallResult
 
 	content := tools.MarshalToolResult(result)
 	if result.Success {
-		resultMsg := fmt.Sprintf("[TOOL] Result: %s success", toolName)
-		fmt.Println(resultMsg)
-		a.sendThinking(peerID, resultMsg)
+		fmt.Printf("[TOOL] Result: %s success\n", toolName)
+		a.sendThinking(peerID, "[TOOL] Result: "+toolName+" success")
 	} else {
 		// Отправляем в thinking информацию об ошибке
 		resultMsg := fmt.Sprintf("[TOOL] Result: %s failed - %s", toolName, truncateStr(content, 200))

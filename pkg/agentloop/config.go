@@ -44,11 +44,17 @@ type LoopConfig struct {
 	// Debug
 	Debug bool // Сохранять промпт в debug_prompt.txt
 
-	// Context Compression
+	// Context Compression (Legacy - для совместимости)
 	EnableCompression         bool
 	CompressionStrategy       compress.CompressionStrategy
 	CompressionTokenThreshold int
 	CompressionPercentageThreshold float64
+
+	// New Compaction Settings
+	CompactionConfig compress.CompactionConfig
+
+	// Artifact Store Path - путь для хранения больших результатов
+	ArtifactStorePath string
 }
 
 // DefaultLoopConfig возвращает конфигурацию по умолчанию
@@ -67,10 +73,12 @@ func DefaultLoopConfig() LoopConfig {
 		ThinkingPeerID:            0,
 		EnableThinking:            false,
 		EnableLogging:             true,
-		EnableCompression:              false,
-		CompressionStrategy:            compress.SummarizeStrategy,
-		CompressionTokenThreshold:      6000,
+		EnableCompression:         true,
+		CompressionStrategy:       compress.SummarizeStrategy,
+		CompressionTokenThreshold: 6000,
 		CompressionPercentageThreshold: 0.75,
+		CompactionConfig:          compress.DefaultCompactionConfig(),
+		ArtifactStorePath:         "./artifacts",
 	}
 }
 

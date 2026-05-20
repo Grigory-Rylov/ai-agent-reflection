@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/opencode/llama-client/pkg/logger"
 )
 
 type Message struct {
@@ -43,6 +45,9 @@ type StreamChunkEvent struct {
 func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig, messages []Message) (<-chan StreamChunkEvent, error) {
 	reqBody := a.buildRequestJSON(config, messages)
 
+	// Логируем факт отправки запроса
+	logger.DebugToFile("[LLM REQUEST] Sending request to %s, model=%s, messages=%d", a.config.LlamaServerURL, config.Model, len(messages))
+
 	req, err := a.createStreamingRequest(ctx, reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -50,6 +55,7 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 
 	resp, err := a.client.Do(req)
 	if err != nil {
+		logger.DebugToFile("[LLM REQUEST] Failed to send: %v", err)
 		return nil, fmt.Errorf("send request: %w", err)
 	}
 
@@ -58,9 +64,11 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		fmt.Printf("[API ERROR] Status %d, response: %s\n", resp.StatusCode, string(body))
+		logger.DebugToFile("[LLM REQUEST] API error: status %d", resp.StatusCode)
 		return nil, fmt.Errorf("API error: status %d, body: %s", resp.StatusCode, string(body))
 	}
 
+	logger.DebugToFile("[LLM REQUEST] Request successful, reading stream...")
 	chunkChan := make(chan StreamChunkEvent, 100)
 	go a.readStreamResponse(ctx, resp, chunkChan)
 	return chunkChan, nil
@@ -212,10 +220,14 @@ func (a *agentImpl) processSSEData(lineStr string, chunkChan chan StreamChunkEve
 	}
 
 	if finishReason != "" {
+		// ВАЖНО: отправляем finish_reason ВМЕСТЕ с tool_calls если они есть
 		chunkChan <- StreamChunkEvent{
-			FinishReason: finishReason,
-			IsDone:       true,
-			Timestamp:    time.Now(),
+			Content:          content,
+			ReasoningContent: choice.Delta.ReasoningContent,
+			ToolCalls:        toolCalls,
+			FinishReason:     finishReason,
+			IsDone:           true,
+			Timestamp:        time.Now(),
 		}
 		return
 	}

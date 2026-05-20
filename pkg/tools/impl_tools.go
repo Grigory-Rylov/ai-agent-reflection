@@ -52,6 +52,13 @@ func resolvePath(path string) (string, error) {
 	return cleaned, nil
 }
 
+// parseIntParam парсит строковый параметр в int
+func parseIntParam(s string) (int, error) {
+	var result int
+	_, err := fmt.Sscanf(s, "%d", &result)
+	return result, err
+}
+
 // ============================================================
 // File Read Tool
 // ============================================================
@@ -63,14 +70,16 @@ func (t *FileReadTool) Name() string {
 }
 
 func (t *FileReadTool) Description() string {
-	return "Read the contents of a file. Returns the file content or an error if the file cannot be read."
+	return "Read the contents of a file. Supports offset and limit for reading large files in chunks. Returns the file content or an error if the file cannot be read."
 }
 
 func (t *FileReadTool) Schema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"path": CreateStringParameter("path", "The file path to read (absolute or relative)", true),
+			"path":   CreateStringParameter("path", "The file path to read (absolute or relative)", true),
+			"offset": CreateStringParameter("offset", "Optional: Line number to start reading from (default: 0)", false),
+			"limit":  CreateStringParameter("limit", "Optional: Maximum number of lines to read (default: 1000, max: 5000)", false),
 		},
 		"required": []string{"path"},
 	}
@@ -87,20 +96,84 @@ func (t *FileReadTool) Execute(ctx context.Context, inputs map[string]string) (T
 		return ToolResult{Success: false, Error: fmt.Sprintf("Invalid path: %v", err)}, nil
 	}
 
-	data, err := os.ReadFile(resolvedPath)
+	// Парсим offset и limit
+	offset := 0
+	limit := 1000 // дефолт
+
+	if offsetStr, ok := inputs["offset"]; ok && offsetStr != "" {
+		if o, err := parseIntParam(offsetStr); err == nil && o >= 0 {
+			offset = o
+		}
+	}
+	if limitStr, ok := inputs["limit"]; ok && limitStr != "" {
+		if l, err := parseIntParam(limitStr); err == nil && l > 0 {
+			if l > 5000 {
+				l = 5000 // максимум
+			}
+			limit = l
+		}
+	}
+
+	// Открываем файл
+	file, err := os.Open(resolvedPath)
 	if err != nil {
+		return ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to open file: %v", err),
+		}, nil
+	}
+	defer file.Close()
+
+	// Получаем размер файла
+	stat, err := file.Stat()
+	if err != nil {
+		return ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to stat file: %v", err),
+		}, nil
+	}
+	totalSize := stat.Size()
+
+	// Читаем по строкам с offset
+	scanner := bufio.NewScanner(file)
+	var lines []string
+	lineNum := 0
+	totalLines := 0
+
+	for scanner.Scan() {
+		totalLines++
+		if lineNum >= offset && lineNum < offset+limit {
+			lines = append(lines, scanner.Text())
+		}
+		lineNum++
+		if lineNum >= offset+limit {
+			// Продолжаем сканировать чтобы подсчитать totalLines
+			for scanner.Scan() {
+				totalLines++
+			}
+			break
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
 		return ToolResult{
 			Success: false,
 			Error:   fmt.Sprintf("Failed to read file: %v", err),
 		}, nil
 	}
 
+	content := strings.Join(lines, "\n")
+
 	return ToolResult{
 		Success: true,
 		Data: map[string]interface{}{
-			"content": string(data),
-			"size":    len(data),
-			"path":    resolvedPath,
+			"content":     content,
+			"path":        resolvedPath,
+			"offset":      offset,
+			"lines_read":  len(lines),
+			"total_lines": totalLines,
+			"total_size":  totalSize,
+			"has_more":    offset+len(lines) < totalLines,
 		},
 	}, nil
 }

@@ -583,3 +583,88 @@ func TestCleanedReasoningSentToThinking(t *testing.T) {
 		t.Errorf("content should contain reasoning text, got %q", parsed.Content)
 	}
 }
+
+// TestProcessXMLToolResults_ChainedToolCalls проверяет что XML tool calls в ответе
+// после выполнения инструментов выполняются рекурсивно
+func TestProcessXMLToolResults_ChainedToolCalls(t *testing.T) {
+	// Mock LLM сервер:
+	// 1. Первый запрос: модель возвращает ответ с XML tool calls после получения tool results
+	// 2. Второй запрос: финальный ответ
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "text/event-stream")
+
+		if callCount == 1 {
+			// Первый ответ: содержит XML tool calls
+			// Это симулирует ситуацию когда модель после получения tool results
+			// хочет выполнить ещё один инструмент
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Let me also calculate something.\\n\\n<function=calc>\\n<parameter=expression>2+2</parameter>\\n</function>\\n\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+			w.Write([]byte("[DONE]\n"))
+		} else {
+			// Второй ответ: финальный текст после выполнения цепочки инструментов
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Done! The result is 4.\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+			w.Write([]byte("[DONE]\n"))
+		}
+	}))
+	defer server.Close()
+
+	reg := tools.NewRegistry()
+	reg.Register(&tools.TimeGetTool{})
+	reg.Register(&tools.CalcTool{})
+
+	config := Config{
+		LlamaServerURL: server.URL,
+		Model:          "test-model",
+		MaxTokens:      100,
+		Temperature:    0.7,
+		SessionConfig:  session.DefaultConfig(),
+		EnableTools:    true,
+		MaxToolCalls:   5,
+	}
+	config.SessionConfig.PeerID = 99920
+
+	a := NewAgent(config)
+	a.RegisterTools(reg)
+
+	// Симулируем что уже был выполнен time_get и модель получила результат
+	// Теперь модель должна выполнить calc из XML в ответе
+	s := a.GetSession(99920)
+	s.AddUserMessage("What time is it and calculate 2+2?")
+
+	// Создаём сообщения как будто time_get уже был выполнен
+	messages := []Message{
+		{Role: "user", Content: "What time is it and calculate 2+2?"},
+		{Role: "assistant", Content: "", ToolCalls: []ToolCall{
+			{ID: "call_1", Type: "function", Function: ToolCallFunction{Name: "time_get", Arguments: []byte("{}")}},
+		}},
+		{Role: "tool", ToolCallID: "call_1", Name: "time_get", Content: `{"time": "2024-01-01T12:00:00Z"}`},
+	}
+
+	// Вызываем processXMLToolResults напрямую
+	toolResults := []ToolCallResult{
+		{ToolCallID: "call_1", ToolName: "time_get", Content: `{"time": "2024-01-01T12:00:00Z"}`, IsError: false},
+	}
+
+	response, err := a.processXMLToolResults(context.Background(), messages, "", []ToolCall{
+		{ID: "call_1", Type: "function", Function: ToolCallFunction{Name: "time_get", Arguments: []byte("{}")}},
+	}, toolResults, s)
+
+	if err != nil {
+		t.Fatalf("processXMLToolResults failed: %v", err)
+	}
+
+	// Проверяем что был второй запрос (для calc)
+	if callCount < 2 {
+		t.Errorf("expected at least 2 LLM calls (first for calc tool, second for final response), got %d", callCount)
+	}
+
+	// Проверяем что ответ содержит результат calc
+	if !strings.Contains(response, "4") {
+		t.Errorf("expected response to contain '4' (result of 2+2), got: %q", response)
+	}
+
+	t.Logf("Final response: %s", response)
+}
