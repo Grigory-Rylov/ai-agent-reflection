@@ -51,8 +51,8 @@ func TestDefaultLoopConfig(t *testing.T) {
 	if !config.EnableLogging {
 		t.Error("expected EnableLogging to be true")
 	}
-	if config.EnableCompression {
-		t.Error("expected EnableCompression to be false (256k context, no need)")
+	if !config.EnableCompression {
+		t.Error("expected EnableCompression to be true")
 	}
 	if config.CompressionStrategy != compress.SummarizeStrategy {
 		t.Errorf("expected CompressionStrategy SummarizeStrategy, got %s", config.CompressionStrategy)

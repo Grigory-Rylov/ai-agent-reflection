@@ -23,7 +23,8 @@ const (
 	stateToolCall
 	stateFunction
 	stateParam
-	stateFunctionNoWrapper // для формата без ิ обёртки
+	stateFunctionNoWrapper  // для формата без обёртки
+	stateSimplifiedParam    // для упрощённого формата <path>value</path>
 )
 
 // ParseXMLToolCalls парсит XML tool calls в двух форматах:
@@ -231,7 +232,7 @@ func parseWithoutWrapper(input string) XMLParseResult {
 			i++
 
 		case stateFunctionNoWrapper:
-			// Ищем </function> или <parameter=name>
+			// Ищем </function> или <parameter=name> или упрощённый <param>value</param>
 			if n := matchCloseTag(input, i, "function"); n > 0 {
 				// Сохраняем tool call
 				if funcName != "" {
@@ -253,6 +254,16 @@ func parseWithoutWrapper(input string) XMLParseResult {
 				paramValue.Reset()
 				depth = 0
 				state = stateParam
+				i = n
+				continue
+			}
+			// Пробуем упрощённый формат <param>value</param>
+			if tagName, value, n := parseSimpleTag(input, i); n > 0 {
+				logger.DebugToFile("parseWithoutWrapper: found simplified param <%s>%s</%s>", tagName, value, tagName)
+				if args == nil {
+					args = make(map[string]string)
+				}
+				args[tagName] = value
 				i = n
 				continue
 			}
@@ -387,4 +398,52 @@ func findChar(s string, start int, ch byte) int {
 		}
 	}
 	return -1
+}
+
+// parseSimpleTag парсит упрощённый формат тега: <tagname>value</tagname>
+// Возвращает (tagname, value, endPosition) или ("", "", -1) если не удалось распарсить
+func parseSimpleTag(input string, i int) (string, string, int) {
+	if i >= len(input) || input[i] != '<' {
+		return "", "", -1
+	}
+
+	// Ищем конец открывающего тега
+	tagEnd := findChar(input, i+1, '>')
+	if tagEnd < 0 {
+		return "", "", -1
+	}
+
+	// Извлекаем имя тега
+	tagName := strings.TrimSpace(input[i+1 : tagEnd])
+	if tagName == "" || strings.Contains(tagName, " ") || strings.Contains(tagName, "=") {
+		// Пустой тег, тег с пробелами или с = (это не упрощённый формат)
+		return "", "", -1
+	}
+
+	// Проверяем, что это не закрывающий тег
+	if strings.HasPrefix(tagName, "/") {
+		return "", "", -1
+	}
+
+	// Ищем закрывающий тег </tagname>
+	closeTag := "</" + tagName + ">"
+	closePos := strings.Index(input[tagEnd+1:], closeTag)
+	if closePos < 0 {
+		// Пробуем с пробелами
+		closeTag = "</ " + tagName + ">"
+		closePos = strings.Index(input[tagEnd+1:], closeTag)
+		if closePos < 0 {
+			closeTag = "</" + tagName + " >"
+			closePos = strings.Index(input[tagEnd+1:], closeTag)
+		}
+		if closePos < 0 {
+			return "", "", -1
+		}
+	}
+
+	valueStart := tagEnd + 1
+	valueEnd := tagEnd + 1 + closePos
+	value := strings.TrimSpace(input[valueStart:valueEnd])
+
+	return tagName, value, valueEnd + len(closeTag)
 }

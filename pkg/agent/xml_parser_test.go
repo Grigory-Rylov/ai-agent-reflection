@@ -748,3 +748,103 @@ ___`
 		t.Errorf("expected read_file, got %q", tc.Name)
 	}
 }
+
+// ============================================================
+// Тесты для упрощённого формата параметров <path>value</path>
+// (без parameter= префикса)
+// ============================================================
+
+func TestParseXMLToolCalls_SimplifiedParams_SingleParam(t *testing.T) {
+	input := `<function=read_file>
+<path>/tmp/test.txt</path>
+</function>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d (content: %q)", len(result.ToolCalls), result.Content)
+	}
+	tc := result.ToolCalls[0]
+	if tc.Name != "read_file" {
+		t.Errorf("expected read_file, got %q", tc.Name)
+	}
+	if tc.Args["path"] != "/tmp/test.txt" {
+		t.Errorf("expected path /tmp/test.txt, got %q", tc.Args["path"])
+	}
+}
+
+func TestParseXMLToolCalls_SimplifiedParams_MultipleParams(t *testing.T) {
+	input := `<function=file_write>
+<path>/tmp/test.txt</path>
+<content>Hello world</content>
+</function>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d (content: %q)", len(result.ToolCalls), result.Content)
+	}
+	tc := result.ToolCalls[0]
+	if tc.Name != "file_write" {
+		t.Errorf("expected file_write, got %q", tc.Name)
+	}
+	if tc.Args["path"] != "/tmp/test.txt" {
+		t.Errorf("expected path /tmp/test.txt, got %q", tc.Args["path"])
+	}
+	if tc.Args["content"] != "Hello world" {
+		t.Errorf("expected content 'Hello world', got %q", tc.Args["content"])
+	}
+}
+
+func TestParseXMLToolCalls_SimplifiedParams_MultipleValuesForSameParam(t *testing.T) {
+	// Модель может сгенерировать несколько параметров с одинаковым именем
+	// (например, несколько path для read_file)
+	// В этом случае значения должны быть объединены или взято последнее
+	input := `<function=read_file>
+<path>/tmp/file1.txt</path>
+<path>/tmp/file2.txt</path>
+<path>/tmp/file3.txt</path>
+</function>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d (content: %q)", len(result.ToolCalls), result.Content)
+	}
+	tc := result.ToolCalls[0]
+	if tc.Name != "read_file" {
+		t.Errorf("expected read_file, got %q", tc.Name)
+	}
+	// Проверяем, что путь был распарсен (последнее значение или все объединены)
+	if tc.Args["path"] == "" {
+		t.Errorf("expected non-empty path, got empty")
+	}
+}
+
+func TestParseXMLToolCalls_SimplifiedParams_MultilineValue(t *testing.T) {
+	input := `<function=file_write>
+<path>/tmp/test.txt</path>
+<content>Line 1
+Line 2
+Line 3</content>
+</function>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d (content: %q)", len(result.ToolCalls), result.Content)
+	}
+	tc := result.ToolCalls[0]
+	if !strings.Contains(tc.Args["content"], "Line 1") {
+		t.Errorf("expected content to contain 'Line 1', got %q", tc.Args["content"])
+	}
+}
+
+func TestParseXMLToolCalls_SimplifiedParams_RealWorldExample(t *testing.T) {
+	// Реальный пример из баг-репорта
+	input := `<function=read_file>
+<path>/Users/g.rylov/Documents/projects/go/confluence_exporter/out/Разработка_ Документация.html</path>
+<path>/Users/g.rylov/Documents/projects/go/confluence_exporter/out/Сервис TestData.html</path>
+<path>/Users/g.rylov/Documents/projects/go/confluence_exporter/out/VK Android • Automation.html</path>
+</function>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d (content: %q)", len(result.ToolCalls), result.Content)
+	}
+	tc := result.ToolCalls[0]
+	if tc.Name != "read_file" {
+		t.Errorf("expected read_file, got %q", tc.Name)
+	}
+}

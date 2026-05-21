@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/opencode/llama-client/pkg/logger"
@@ -370,9 +371,25 @@ func (a *agentImpl) processXMLToolResults(ctx context.Context, originalMessages 
 		return "", fmt.Errorf("streaming request for xml tool results: %w", err)
 	}
 
-	responseText, _, err := a.collectStreamResponse(chunkChan)
+	responseText, reasoningText, err := a.collectStreamResponse(chunkChan)
 	if err != nil {
 		return "", err
+	}
+
+	// Сохраняем ответ в debug файл если включён debug mode
+	a.saveDebugResponse(responseText, reasoningText, "stop", nil)
+
+	// Отправляем reasoning в thinking callback
+	if reasoningText != "" && a.thinkingCallback != nil {
+		// Очищаем reasoning от XML тегов
+		cleanedReasoning := reasoningText
+		parsedReasoning := ParseXMLToolCalls(reasoningText)
+		if len(parsedReasoning.ToolCalls) > 0 {
+			cleanedReasoning = parsedReasoning.Content
+		}
+		if cleanedReasoning != "" {
+			a.thinkingCallback(session.GetPeerID(), cleanedReasoning)
+		}
 	}
 
 	// Проверяем responseText на новые XML tool calls
@@ -488,7 +505,38 @@ func (a *agentImpl) collectStreamResponseWithToolCalls(chunkChan <-chan StreamCh
 
 	response := fullResponse.String()
 	reasoning := fullReasoning.String()
+
+	// Сохраняем ответ в debug файл если включён debug mode
+	a.saveDebugResponse(response, reasoning, finishReason, allToolCalls)
+
 	return response, reasoning, finishReason, allToolCalls, nil
+}
+
+// saveDebugResponse сохраняет последний ответ модели в debug_response.txt
+func (a *agentImpl) saveDebugResponse(content, reasoning, finishReason string, toolCalls []ToolCall) {
+	if !a.config.Debug {
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString("=== LLM Response Debug ===\n\n")
+	sb.WriteString(fmt.Sprintf("Finish Reason: %s\n\n", finishReason))
+	sb.WriteString(fmt.Sprintf("Content (%d chars):\n", len(content)))
+	sb.WriteString("---\n")
+	sb.WriteString(content)
+	sb.WriteString("\n---\n\n")
+	sb.WriteString(fmt.Sprintf("Reasoning (%d chars):\n", len(reasoning)))
+	sb.WriteString("---\n")
+	sb.WriteString(reasoning)
+	sb.WriteString("\n---\n\n")
+	sb.WriteString(fmt.Sprintf("Tool Calls: %d\n", len(toolCalls)))
+	for i, tc := range toolCalls {
+		sb.WriteString(fmt.Sprintf("  %d. %s: %s\n", i+1, tc.Function.Name, ToolCallArgumentsStr(tc)))
+	}
+
+	if err := os.WriteFile("debug_response.txt", []byte(sb.String()), 0644); err != nil {
+		fmt.Printf("[DEBUG] Failed to write debug_response.txt: %v\n", err)
+	}
 }
 
 // isNonToolResponse проверяет, что ответ не содержит tool_calls

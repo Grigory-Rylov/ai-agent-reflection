@@ -60,9 +60,11 @@ func TestSendTextMessage(t *testing.T) {
 				}
 			}
 
-			// Возвращаем успешный ответ (массив с message_id)
-			response := []map[string]interface{}{
-				{"message_id": float64(1)},
+			// Возвращаем успешный ответ в формате VK API
+			response := map[string]interface{}{
+				"response": []map[string]interface{}{
+					{"message_id": float64(1)},
+				},
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -116,9 +118,11 @@ func TestSendMessageWithSplitting(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestCount++
 			if requestCount >= 2 {
-				// Возвращаем успешный ответ для всех частей
-				response := []map[string]interface{}{
-					{"message_id": float64(requestCount)},
+				// Возвращаем успешный ответ для всех частей в формате VK API
+				response := map[string]interface{}{
+					"response": []map[string]interface{}{
+						{"message_id": float64(requestCount)},
+					},
 				}
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)

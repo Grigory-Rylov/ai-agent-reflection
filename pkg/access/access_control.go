@@ -99,8 +99,16 @@ func (c *Controller) CheckAccess(path string) AccessResult {
 	// Канонизируем путь (разрешаем симлинки)
 	canonical, err := filepath.EvalSymlinks(absPath)
 	if err != nil {
-		// Если симлиnk не разрешается, используем абсолютный путь
-		canonical = absPath
+		// Если файл не существует, канонизируем родительскую директорию
+		parentDir := filepath.Dir(absPath)
+		canonicalParent, parentErr := filepath.EvalSymlinks(parentDir)
+		if parentErr != nil {
+			// Если родитель тоже не существует, используем абсолютный путь
+			canonical = absPath
+		} else {
+			// Собираем путь из канонизированного родителя и имени файла
+			canonical = filepath.Join(canonicalParent, filepath.Base(absPath))
+		}
 	}
 
 	// Проверяем, что путь находится внутри разрешённых директорий

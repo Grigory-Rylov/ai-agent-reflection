@@ -20,30 +20,32 @@ import (
 // ============================================================
 
 // loadTestConfig загружает конфигурацию из config.json
-func loadTestConfig() (serverURL string, maxTokens int, temperature float64, err error) {
+func loadTestConfig() (serverURL, model string, maxTokens int, temperature float64, err error) {
 	data, err := os.ReadFile("../../config.json")
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("read config: %w", err)
+		return "", "", 0, 0, fmt.Errorf("read config: %w", err)
 	}
 	var cfg struct {
 		ServerURL   string  `json:"llama_server_url"`
+		Model       string  `json:"model"`
 		MaxTokens   int     `json:"max_tokens"`
 		Temperature float64 `json:"temperature"`
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return "", 0, 0, fmt.Errorf("parse config: %w", err)
+		return "", "", 0, 0, fmt.Errorf("parse config: %w", err)
 	}
 	serverURL = cfg.ServerURL
 	if !strings.HasPrefix(serverURL, "http://") && !strings.HasPrefix(serverURL, "https://") {
 		serverURL = "http://" + serverURL
 	}
+	model = cfg.Model
 	if cfg.MaxTokens == 0 {
 		cfg.MaxTokens = 4096
 	}
 	if cfg.Temperature == 0 {
 		cfg.Temperature = 0.7
 	}
-	return serverURL, cfg.MaxTokens, cfg.Temperature, nil
+	return serverURL, model, cfg.MaxTokens, cfg.Temperature, nil
 }
 
 // skipIfNoServer проверяет доступность LLM сервера
@@ -61,7 +63,7 @@ func skipIfNoServer(t *testing.T, serverURL string) {
 func setupTestAgent(t *testing.T) (*agentImpl, string) {
 	t.Helper()
 
-	serverURL, maxTokens, temperature, err := loadTestConfig()
+	serverURL, model, maxTokens, temperature, err := loadTestConfig()
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
@@ -78,6 +80,7 @@ func setupTestAgent(t *testing.T) (*agentImpl, string) {
 
 	config := Config{
 		LlamaServerURL: serverURL,
+		Model:          model,
 		MaxTokens:      maxTokens,
 		Temperature:    temperature,
 		SessionConfig:  session.DefaultConfig(),
@@ -103,6 +106,11 @@ func TestLLMToolCall_time_get(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	// Добавляем сообщение в сессию перед вызовом ProcessMessage
+	// (как это делает agentloop)
+	sess := a.GetSession(99901)
+	sess.AddUserMessage("Который сейчас час? Используй инструмент time_get.")
+
 	response, err := a.ProcessMessage(ctx, "Который сейчас час? Используй инструмент time_get.", 99901)
 	if err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)
@@ -121,6 +129,10 @@ func TestLLMToolCall_calc(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+
+	// Добавляем сообщение в сессию перед вызовом ProcessMessage
+	sess := a.GetSession(99902)
+	sess.AddUserMessage("Сколько будет 25 * 4 + 10? Используй инструмент calc.")
 
 	response, err := a.ProcessMessage(ctx, "Сколько будет 25 * 4 + 10? Используй инструмент calc.", 99902)
 	if err != nil {
@@ -149,9 +161,13 @@ func TestLLMToolCall_file_write(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	response, err := a.ProcessMessage(ctx,
-		fmt.Sprintf("Создай файл %s и напиши в нём 'Hello from AI agent!'", testFilePath),
-		99903)
+	prompt := fmt.Sprintf("Создай файл %s и напиши в нём 'Hello from AI agent!'", testFilePath)
+
+	// Добавляем сообщение в сессию перед вызовом ProcessMessage
+	sess := a.GetSession(99903)
+	sess.AddUserMessage(prompt)
+
+	response, err := a.ProcessMessage(ctx, prompt, 99903)
 	if err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
@@ -178,9 +194,13 @@ func TestLLMToolCall_web_fetch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	response, err := a.ProcessMessage(ctx,
-		"Прочитай содержимое https://example.com используя web_fetch",
-		99905)
+	prompt := "Прочитай содержимое https://example.com используя web_fetch"
+
+	// Добавляем сообщение в сессию перед вызовом ProcessMessage
+	sess := a.GetSession(99905)
+	sess.AddUserMessage(prompt)
+
+	response, err := a.ProcessMessage(ctx, prompt, 99905)
 	if err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
@@ -203,9 +223,13 @@ func TestLLMToolCall_github_project(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	response, err := a.ProcessMessage(ctx,
-		"можешь прочитать описание проекта https://github.com/JonForShort/android-tools/tree/master ?",
-		99906)
+	prompt := "можешь прочитать описание проекта https://github.com/JonForShort/android-tools/tree/master ?"
+
+	// Добавляем сообщение в сессию перед вызовом ProcessMessage
+	sess := a.GetSession(99906)
+	sess.AddUserMessage(prompt)
+
+	response, err := a.ProcessMessage(ctx, prompt, 99906)
 	if err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
@@ -226,9 +250,13 @@ func TestLLMToolCall_web_search(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	response, err := a.ProcessMessage(ctx,
-		"Найди в интернете информацию про Go语言. Используй web_search.",
-		99907)
+	prompt := "Найди в интернете информацию про Go语言. Используй web_search."
+
+	// Добавляем сообщение в сессию перед вызовом ProcessMessage
+	sess := a.GetSession(99907)
+	sess.AddUserMessage(prompt)
+
+	response, err := a.ProcessMessage(ctx, prompt, 99907)
 	if err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
@@ -250,9 +278,13 @@ func TestLLMToolCall_multiple_tools(t *testing.T) {
 	defer cancel()
 
 	// Запрос, который требует два инструмента: посчитать время + сделать вычисление
-	response, err := a.ProcessMessage(ctx,
-		"Сейчас который час? И сколько будет 2 + 2? Используй инструменты для ответа.",
-		99904)
+	prompt := "Сейчас который час? И сколько будет 2 + 2? Используй инструменты для ответа."
+
+	// Добавляем сообщение в сессию перед вызовом ProcessMessage
+	sess := a.GetSession(99904)
+	sess.AddUserMessage(prompt)
+
+	response, err := a.ProcessMessage(ctx, prompt, 99904)
 	if err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
@@ -302,7 +334,7 @@ func TestLLMToolCall_tool_schemas_format(t *testing.T) {
 	}
 
 	// Отправляем schemas на сервер и проверяем что он отвечает
-	serverURL, _, _, err := loadTestConfig()
+	serverURL, _, _, _, err := loadTestConfig()
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}

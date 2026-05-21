@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/opencode/llama-client/pkg/logger"
 	"github.com/opencode/llama-client/session"
@@ -70,6 +71,10 @@ func (m *mockAgentLoop) GetContextStats(peerID int64) (int, int, error) {
 	tokenCount := charCount / 4
 
 	return charCount, tokenCount, nil
+}
+
+func (m *mockAgentLoop) TestLlamaServer(ctx context.Context) (string, time.Duration, float64, error) {
+	return "mock-model", 10 * time.Millisecond, 100.0, nil
 }
 
 func (m *mockAgentLoop) getOrCreateSession(peerID int64) *session.Session {
