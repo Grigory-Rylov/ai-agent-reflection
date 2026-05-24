@@ -163,6 +163,7 @@ func (a *agentImpl) RegisterTools(registry *tools.Registry) {
 
 // ProcessMessage обрабатывает сообщение пользователя и возвращает ответ
 func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID int64) (string, error) {
+	fmt.Printf("[PROCESS] ProcessMessage called: peerID=%d, message=%q, tools=%d\n", peerID, message, len(a.toolsRegistry.GetAll()))
 	// Получаем или создаём сессию
 	s := a.getSession(peerID)
 

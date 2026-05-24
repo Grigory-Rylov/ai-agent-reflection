@@ -31,6 +31,7 @@ type FunctionCallResult struct {
 // processWithTools обрабатывает ответ AI с поддержкой инструментов
 func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, session *sess.Session, maxToolCalls int) (FunctionCallResult, error) {
 	toolsSchema := a.toolsRegistry.ToOpenAISchema()
+	fmt.Printf("[TOOLS] processWithTools: %d tools in registry, schema has %d entries\n", len(a.toolsRegistry.GetAll()), len(toolsSchema))
 	streamConfig := a.buildToolsStreamConfig(toolsSchema)
 
 	chunkChan, err := a.streamingRequest(ctx, streamConfig, messages)
