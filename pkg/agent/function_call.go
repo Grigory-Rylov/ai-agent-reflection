@@ -610,8 +610,8 @@ func (a *agentImpl) getToolCallsFromResponse(ctx context.Context, messages []Mes
 
 // buildNonStreamingRequestJSON формирует JSON для non-streaming запроса
 func (a *agentImpl) buildNonStreamingRequestJSON(messages []Message, toolsSchema []map[string]interface{}) []byte {
-	// Не указываем модель — сервер использует модель по умолчанию
 	reqBody := map[string]interface{}{
+		"model":       a.config.Model,
 		"messages":    messages,
 		"temperature": a.config.Temperature,
 		"max_tokens":  a.config.MaxTokens,

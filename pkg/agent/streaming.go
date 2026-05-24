@@ -76,6 +76,7 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 
 func (a *agentImpl) buildRequestJSON(config StreamingConfig, messages []Message) []byte {
 	reqBody := map[string]interface{}{
+		"model":       config.Model,
 		"messages":    messages,
 		"temperature": config.Temperature,
 		"max_tokens":  config.MaxTokens,
