@@ -643,17 +643,17 @@ func TestProcessXMLToolResults_ChainedToolCalls(t *testing.T) {
 		{Role: "tool", ToolCallID: "call_1", Name: "time_get", Content: `{"time": "2024-01-01T12:00:00Z"}`},
 	}
 
-	// Вызываем processXMLToolResults напрямую
+	// Вызываем processToolResults напрямую
 	toolResults := []ToolCallResult{
 		{ToolCallID: "call_1", ToolName: "time_get", Content: `{"time": "2024-01-01T12:00:00Z"}`, IsError: false},
 	}
 
-	response, err := a.processXMLToolResults(context.Background(), messages, "", []ToolCall{
+	response, err := a.processToolResults(context.Background(), messages, "", []ToolCall{
 		{ID: "call_1", Type: "function", Function: ToolCallFunction{Name: "time_get", Arguments: []byte("{}")}},
 	}, toolResults, s)
 
 	if err != nil {
-		t.Fatalf("processXMLToolResults failed: %v", err)
+		t.Fatalf("processToolResults failed: %v", err)
 	}
 
 	// Проверяем что был второй запрос (для calc)

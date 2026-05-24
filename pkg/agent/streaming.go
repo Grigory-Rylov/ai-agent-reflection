@@ -75,13 +75,7 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 }
 
 func (a *agentImpl) buildRequestJSON(config StreamingConfig, messages []Message) []byte {
-	reqBody := map[string]interface{}{
-		"model":       config.Model,
-		"messages":    messages,
-		"temperature": config.Temperature,
-		"max_tokens":  config.MaxTokens,
-		"stream":      true,
-	}
+	reqBody := a.buildBaseRequestJSON(config.Model, messages, true)
 
 	if len(config.Tools) > 0 {
 		reqBody["tools"] = config.Tools
@@ -95,6 +89,17 @@ func (a *agentImpl) buildRequestJSON(config StreamingConfig, messages []Message)
 	}
 
 	return jsonData
+}
+
+// buildBaseRequestJSON формирует базовый JSON запрос для llama-server API
+func (a *agentImpl) buildBaseRequestJSON(model string, messages []Message, stream bool) map[string]interface{} {
+	return map[string]interface{}{
+		"model":       model,
+		"messages":    messages,
+		"temperature": a.config.Temperature,
+		"max_tokens":  a.config.MaxTokens,
+		"stream":      stream,
+	}
 }
 
 // saveDebugPrompt сохраняет промпт в debug_prompt.txt

@@ -21,6 +21,13 @@ type FileReadTool = tools.FileReadTool
 type FileWriteTool = tools.FileWriteTool
 type TimeGetTool = tools.TimeGetTool
 type DirListTool = tools.DirListTool
+type ShellExecuteTool = tools.ShellExecuteTool
+type WebFetchTool = tools.WebFetchTool
+type WebSearchTool = tools.WebSearchTool
+type GlobTool = tools.GlobTool
+type GrepTool = tools.GrepTool
+type CalcTool = tools.CalcTool
+type EditTool = tools.EditTool
 
 // ============================================================
 // AI Agent Implementation — реализация агента с подключением к llama-server
@@ -138,6 +145,13 @@ func (a *agentImpl) registerDefaultTools() {
 	a.toolsRegistry.Register(&FileWriteTool{})
 	a.toolsRegistry.Register(&TimeGetTool{})
 	a.toolsRegistry.Register(&DirListTool{})
+	a.toolsRegistry.Register(&ShellExecuteTool{})
+	a.toolsRegistry.Register(&WebFetchTool{})
+	a.toolsRegistry.Register(&WebSearchTool{})
+	a.toolsRegistry.Register(&GlobTool{})
+	a.toolsRegistry.Register(&GrepTool{})
+	a.toolsRegistry.Register(&CalcTool{})
+	a.toolsRegistry.Register(&EditTool{})
 }
 
 // RegisterTools регистрирует инструменты из внешнего реестра

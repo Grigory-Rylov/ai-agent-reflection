@@ -725,9 +725,22 @@ func (al *agentLoop) updateSessionAfterCompaction(sess *session.Session, result 
 		return
 	}
 
-	// Преобразуем обратно в формат сессии
-	// Примечание: это упрощённая реализация
-	// В реальности нужно более аккуратно обновлять историю
+	// Сбрасываем сессию
+	sess.Reset()
+
+	// Восстанавливаем сохранённые сообщения
+	for _, msg := range result.KeptMessages {
+		switch msg.Role {
+		case "system":
+			sess.UpdateSystemPrompt(msg.Content)
+		case "user":
+			sess.AddUserMessage(msg.Content)
+		case "assistant":
+			sess.AddAssistantMessage(msg.Content)
+		case "tool":
+			sess.AddUserMessage(msg.Content)
+		}
+	}
 }
 
 // ============================================================
