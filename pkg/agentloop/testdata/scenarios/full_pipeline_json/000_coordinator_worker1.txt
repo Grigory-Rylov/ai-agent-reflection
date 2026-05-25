@@ -1,0 +1,2 @@
+I'll delegate the first task.
+{"name": "subagent", "arguments": {"name": "worker", "task": "Task 1: Create README.md with project name go-agent and description"}}

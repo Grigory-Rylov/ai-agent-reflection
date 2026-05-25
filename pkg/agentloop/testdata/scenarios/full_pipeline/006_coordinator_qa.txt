@@ -1,0 +1,14 @@
+All three tasks implemented. Now QA review.
+<tool_call><function=subagent><parameter=name>qa</parameter><parameter=task>Review all three files:
+
+1. README.md
+# go-agent
+A Go agent for automating tasks.
+
+2. main.go
+HTTP server on port 8080 with / handler
+
+3. handler.go
+/api/hello and /api/status endpoints
+
+Check for: error handling, input validation, completeness.</parameter></function></tool_call>

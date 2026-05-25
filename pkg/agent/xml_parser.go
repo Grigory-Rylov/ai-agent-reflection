@@ -28,11 +28,12 @@ const (
 )
 
 // ParseXMLToolCalls парсит XML tool calls в двух форматах:
-// 1. С обёрткой ิ: <tool_call<function=name<parameter=key>value>>>
+// 1. С обёрткой: <tool_call><function=name><parameter=key>value</parameter></function></tool_call>
 // 2. Без обёртки: <function=name><parameter=key>value</parameter></function>
 // Пропускает XML внутри code blocks (``` ... ```)
+// Если ни один формат не распознан, делает общий стриппинг <tool_call>...</tool_call> блоков.
 func ParseXMLToolCalls(input string) XMLParseResult {
-	// Сначала пробуем парсить с обёрткой ิ
+	// Сначала пробуем парсить с обёрткой
 	result := parseWithWrapper(input)
 	if len(result.ToolCalls) > 0 {
 		logger.DebugToFile("ParseXMLToolCalls: found %d tool calls with wrapper", len(result.ToolCalls))
@@ -40,8 +41,50 @@ func ParseXMLToolCalls(input string) XMLParseResult {
 	}
 	// Если не нашли — пробуем парсить без обёртки
 	result = parseWithoutWrapper(input)
-	logger.DebugToFile("ParseXMLToolCalls: found %d tool calls without wrapper", len(result.ToolCalls))
+	if len(result.ToolCalls) > 0 {
+		logger.DebugToFile("ParseXMLToolCalls: found %d tool calls without wrapper", len(result.ToolCalls))
+		return result
+	}
+	// Fallback: общий стриппинг <tool_call>...</tool_call> блоков любых форматов
+	stripped := stripToolCallBlocks(result.Content)
+	if stripped != result.Content {
+		logger.DebugToFile("ParseXMLToolCalls: stripped tool_call blocks via fallback")
+		result.Content = stripped
+	}
 	return result
+}
+
+// stripToolCallBlocks удаляет все <tool_call>...</tool_call> блоки из текста,
+// включая их содержимое, независимо от внутреннего формата.
+// Используется как fallback, когда основной парсер не распознал формат.
+func stripToolCallBlocks(input string) string {
+	var result strings.Builder
+	for {
+		start := strings.Index(input, "<tool_call>")
+		if start < 0 {
+			start = strings.Index(input, "<tool_call >")
+			if start < 0 {
+				start = strings.Index(input, "<tool_call")
+			}
+		}
+		if start < 0 {
+			result.WriteString(input)
+			break
+		}
+		// Пишем текст до <tool_call
+		result.WriteString(input[:start])
+		// Ищем закрывающий тег
+		rest := input[start:]
+		end := strings.Index(rest, "</tool_call>")
+		if end < 0 {
+			// Нет закрывающего тега — оставляем как есть
+			result.WriteString(rest)
+			break
+		}
+		// Пропускаем весь блок <tool_call>...</tool_call>
+		input = rest[end+len("</tool_call>"):]
+	}
+	return result.String()
 }
 
 // isInCodeBlock проверяет, находится ли позиция внутри code block
@@ -141,6 +184,26 @@ func parseWithWrapper(input string) XMLParseResult {
 					paramValue.Reset()
 				}
 				state = stateToolCall
+				i = n
+				continue
+			}
+			if n := matchCloseTag(input, i, "tool_call"); n > 0 {
+				// Закрывающий тег </tool_call> внутри функции — финализируем тул
+				if funcName != "" {
+					result.ToolCalls = append(result.ToolCalls, XMLToolCall{
+						Name: funcName,
+						Args: args,
+					})
+				}
+				if paramName != "" {
+					args[paramName] = paramValue.String()
+				}
+				funcName = ""
+				args = nil
+				paramName = ""
+				paramValue.Reset()
+				pendingContent.Reset()
+				state = stateText
 				i = n
 				continue
 			}

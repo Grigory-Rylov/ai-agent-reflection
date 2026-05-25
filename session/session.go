@@ -441,6 +441,10 @@ func similarity(a, b string) float64 {
 
 // enforceHistoryLimit удаляет старые сообщения при превышении лимита
 func (s *Session) enforceHistoryLimit() {
+	if s.config.MaxHistory <= 0 {
+		return
+	}
+
 	systemOffset := 0
 	if s.config.SystemPrompt != "" {
 		systemOffset = 1

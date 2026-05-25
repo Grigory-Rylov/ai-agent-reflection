@@ -1,0 +1,2 @@
+All three tasks implemented. Now QA review.
+{"name": "subagent", "arguments": {"name": "qa", "task": "Review all three files:\n\n1. README.md\n# go-agent\nA Go agent for automating tasks.\n\n2. main.go\nHTTP server on port 8080 with / handler\n\n3. handler.go\n/api/hello and /api/status endpoints\n\nCheck for: error handling, input validation, completeness."}}

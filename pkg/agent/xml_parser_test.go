@@ -848,3 +848,17 @@ func TestParseXMLToolCalls_SimplifiedParams_RealWorldExample(t *testing.T) {
 		t.Errorf("expected read_file, got %q", tc.Name)
 	}
 }
+
+// TestParseXMLToolCalls_MalformedCloseTagInFunction проверяет, что парсер
+// корректно обрабатывает malformed XML: <tool_call><function=name></parameter></task></tool_call>
+// (LLM закрывает </parameter> и </task> вместо </function>).
+func TestParseXMLToolCalls_MalformedCloseTagInFunction(t *testing.T) {
+	input := "<tool_call>\n<function=review_approve>\n</parameter>\n</task>\n</tool_call>"
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].Name != "review_approve" {
+		t.Errorf("expected tool name 'review_approve', got %q", result.ToolCalls[0].Name)
+	}
+}

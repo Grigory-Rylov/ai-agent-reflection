@@ -1,0 +1,2 @@
+Task 1 done. Now task 2.
+{"name": "subagent", "arguments": {"name": "worker", "task": "Task 2: Create main.go with HTTP server on port 8080"}}

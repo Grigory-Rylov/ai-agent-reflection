@@ -650,7 +650,7 @@ func TestProcessXMLToolResults_ChainedToolCalls(t *testing.T) {
 
 	response, err := a.processToolResults(context.Background(), messages, "", []ToolCall{
 		{ID: "call_1", Type: "function", Function: ToolCallFunction{Name: "time_get", Arguments: []byte("{}")}},
-	}, toolResults, s)
+	}, toolResults, s, make(map[string]bool))
 
 	if err != nil {
 		t.Fatalf("processToolResults failed: %v", err)
@@ -667,4 +667,77 @@ func TestProcessXMLToolResults_ChainedToolCalls(t *testing.T) {
 	}
 
 	t.Logf("Final response: %s", response)
+}
+
+// countingTool — тул с уникальным именем, считающий вызовы Execute.
+// Имя "counting" не конфликтует с дефолтными тулами агента.
+type countingTool struct {
+	count int
+}
+
+func (t *countingTool) Name() string                           { return "counting" }
+func (t *countingTool) Description() string                     { return "test tool" }
+func (t *countingTool) Schema() map[string]interface{}          { return nil }
+func (t *countingTool) Execute(ctx context.Context, inputs map[string]string) (tools.ToolResult, error) {
+	t.count++
+	return tools.ToolResult{Success: true, Data: "ok"}, nil
+}
+
+// TestProcessToolResults_DeduplicateSameToolAcrossRecursion проверяет,
+// что при рекурсивном вызове processToolResults одинаковые XML-тулы
+// не выполняются повторно (дедупликация через executed map).
+func TestProcessToolResults_DeduplicateSameToolAcrossRecursion(t *testing.T) {
+	llmCallCount := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		llmCallCount++
+		w.Header().Set("Content-Type", "text/event-stream")
+
+		if llmCallCount <= 2 {
+			// Первые два LLM-запроса возвращают один и тот же XML-тул
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"<tool_call>\\n<function=counting>\\n</function>\\n</tool_call>\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+			w.Write([]byte("[DONE]\n"))
+		} else {
+			// Третий — финальный ответ
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Done.\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+			w.Write([]byte("[DONE]\n"))
+		}
+	}))
+	defer server.Close()
+
+	cTool := &countingTool{}
+	reg := tools.NewRegistry()
+	reg.Register(cTool)
+
+	config := Config{
+		LlamaServerURL: server.URL,
+		Model:          "test-model",
+		MaxTokens:      100,
+		Temperature:    0.7,
+		SessionConfig:  session.DefaultConfig(),
+		EnableTools:    true,
+		MaxToolCalls:   5,
+	}
+	config.SessionConfig.PeerID = 99920
+	config.SessionConfig.MaxHistory = 100
+
+	a := NewAgent(config)
+	a.RegisterTools(reg)
+
+	ctx := context.Background()
+	response, err := a.ProcessMessage(ctx, "What time is it?", 99920)
+	if err != nil {
+		t.Fatalf("ProcessMessage failed: %v", err)
+	}
+	if response == "" {
+		t.Fatal("expected non-empty response")
+	}
+
+	t.Logf("LLM calls: %d, tool executions: %d", llmCallCount, cTool.count)
+
+	if cTool.count != 1 {
+		t.Errorf("expected tool to execute exactly 1 time (dedup), got %d", cTool.count)
+	}
 }

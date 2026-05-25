@@ -1,0 +1,2 @@
+main.go fixed. Now reviewing handler.go: missing input validation and Content-Type header.
+{"name": "subagent", "arguments": {"name": "worker", "task": "Fix handler.go: add Content-Type header and input validation\n\nPlease add: Content-Type application/json, validate request method, add proper HTTP status codes"}}

@@ -1,0 +1,8 @@
+README.md:
+# go-agent
+
+A Go agent for automating tasks.
+
+## Features
+- Task automation
+- Agent coordination

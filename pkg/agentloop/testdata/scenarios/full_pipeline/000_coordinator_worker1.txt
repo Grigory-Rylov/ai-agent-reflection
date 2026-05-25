@@ -1,0 +1,2 @@
+I'll delegate the first task.
+<tool_call><function=subagent><parameter=name>worker</parameter><parameter=task>Task 1: Create README.md with project name "go-agent" and description</parameter></function></tool_call>

@@ -1,0 +1,22 @@
+Reviewing main.go: missing error handling for ListenAndServe. Also no graceful shutdown.
+<tool_call><function=subagent><parameter=name>worker</parameter><parameter=task>Fix main.go: add graceful shutdown with signal handling, wrap log.Fatal properly
+
+Current code:
+package main
+
+import (
+	"fmt"
+	"log"
+	"net/http"
+)
+
+func main() {
+	http.HandleFunc("/", handler)
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+func handler(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "Hello, World!")
+}
+
+Please add: signal.Notify, shutdown with timeout, proper error handling</parameter></function></tool_call>

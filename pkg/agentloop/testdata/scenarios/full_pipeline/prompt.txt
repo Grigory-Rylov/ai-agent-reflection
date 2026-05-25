@@ -1,0 +1,1 @@
+Создай Go проект: README.md, main.go с HTTP сервером и handler.go с API эндпоинтами. Каждую часть проверь через QA.

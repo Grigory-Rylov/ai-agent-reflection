@@ -1,0 +1,2 @@
+Reviewing main.go: missing error handling for ListenAndServe. Also no graceful shutdown.
+{"name": "subagent", "arguments": {"name": "worker", "task": "Fix main.go: add graceful shutdown with signal handling, wrap log.Fatal properly\n\nCurrent code uses http.ListenAndServe without error handling.\n\nPlease add: signal.Notify, shutdown with timeout, proper error handling"}}

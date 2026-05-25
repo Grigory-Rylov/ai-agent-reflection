@@ -1,0 +1,24 @@
+main.go fixed. Now reviewing handler.go: missing input validation and Content-Type header.
+<tool_call><function=subagent><parameter=name>worker</parameter><parameter=task>Fix handler.go: add Content-Type header and input validation
+
+Current code:
+package main
+
+import (
+	"encoding/json"
+	"net/http"
+)
+
+type Response struct {
+	Message string
+}
+
+func helloHandler(w http.ResponseWriter, r *http.Request) {
+	json.NewEncoder(w).Encode(Response{Message: "hello"})
+}
+
+func statusHandler(w http.ResponseWriter, r *http.Request) {
+	json.NewEncoder(w).Encode(Response{Message: "ok"})
+}
+
+Please add: Content-Type application/json, validate request method, add proper HTTP status codes</parameter></function></tool_call>

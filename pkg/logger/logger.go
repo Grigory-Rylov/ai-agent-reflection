@@ -169,12 +169,10 @@ func (l *Logger) log(level Level, msg string, args ...interface{}) {
 	// Пишем в консоль и/или файл
 	if level >= l.config.Level {
 		if l.file != nil {
-			// Пишем в оба места
-			l.slog.Info(fullMsg)
+			fmt.Fprintln(os.Stderr, fullMsg)
 			fmt.Fprintln(l.file, fullMsg)
 		} else {
-			// Только в консоль
-			l.slog.Info(fullMsg)
+			fmt.Fprintln(os.Stderr, fullMsg)
 		}
 	}
 }

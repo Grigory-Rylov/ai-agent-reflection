@@ -1,0 +1,2 @@
+Task 2 done. Now task 3.
+{"name": "subagent", "arguments": {"name": "worker", "task": "Task 3: Create handler.go with /api/hello and /api/status endpoints"}}

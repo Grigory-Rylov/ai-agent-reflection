@@ -1,0 +1,2 @@
+contains: стихотворение про Go разработчика-киборга
+not_contains: Review complete

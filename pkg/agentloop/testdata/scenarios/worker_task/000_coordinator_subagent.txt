@@ -1,0 +1,2 @@
+I'll delegate this task to a worker.
+<function=subagent><parameter=name>worker</parameter><parameter=task>Write a Go program that prints "Hello, World!" to stdout. Use package main with func main().</parameter></function>

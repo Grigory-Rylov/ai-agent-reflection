@@ -49,7 +49,9 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 	logger.DebugToFile("streaming response: content=%d, reasoning=%d, tool_calls=%d, finish=%q",
 		len(responseText), len(reasoningText), len(streamToolCalls), finishReason)
 	if len(responseText) > 0 {
+		logger.DebugToFile("\n--------------------------------")
 		logger.DebugToFile("content: %s", responseText)
+		logger.DebugToFile("--------------------------------")
 	}
 	if len(reasoningText) > 0 {
 		logger.DebugToFile("reasoning: %s", reasoningText)
@@ -96,7 +98,7 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 		result := a.executeAllTools(ctx, toolCalls, session.GetPeerID())
 		logger.DebugToFile("[FLOW] executeAllTools returned %d results", len(result.ToolCalls))
 		if len(result.ToolCalls) > 0 {
-			finalResponse, err := a.processToolResults(ctx, messages, "", toolCalls, result.ToolCalls, session)
+			finalResponse, err := a.processToolResults(ctx, messages, "", toolCalls, result.ToolCalls, session, executedToolCalls)
 			if err != nil {
 				return FunctionCallResult{}, fmt.Errorf("process tool results: %w", err)
 			}
@@ -130,7 +132,10 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 				toolCalls := convertXMLToolCalls(uniqueCalls)
 				result := a.executeAllTools(ctx, toolCalls, session.GetPeerID())
 				if len(result.ToolCalls) > 0 {
-					finalResponse, err := a.processToolResults(ctx, messages, parsedReasoning.Content, toolCalls, result.ToolCalls, session)
+					for _, tc := range toolCalls {
+						executedToolCalls[toolCallSignature(tc)] = true
+					}
+					finalResponse, err := a.processToolResults(ctx, messages, parsedReasoning.Content, toolCalls, result.ToolCalls, session, executedToolCalls)
 					if err != nil {
 						return FunctionCallResult{}, fmt.Errorf("process xml tool results: %w", err)
 					}
@@ -145,8 +150,10 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 
 	// Отправляем очищенный reasoning в thinkingPeerID
 	if cleanedReasoning != "" && a.thinkingCallback != nil {
+		logger.DebugToFile("[THINKING] Sending %d chars of reasoning to thinking chat", len(cleanedReasoning))
 		if err := a.thinkingCallback(session.GetPeerID(), cleanedReasoning); err != nil {
 			fmt.Printf("[WARN] Failed to send thinking message: %v\n", err)
+			logger.DebugToFile("[THINKING] Failed to send: %v", err)
 		}
 	}
 
@@ -232,12 +239,15 @@ func (a *agentImpl) xmlFallbackFiltered(ctx context.Context, responseText string
 	fmt.Printf("[TOOL] XML fallback: detected %d tool calls (%d duplicates skipped)\n", len(uniqueCalls), len(parsed.ToolCalls)-len(uniqueCalls))
 
 	toolCalls := convertXMLToolCalls(uniqueCalls)
+	for _, tc := range toolCalls {
+		executed[toolCallSignature(tc)] = true
+	}
 	result := a.executeAllTools(ctx, toolCalls, session.GetPeerID())
 
 	if len(result.ToolCalls) > 0 {
 		// Всегда отправляем результаты модели - даже если были ошибки
 		// Это позволит модели понять что пошло не так и исправить запрос
-		finalResponse, err := a.processToolResults(ctx, messages, parsed.Content, toolCalls, result.ToolCalls, session)
+		finalResponse, err := a.processToolResults(ctx, messages, parsed.Content, toolCalls, result.ToolCalls, session, executed)
 		if err != nil {
 			return FunctionCallResult{}, true, fmt.Errorf("process xml tool results: %w", err)
 		}
@@ -256,6 +266,10 @@ func (a *agentImpl) xmlFallback(ctx context.Context, responseText string, messag
 	}
 
 	toolCalls := convertXMLToolCalls(parsed.ToolCalls)
+	executed := make(map[string]bool)
+	for _, tc := range toolCalls {
+		executed[toolCallSignature(tc)] = true
+	}
 
 	fmt.Printf("[TOOL] XML fallback: detected %d tool calls in response text\n", len(toolCalls))
 
@@ -275,7 +289,7 @@ func (a *agentImpl) xmlFallback(ctx context.Context, responseText string, messag
 		}
 
 		// Отправляем результаты модели
-		finalResponse, err := a.processToolResults(ctx, messages, parsed.Content, toolCalls, result.ToolCalls, session)
+		finalResponse, err := a.processToolResults(ctx, messages, parsed.Content, toolCalls, result.ToolCalls, session, executed)
 		if err != nil {
 			return FunctionCallResult{}, true, fmt.Errorf("process xml tool results: %w", err)
 		}
@@ -294,13 +308,17 @@ func (a *agentImpl) jsonFallback(ctx context.Context, responseText string, messa
 	}
 
 	toolCalls := convertXMLToolCalls(parsed.ToolCalls)
+	executed := make(map[string]bool)
+	for _, tc := range toolCalls {
+		executed[toolCallSignature(tc)] = true
+	}
 
 	fmt.Printf("[TOOL] JSON fallback: detected %d tool calls in response text\n", len(toolCalls))
 
 	result := a.executeAllTools(ctx, toolCalls, session.GetPeerID())
 	if len(result.ToolCalls) > 0 {
 		// Всегда отправляем результаты модели - даже если были ошибки
-		finalResponse, err := a.processToolResults(ctx, messages, parsed.Content, toolCalls, result.ToolCalls, session)
+		finalResponse, err := a.processToolResults(ctx, messages, parsed.Content, toolCalls, result.ToolCalls, session, executed)
 		if err != nil {
 			return FunctionCallResult{}, true, fmt.Errorf("process json tool results: %w", err)
 		}
@@ -312,7 +330,8 @@ func (a *agentImpl) jsonFallback(ctx context.Context, responseText string, messa
 
 // processToolResults отправляет результат выполнения инструментов обратно в AI
 // Поддерживает как NATIVE (OpenAI format), так и XML/JSON tool calls в ответе
-func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []Message, assistantContent string, toolCalls []ToolCall, toolResults []ToolCallResult, session *sess.Session) (string, error) {
+// executed — карта сигнатур уже выполненных инструментов (для дедупликации между рекурсиями)
+func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []Message, assistantContent string, toolCalls []ToolCall, toolResults []ToolCallResult, session *sess.Session, executed map[string]bool) (string, error) {
 	if a.config.LlamaServerURL == "" {
 		return "", nil
 	}
@@ -380,15 +399,19 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		return "", err
 	}
 
+	logger.DebugToFile("\n--------------------------------")
 	logger.DebugToFile("processToolResults: content=%d, reasoning=%d, tool_calls=%d, finish=%q",
 		len(responseText), len(reasoningText), len(streamToolCalls), finishReason)
 
 	// Если модель вернула новые NATIVE tool_calls — выполняем их рекурсивно
 	if len(streamToolCalls) > 0 {
 		fmt.Printf("[TOOL] NATIVE format: detected %d tool calls in tool results response\n", len(streamToolCalls))
+		for _, tc := range streamToolCalls {
+			executed[toolCallSignature(tc)] = true
+		}
 		result := a.executeAllTools(ctx, streamToolCalls, session.GetPeerID())
 		if len(result.ToolCalls) > 0 {
-			return a.processToolResults(ctx, messages, "", streamToolCalls, result.ToolCalls, session)
+			return a.processToolResults(ctx, messages, "", streamToolCalls, result.ToolCalls, session, executed)
 		}
 	}
 
@@ -402,9 +425,12 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		textToCheck = textToCheck[:500] + "..."
 	}
 	logger.DebugToFile("processToolResults: textToCheck preview: %q", textToCheck)
+	logger.DebugToFile("--------------------------------")
 
 	parsed := ParseXMLToolCalls(textToCheck)
 	logger.DebugToFile("processToolResults: parsed %d XML tool calls from textToCheck", len(parsed.ToolCalls))
+
+	var jsonParsed XMLParseResult
 
 	if len(parsed.ToolCalls) == 0 && responseText != reasoningText {
 		parsed = ParseXMLToolCalls(responseText)
@@ -413,11 +439,50 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	if len(parsed.ToolCalls) > 0 {
 		fmt.Printf("[TOOL] XML fallback: detected %d tool calls in tool results response\n", len(parsed.ToolCalls))
 		toolCalls := convertXMLToolCalls(parsed.ToolCalls)
-		result := a.executeAllTools(ctx, toolCalls, session.GetPeerID())
+		// Фильтруем дубли уже выполненных
+		var uniqueCalls []ToolCall
+		for _, tc := range toolCalls {
+			sig := toolCallSignature(tc)
+			if executed[sig] {
+				fmt.Printf("[TOOL] XML duplicate skipped in tool results: %s\n", tc.Function.Name)
+				continue
+			}
+			executed[sig] = true
+			uniqueCalls = append(uniqueCalls, tc)
+		}
+		if len(uniqueCalls) == 0 {
+			goto sendThinking
+		}
+		result := a.executeAllTools(ctx, uniqueCalls, session.GetPeerID())
 		if len(result.ToolCalls) > 0 {
-			return a.processToolResults(ctx, messages, parsed.Content, toolCalls, result.ToolCalls, session)
+			return a.processToolResults(ctx, messages, parsed.Content, uniqueCalls, result.ToolCalls, session, executed)
 		}
 	}
+
+	// JSON fallback в tool results response
+	jsonParsed = ParseJSONToolCalls(responseText)
+	if len(jsonParsed.ToolCalls) > 0 {
+		fmt.Printf("[TOOL] JSON fallback: detected %d tool calls in tool results response\n", len(jsonParsed.ToolCalls))
+		toolCalls := convertXMLToolCalls(jsonParsed.ToolCalls)
+		var uniqueCalls []ToolCall
+		for _, tc := range toolCalls {
+			sig := toolCallSignature(tc)
+			if executed[sig] {
+				fmt.Printf("[TOOL] JSON duplicate skipped in tool results: %s\n", tc.Function.Name)
+				continue
+			}
+			executed[sig] = true
+			uniqueCalls = append(uniqueCalls, tc)
+		}
+		if len(uniqueCalls) > 0 {
+			result := a.executeAllTools(ctx, uniqueCalls, session.GetPeerID())
+			if len(result.ToolCalls) > 0 {
+				return a.processToolResults(ctx, messages, jsonParsed.Content, uniqueCalls, result.ToolCalls, session, executed)
+			}
+		}
+	}
+
+sendThinking:
 
 	// Отправляем очищенный reasoning в thinking
 	cleanedReasoning := reasoningText
@@ -428,7 +493,11 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		}
 	}
 	if cleanedReasoning != "" && a.thinkingCallback != nil {
-		a.thinkingCallback(session.GetPeerID(), cleanedReasoning)
+		logger.DebugToFile("[THINKING] Sending %d chars of reasoning to thinking chat", len(cleanedReasoning))
+		if err := a.thinkingCallback(session.GetPeerID(), cleanedReasoning); err != nil {
+			fmt.Printf("[WARN] Failed to send thinking message: %v\n", err)
+			logger.DebugToFile("[THINKING] Failed to send: %v", err)
+		}
 	}
 
 	// Если модель не вернула текст — возвращаем пустую строку

@@ -213,6 +213,83 @@ func TestStatusShowsCorrectTokenCount(t *testing.T) {
 	}
 }
 
+// ============================================================
+// Тесты для /agent команды
+// ============================================================
+
+func TestAgentCommandSendsInstructionsToAI(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+	handler := NewBotHandler(nil, mock, log)
+
+	tests := []struct {
+		name            string
+		message         string
+		expectModelCall bool
+		expectedPrefix  string
+	}{
+		{
+			name:            "agent with instructions",
+			message:         "/agent изучи проект и создай документацию",
+			expectModelCall: true,
+			expectedPrefix:  "изучи проект",
+		},
+		{
+			name:            "agent without instructions",
+			message:         "/agent",
+			expectModelCall: true,
+			expectedPrefix:  "изучи текущий проект",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock.lastMessage = ""
+			response := handler.ProcessMessage(tt.message, 12345)
+
+			if strings.Contains(response, "Неизвестная команда") {
+				t.Errorf("/agent command should be recognized, got unknown command response: %q", response)
+			}
+
+			if !tt.expectModelCall {
+				if mock.lastMessage != "" {
+					t.Errorf("Expected no AI call, but got: %q", mock.lastMessage)
+				}
+				return
+			}
+
+			if mock.lastMessage == "" {
+				t.Error("Expected AI to be called, but it wasn't")
+			}
+
+			if !strings.HasPrefix(mock.lastMessage, tt.expectedPrefix) {
+				t.Errorf("Expected AI call with prefix %q, got %q", tt.expectedPrefix, mock.lastMessage)
+			}
+
+			if response == "" {
+				t.Error("Expected non-empty response")
+			}
+		})
+	}
+}
+
+func TestUnknownCommandsDoNotCallAI(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+	handler := NewBotHandler(nil, mock, log)
+
+	mock.lastMessage = ""
+	response := handler.ProcessMessage("/unknowncommand", 12345)
+
+	if mock.lastMessage != "" {
+		t.Error("Unknown command should NOT send message to AI model")
+	}
+
+	if !strings.Contains(response, "Неизвестная команда") {
+		t.Errorf("Unknown command should return error message, got: %q", response)
+	}
+}
+
 func TestStatusShowsCorrectCharCount(t *testing.T) {
 	log, _ := logger.New(logger.DefaultConfig())
 	mock := newMockAgentLoop()

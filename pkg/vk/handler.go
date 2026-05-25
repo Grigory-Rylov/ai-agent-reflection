@@ -15,18 +15,33 @@ import (
 	"github.com/opencode/llama-client/session"
 )
 
+// expandTilde заменяет ~ в начале пути на домашнюю директорию пользователя
+func expandTilde(path string) string {
+	if strings.HasPrefix(path, "~") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			if path == "~" {
+				return home
+			}
+			return home + path[1:]
+		}
+	}
+	return path
+}
+
 // ============================================================
 // VK Bot Handler — связующее звено между VK Bot API и AI Agent
 // ============================================================
 
 // BotHandler управляет взаимодействием с пользователями через VK Bot
 type BotHandler struct {
-	vkClient     *BotClient
-	aiAgent      agentloop.AgentLoop
-	log          *logger.Logger
-	sessions     map[int64]*session.Session
-	sessionMu    sync.RWMutex
-	mainPeerID   int64   // Основной чат для отправки ответов
+	vkClient      *BotClient
+	aiAgent       agentloop.AgentLoop
+	orchestrator  *agentloop.Orchestrator
+	log           *logger.Logger
+	sessions      map[int64]*session.Session
+	sessionMu     sync.RWMutex
+	mainPeerID    int64   // Основной чат для отправки ответов
 	thinkingPeerID int64  // Чат для thinking сообщений (используется через AI Agent)
 }
 
@@ -45,13 +60,14 @@ func NewBotHandler(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger
 }
 
 // NewBotHandlerWithPeerID создаёт новый обработчик VK Bot с mainPeerID
-func NewBotHandlerWithPeerID(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger.Logger, mainPeerID, thinkingPeerID int64) *BotHandler {
+func NewBotHandlerWithPeerID(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger.Logger, mainPeerID, thinkingPeerID int64, orchestrator *agentloop.Orchestrator) *BotHandler {
 	return &BotHandler{
-		vkClient:     vkClient,
-		aiAgent:      aiAgent,
-		log:          log,
-		sessions:     make(map[int64]*session.Session),
-		mainPeerID:   mainPeerID,
+		vkClient:      vkClient,
+		aiAgent:       aiAgent,
+		orchestrator:  orchestrator,
+		log:           log,
+		sessions:      make(map[int64]*session.Session),
+		mainPeerID:    mainPeerID,
 		thinkingPeerID: thinkingPeerID,
 	}
 }
@@ -158,7 +174,14 @@ func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, tim
 
 // handleCommand обрабатывает системные команды
 func (h *BotHandler) handleCommand(input string, peerID int64) string {
-	switch input {
+	// Извлекаем базовую команду (первое слово) для поддержки команд с аргументами
+	parts := strings.Fields(input)
+	if len(parts) == 0 {
+		return ""
+	}
+	cmd := parts[0]
+
+	switch cmd {
 	case "/reset", "/clear":
 		h.aiAgent.ResetSession(peerID)
 		h.clearHandlerSession(peerID)
@@ -176,13 +199,13 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 			"/newsession [path] - Сбросить сессию и сменить рабочую директорию\n" +
 			"/help - Показать эту справку\n" +
 			"/status - Показать статус агента (сообщения, символы, токены)\n" +
-			"/test-llama - Тест соединения с llama-server"
+			"/test-llama - Тест соединения с llama-server\n" +
+			"/agent [задача] - Запустить AI Agent для исследования проекта"
 
 	case "/test-llama":
 		return h.handleTestLlama()
 
 	case "/status":
-		// Сначала убедимся что сессия существует (загрузится из файла если есть)
 		h.aiAgent.EnsureSession(peerID)
 		s := h.aiAgent.GetSession(peerID)
 		status := "AI Agent активен и готов к работе."
@@ -196,11 +219,67 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 			status += "\nСимволов в контексте: " + fmt.Sprintf("%d", chars) +
 				"\nТокенов в контексте: " + fmt.Sprintf("%d", tokens)
 		}
+		if h.orchestrator != nil {
+			agentName := h.orchestrator.GetCurrentAgent()
+			if agentName != "" {
+				status += "\nРежим: агентов — активен: " + agentName
+			} else {
+				status += "\nРежим: агентов (ожидание)"
+			}
+		} else {
+			status += "\nРежим: обычный"
+		}
 		return status
+
+	case "/agent":
+		return h.handleAgentCommand(input, peerID)
 
 	default:
 		return ""
 	}
+}
+
+// handleAgentCommand обрабатывает /agent [задача] — запускает многоагентный пайплайн
+func (h *BotHandler) handleAgentCommand(input string, peerID int64) string {
+	parts := strings.SplitN(input, " ", 2)
+	instruction := "изучи текущий проект и создай документацию с рекомендациями по доработке"
+	if len(parts) > 1 {
+		instruction = strings.TrimSpace(parts[1])
+	}
+
+	if h.orchestrator != nil {
+		if h.log != nil {
+			h.log.InfoLogf("Starting /agent mode for peer %d: %s", peerID, truncateStr(instruction, 100))
+		}
+		ctx := context.Background()
+		response, err := h.orchestrator.ExecuteTask(ctx, instruction, peerID)
+		if err != nil {
+			if h.log != nil {
+				h.log.ErrorLogf("Orchestrator error in /agent: %v", err)
+			}
+			return "Произошла ошибка при выполнении команды /agent. Попробуйте позже."
+		}
+		return response
+	}
+
+	// Fallback: используем обычный AI Agent
+	ctx := context.Background()
+	response, err := h.aiAgent.ProcessMessage(ctx, instruction, peerID)
+	if err != nil {
+		if h.log != nil {
+			h.log.ErrorLogf("AI Agent error in /agent: %v", err)
+		}
+		return "Произошла ошибка при выполнении команды /agent. Попробуйте позже."
+	}
+
+	return response
+}
+
+func truncateStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // handleNewSession обрабатывает /newsession [path]
@@ -218,6 +297,8 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 			return "Ошибка: не удалось определить текущую директорию."
 		}
 	}
+
+	newPath = expandTilde(newPath)
 
 	info, err := os.Stat(newPath)
 	if err != nil || !info.IsDir() {

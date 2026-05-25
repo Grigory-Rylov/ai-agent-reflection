@@ -58,6 +58,37 @@ go build -o vk-gateway-restarter ./cmd/vk-gateway-restarter
 
 Commands starting with `/` are handled by the bot and never sent to the model.
 
+## Testing
+
+### Scenario-based integration tests
+
+Orchestrator tests use predefined LLM responses (no llama-server required). Each scenario is a directory under `pkg/agentloop/testdata/scenarios/`:
+
+```
+testdata/scenarios/<name>/
+├── prompt.txt              # User's task prompt
+├── 000_coordinator.txt     # Coordinator response
+├── 001_developer.txt       # Developer response
+├── 002_reviewer.txt        # Reviewer response (XML approve/revise)
+├── 003_reviewer_result.txt # Reviewer follow-up after tool call
+└── assert.txt              # Assertions: "contains: ..." / "not_contains: ..."
+```
+
+Run all scenarios:
+```bash
+go test -v -run "TestScenario" ./pkg/agentloop/
+```
+
+Run a specific scenario:
+```bash
+go test -v -run "TestScenario_RevisionCycle" ./pkg/agentloop/
+```
+
+To add a new scenario, create a folder with `prompt.txt`, numbered step files, and optional `assert.txt`, then add one line to `run_scenario_test.go`:
+```go
+func TestScenario_MyCase(t *testing.T) { runScenario(t, "my_case") }
+```
+
 ## Project Structure
 
 ```

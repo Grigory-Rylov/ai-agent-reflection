@@ -1,0 +1,2 @@
+Task 2 done. Now task 3.
+<tool_call><function=subagent><parameter=name>worker</parameter><parameter=task>Task 3: Create handler.go with /api/hello and /api/status endpoints</parameter></function></tool_call>

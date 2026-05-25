@@ -189,11 +189,14 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 		}
 	}
 
-	// ПРИМЕЧАНИЕ: сообщение уже добавлено в сессию на уровне agentloop
-	// Если используете agent напрямую - добавьте сообщение в сессию перед вызовом ProcessMessage
-
-	// Получаем историю для отправки в API
+	// Добавляем сообщение в сессию, если его там ещё нет.
+	// В обычном потоке (через agentloop) сообщение уже добавлено в сессию
+	// и сохранено в файл. При прямом вызове (через Orchestrator) добавляем здесь.
 	history := s.GetHistory()
+	if len(history) == 0 || history[len(history)-1].Role != session.UserRole || history[len(history)-1].Content != message {
+		s.AddUserMessage(message)
+		history = s.GetHistory()
+	}
 
 	// Проверяем и при необходимости сжимаем контекст
 	if a.contextManager != nil {

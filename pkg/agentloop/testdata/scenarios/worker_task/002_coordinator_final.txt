@@ -1,0 +1,9 @@
+Вот результат работы воркера:
+
+package main
+
+import "fmt"
+
+func main() {
+    fmt.Println("Hello, World!")
+}

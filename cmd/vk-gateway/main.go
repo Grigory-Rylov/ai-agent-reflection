@@ -143,8 +143,21 @@ func main() {
 		return err
 	})
 
+	// Создаём Orchestrator для /agent режима
+	orchestrator := agentloop.NewOrchestrator(agentloop.OrchestratorConfig{
+		LlamaServerURL: llamaURL,
+		Model:          config.Model,
+		MaxTokens:      config.MaxTokens,
+		Temperature:    config.Temperature,
+		ToolRegistry:   toolRegistry,
+		Debug:          *debug,
+		Logger:         log,
+		ThinkingPeerID: config.ThinkingPeerID,
+		VKClient:       vkClient,
+	})
+
 	// Создаём Bot Handler с mainPeerID
-	botHandler := vk.NewBotHandlerWithPeerID(vkClient, agentLoop, log, config.PeerID, config.ThinkingPeerID)
+	botHandler := vk.NewBotHandlerWithPeerID(vkClient, agentLoop, log, config.PeerID, config.ThinkingPeerID, orchestrator)
 
 	// Настраиваем обработку сигналов
 	ctx, cancel := context.WithCancel(context.Background())

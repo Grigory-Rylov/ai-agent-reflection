@@ -1,0 +1,2 @@
+Task 1 done. Now task 2.
+<tool_call><function=subagent><parameter=name>worker</parameter><parameter=task>Task 2: Create main.go with HTTP server on port 8080</parameter></function></tool_call>
