@@ -46,15 +46,16 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 	}
 
 	// DEBUG: логируем все части ответа
-	logger.DebugToFile("streaming response: content=%d, reasoning=%d, tool_calls=%d, finish=%q",
-		len(responseText), len(reasoningText), len(streamToolCalls), finishReason)
+	prefix := a.agentPrefix()
+	logger.DebugToFile("%sstreaming response: content=%d, reasoning=%d, tool_calls=%d, finish=%q",
+		prefix, len(responseText), len(reasoningText), len(streamToolCalls), finishReason)
 	if len(responseText) > 0 {
 		logger.DebugToFile("\n--------------------------------")
-		logger.DebugToFile("content: %s", responseText)
+		logger.DebugToFile("%scontent: %s", prefix, responseText)
 		logger.DebugToFile("--------------------------------")
 	}
 	if len(reasoningText) > 0 {
-		logger.DebugToFile("reasoning: %s", reasoningText)
+		logger.DebugToFile("%sreasoning: %s", prefix, reasoningText)
 	}
 
 	// Сохраняем выполненные NATIVE tool calls для фильтрации дублей
@@ -113,6 +114,10 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 	cleanedReasoning := reasoningText
 	if reasoningText != "" {
 		parsedReasoning := ParseXMLToolCalls(reasoningText)
+		// Всегда используем очищенный reasoning (даже если не было tool calls —
+		// модель могла написать <tool_call> без <function=name>, что невалидно)
+		cleanedReasoning = parsedReasoning.Content
+
 		if len(parsedReasoning.ToolCalls) > 0 {
 			// Есть XML в reasoning - выполняем инструменты
 			fmt.Printf("[TOOL] XML in reasoning: detected %d tool calls\n", len(parsedReasoning.ToolCalls))
@@ -142,18 +147,15 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 					return FunctionCallResult{Success: true, Response: finalResponse}, nil
 				}
 			}
-
-			// Очищенный reasoning (без XML) для отправки в thinking
-			cleanedReasoning = parsedReasoning.Content
 		}
 	}
 
 	// Отправляем очищенный reasoning в thinkingPeerID
 	if cleanedReasoning != "" && a.thinkingCallback != nil {
-		logger.DebugToFile("[THINKING] Sending %d chars of reasoning to thinking chat", len(cleanedReasoning))
+		logger.DebugToFile("%s[THINKING] Sending %d chars of reasoning to thinking chat", a.agentPrefix(), len(cleanedReasoning))
 		if err := a.thinkingCallback(session.GetPeerID(), cleanedReasoning); err != nil {
-			fmt.Printf("[WARN] Failed to send thinking message: %v\n", err)
-			logger.DebugToFile("[THINKING] Failed to send: %v", err)
+			fmt.Printf("%s[WARN] Failed to send thinking message: %v\n", a.agentPrefix(), err)
+			logger.DebugToFile("%s[THINKING] Failed to send: %v", a.agentPrefix(), err)
 		}
 	}
 
@@ -181,16 +183,28 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 	}
 
 	if responseText == "" || a.isNonToolResponse(finishReason) {
-		// Fallback — если LLM не ответил текстом, возвращаем пустой ответ
+		// Если content пустой но есть reasoning — используем его
+		if responseText == "" && cleanedReasoning != "" {
+			logger.DebugToFile("%sresponseText is empty, using reasoning as response (%d chars)", a.agentPrefix(), len(cleanedReasoning))
+			session.AddAssistantMessage(cleanedReasoning)
+			return FunctionCallResult{Success: true, Response: cleanedReasoning}, nil
+		}
 		if responseText == "" {
 			return FunctionCallResult{Success: true, Response: ""}, nil
 		}
+		// Safety net: вырезаем <tool_call> блоки из responseText
+		parsedResp := ParseXMLToolCalls(responseText)
+		responseText = parsedResp.Content
 		session.AddAssistantMessage(responseText)
 		return FunctionCallResult{
 			Success:  true,
 			Response: responseText,
 		}, nil
 	}
+
+	// Safety net: вырезаем <tool_call> блоки из responseText
+	parsedResp := ParseXMLToolCalls(responseText)
+	responseText = parsedResp.Content
 
 	// Обычный текстовый ответ
 	session.AddAssistantMessage(responseText)
@@ -204,6 +218,16 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 func toolCallSignature(tc ToolCall) string {
 	name := tc.Function.Name
 	args := ToolCallArgumentsStr(tc)
+
+	// Нормализуем JSON: перемаршаливаем, чтобы сравнивать семантически,
+	// а не по сырой строке (LLM может использовать другое форматирование)
+	var normalized interface{}
+	if json.Unmarshal([]byte(args), &normalized) == nil {
+		if canonical, err := json.Marshal(normalized); err == nil {
+			args = string(canonical)
+		}
+	}
+
 	return name + ":" + args
 }
 
@@ -328,6 +352,36 @@ func (a *agentImpl) jsonFallback(ctx context.Context, responseText string, messa
 	return FunctionCallResult{}, false, nil
 }
 
+// handleInvalidXMLToolCall обрабатывает случай когда модель отправила
+// невалидный XML tool call (<tool_call> обёртку без <function=name> формата).
+// Создаёт виртуальный tool call с ошибкой и отправляет модели через processToolResults.
+func (a *agentImpl) handleInvalidXMLToolCall(ctx context.Context, messages []Message, session *sess.Session, executed map[string]bool) (FunctionCallResult, error) {
+	errMsg := "ERROR: Invalid tool call format. You used <tool_call> XML format which is not supported. Use the native tool_calls format instead (function name and arguments in the tool_calls array). Do NOT use XML tags for tool calls."
+
+	toolCall := ToolCall{
+		ID:   "format_error",
+		Type: "function",
+		Function: ToolCallFunction{
+			Name:      "__format_error",
+			Arguments: json.RawMessage(`{}`),
+		},
+	}
+	toolResult := ToolCallResult{
+		ToolCallID: "format_error",
+		ToolName:   "__format_error",
+		Content:    errMsg,
+		IsError:    true,
+	}
+
+	executed[toolCallSignature(toolCall)] = true
+
+	finalResponse, err := a.processToolResults(ctx, messages, "", []ToolCall{toolCall}, []ToolCallResult{toolResult}, session, executed)
+	if err != nil {
+		return FunctionCallResult{}, fmt.Errorf("process format error: %w", err)
+	}
+	return FunctionCallResult{Success: true, Response: finalResponse}, nil
+}
+
 // processToolResults отправляет результат выполнения инструментов обратно в AI
 // Поддерживает как NATIVE (OpenAI format), так и XML/JSON tool calls в ответе
 // executed — карта сигнатур уже выполненных инструментов (для дедупликации между рекурсиями)
@@ -399,9 +453,16 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		return "", err
 	}
 
+	prefix := a.agentPrefix()
 	logger.DebugToFile("\n--------------------------------")
-	logger.DebugToFile("processToolResults: content=%d, reasoning=%d, tool_calls=%d, finish=%q",
-		len(responseText), len(reasoningText), len(streamToolCalls), finishReason)
+	logger.DebugToFile("%sprocessToolResults: content=%d, reasoning=%d, tool_calls=%d, finish=%q",
+		prefix, len(responseText), len(reasoningText), len(streamToolCalls), finishReason)
+	if len(responseText) > 0 {
+		logger.DebugToFile("%sresponse content: %s", prefix, responseText)
+	}
+	if len(reasoningText) > 0 {
+		logger.DebugToFile("%sresponse reasoning: %s", prefix, reasoningText)
+	}
 
 	// Если модель вернула новые NATIVE tool_calls — выполняем их рекурсивно
 	if len(streamToolCalls) > 0 {
@@ -463,6 +524,9 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	jsonParsed = ParseJSONToolCalls(responseText)
 	if len(jsonParsed.ToolCalls) > 0 {
 		fmt.Printf("[TOOL] JSON fallback: detected %d tool calls in tool results response\n", len(jsonParsed.ToolCalls))
+		// Даже если все тулы задедуплицированы — очищаем responseText от XML обёртки
+		responseText = jsonParsed.Content
+
 		toolCalls := convertXMLToolCalls(jsonParsed.ToolCalls)
 		var uniqueCalls []ToolCall
 		for _, tc := range toolCalls {
@@ -488,20 +552,29 @@ sendThinking:
 	cleanedReasoning := reasoningText
 	if reasoningText != "" {
 		parsedReasoning := ParseXMLToolCalls(reasoningText)
-		if len(parsedReasoning.ToolCalls) > 0 {
-			cleanedReasoning = parsedReasoning.Content
-		}
+		cleanedReasoning = parsedReasoning.Content
 	}
 	if cleanedReasoning != "" && a.thinkingCallback != nil {
-		logger.DebugToFile("[THINKING] Sending %d chars of reasoning to thinking chat", len(cleanedReasoning))
+		logger.DebugToFile("%s[THINKING] Sending %d chars of reasoning to thinking chat", a.agentPrefix(), len(cleanedReasoning))
 		if err := a.thinkingCallback(session.GetPeerID(), cleanedReasoning); err != nil {
-			fmt.Printf("[WARN] Failed to send thinking message: %v\n", err)
-			logger.DebugToFile("[THINKING] Failed to send: %v", err)
+			fmt.Printf("%s[WARN] Failed to send thinking message: %v\n", a.agentPrefix(), err)
+			logger.DebugToFile("%s[THINKING] Failed to send: %v", a.agentPrefix(), err)
 		}
 	}
 
-	// Если модель не вернула текст — возвращаем пустую строку
+	// Safety net: вырезаем <tool_call> блоки из responseText перед сохранением
+	if responseText != "" {
+		parsedResp := ParseXMLToolCalls(responseText)
+		responseText = parsedResp.Content
+	}
+
+	// Если модель не вернула content — используем очищенный reasoning
 	if responseText == "" {
+		if cleanedReasoning != "" {
+			logger.DebugToFile("%sresponseText is empty, using reasoning as response (%d chars)", a.agentPrefix(), len(cleanedReasoning))
+			session.AddAssistantMessage(cleanedReasoning)
+			return cleanedReasoning, nil
+		}
 		return "", nil
 	}
 
@@ -660,7 +733,7 @@ func (a *agentImpl) executeAllTools(ctx context.Context, toolCalls []ToolCall, p
 
 	for i, tc := range toolCalls {
 		logger.DebugToFile("[executeAllTools] Executing tool %d/%d: %s", i+1, len(toolCalls), ToolCallName(tc))
-		toolResult, execErr := a.executeTool(tc, peerID)
+		toolResult, execErr := a.executeTool(ctx, tc, peerID)
 		if execErr != nil {
 			result.ToolCalls = append(result.ToolCalls, ToolCallResult{
 				ToolCallID: tc.ID,
@@ -711,6 +784,11 @@ func (a *agentImpl) buildNonStreamingRequestJSON(messages []Message, toolsSchema
 	}
 
 	jsonData, _ := json.Marshal(reqBody)
+
+	if a.config.Debug {
+		a.saveDebugPrompt(jsonData)
+	}
+
 	return jsonData
 }
 
@@ -861,7 +939,7 @@ func truncateStr(s string, max int) string {
 }
 
 // executeTool выполняет инструмент с логированием и отправкой thinking
-func (a *agentImpl) executeTool(toolCall ToolCall, peerID int64) (ToolCallResult, error) {
+func (a *agentImpl) executeTool(ctx context.Context, toolCall ToolCall, peerID int64) (ToolCallResult, error) {
 	toolName := ToolCallName(toolCall)
 
 	tool, ok := a.toolsRegistry.Get(toolName)
@@ -888,7 +966,7 @@ func (a *agentImpl) executeTool(toolCall ToolCall, peerID int64) (ToolCallResult
 	fmt.Printf("[TOOL] Call: %s\n", brief)
 	a.sendThinking(peerID, "[TOOL] Call: "+brief)
 
-	result, err := tool.Execute(context.Background(), args)
+	result, err := tool.Execute(ctx, args)
 	if err != nil {
 		errMsg := fmt.Sprintf("Execution error for %s: %v", toolName, err)
 		fmt.Printf("[TOOL] Error: %s\n", errMsg)
@@ -913,6 +991,14 @@ func (a *agentImpl) executeTool(toolCall ToolCall, peerID int64) (ToolCallResult
 		Content:    content,
 		IsError:    !result.Success,
 	}, nil
+}
+
+// agentPrefix возвращает префикс с именем агента для логов, например "[worker] "
+func (a *agentImpl) agentPrefix() string {
+	if a.config.AgentName == "" {
+		return ""
+	}
+	return "[" + a.config.AgentName + "] "
 }
 
 // sendThinking отправляет thinking сообщение через callback

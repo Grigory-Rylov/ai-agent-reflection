@@ -2,12 +2,15 @@ package tools
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -263,7 +266,7 @@ func (t *ShellExecuteTool) Name() string {
 }
 
 func (t *ShellExecuteTool) Description() string {
-	return "Execute a shell command and return the output. Use with caution — commands are executed directly."
+	return "Execute a shell command and return the output. Use with caution — commands are executed directly. Default timeout is 60s, pass 'timeout' to override."
 }
 
 func (t *ShellExecuteTool) Schema() map[string]interface{} {
@@ -271,7 +274,7 @@ func (t *ShellExecuteTool) Schema() map[string]interface{} {
 		"type": "object",
 		"properties": map[string]interface{}{
 			"command": CreateStringParameter("command", "The shell command to execute", true),
-			"timeout": CreateIntegerParameter("timeout", "Execution timeout in seconds (default: 30)", false),
+			"timeout": CreateIntegerParameter("timeout", "Execution timeout in seconds (default: 60). Increase for long-running commands, decrease for quick ones.", false),
 		},
 		"required": []string{"command"},
 	}
@@ -283,30 +286,58 @@ func (t *ShellExecuteTool) Execute(ctx context.Context, inputs map[string]string
 		return ToolResult{Success: false, Error: "command parameter is required"}, nil
 	}
 
-	timeout := 30
+	timeout := 60
 	if timeoutStr, ok := inputs["timeout"]; ok {
 		if _, err := fmt.Sscanf(timeoutStr, "%d", &timeout); err != nil || timeout <= 0 {
-			timeout = 30
+			timeout = 60
 		}
 	}
 
 	execCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(execCtx, "sh", "-c", command)
-	output, err := cmd.CombinedOutput()
+	var stdout, stderr bytes.Buffer
+	cmd := exec.Command("sh", "-c", command)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
-	exitCode := 0
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			return ToolResult{
-				Success: false,
-				Error:   fmt.Sprintf("Failed to execute command: %v", err),
-			}, nil
-		}
+	// Создаём process group, чтобы убивать дочерние процессы вместе с sh
+	if runtime.GOOS != "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
+
+	if err := cmd.Start(); err != nil {
+		return ToolResult{Success: false, Error: fmt.Sprintf("Failed to start command: %v", err)}, nil
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	var exitCode int
+	select {
+	case err := <-done:
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				exitCode = exitErr.ExitCode()
+			} else {
+				return ToolResult{Success: false, Error: fmt.Sprintf("Failed to execute command: %v", err)}, nil
+			}
+		}
+	case <-execCtx.Done():
+		// Таймаут — убиваем всю process group (sh + дочерние процессы)
+		if cmd.Process != nil {
+			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // nolint: errcheck
+		}
+		<-done // ждём фактического завершения
+		return ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("Command timed out after %d seconds", timeout),
+		}, nil
+	}
+
+	output := append(stdout.Bytes(), stderr.Bytes()...)
 
 	return ToolResult{
 		Success: true,

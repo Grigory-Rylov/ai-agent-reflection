@@ -69,7 +69,7 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 		return tools.ToolResult{Success: false, Error: err.Error()}, nil
 	}
 
-	a := t.createAgent(systemPrompt)
+	a := t.createAgent(name, systemPrompt)
 	t.registerMainTools(a)
 	t.registerSubAgentTool(name, a)
 	t.registerReviewTool(name, a)
@@ -101,7 +101,7 @@ func (t *SubAgentTool) loadSystemPrompt(name string) (string, error) {
 	return string(data), nil
 }
 
-func (t *SubAgentTool) createAgent(systemPrompt string) agent.Agent {
+func (t *SubAgentTool) createAgent(name, systemPrompt string) agent.Agent {
 	cfg := t.AgentConfig
 	cfg.SystemPromptFile = ""
 	cfg.SessionConfig = session.Config{
@@ -112,6 +112,7 @@ func (t *SubAgentTool) createAgent(systemPrompt string) agent.Agent {
 	cfg.EnableLoopAlert = false
 	cfg.EnableContextCompression = false
 	cfg.MaxToolCalls = 10
+	cfg.AgentName = name
 
 	a := agent.NewAgent(cfg)
 	a.GetSession(t.PeerID).UpdateSystemPrompt(systemPrompt)

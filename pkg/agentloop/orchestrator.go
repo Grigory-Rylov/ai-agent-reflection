@@ -90,6 +90,7 @@ func (o *Orchestrator) makeAgentConfig() agent.Config {
 		EnableLoopAlert: false,
 		EnableContextCompression: false,
 		Debug:          o.config.Debug,
+		AgentName:      "coordinator",
 		SessionConfig: session.Config{
 			AutoSave:    false,
 			SessionFile: "",

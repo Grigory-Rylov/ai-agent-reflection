@@ -45,7 +45,6 @@ type StreamChunkEvent struct {
 func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig, messages []Message) (<-chan StreamChunkEvent, error) {
 	reqBody := a.buildRequestJSON(config, messages)
 
-	// Логируем факт отправки запроса
 	logger.DebugToFile("[LLM REQUEST] Sending request to %s, model=%s, messages=%d", a.config.LlamaServerURL, config.Model, len(messages))
 
 	req, err := a.createStreamingRequest(ctx, reqBody)

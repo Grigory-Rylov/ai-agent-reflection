@@ -62,6 +62,8 @@ type Config struct {
 	CompressionPercentageThreshold float64
 	// Debug — режим отладки (сохранять промпт в debug_prompt.txt)
 	Debug bool
+	// AgentName — имя агента для логов (coordinator, worker, qa и т.д.)
+	AgentName string
 }
 
 // DefaultConfig возвращает конфигурацию по умолчанию

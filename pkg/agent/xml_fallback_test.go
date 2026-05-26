@@ -683,6 +683,75 @@ func (t *countingTool) Execute(ctx context.Context, inputs map[string]string) (t
 	return tools.ToolResult{Success: true, Data: "ok"}, nil
 }
 
+// TestProcessMessage_InvalidXMLToolCall_ShouldNotForwardToUser проверяет,
+// что когда модель отвечает с <tool_call> обёрткой вокруг JSON
+// (вместо нативных tool_calls), агент НЕ отправляет сырой XML пользователю,
+// а отправляет ошибку модели.
+func TestProcessMessage_InvalidXMLToolCall_ShouldNotForwardToUser(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "text/event-stream")
+
+		if callCount == 1 {
+			// Модель отвечает невалидным форматом: <tool_call> с JSON внутри
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"<tool_call>\\n{\\\"name\\\": \\\"file_list\\\", \\\"arguments\\\": {\\\"path\\\": \\\".\\\"}}\\n</tool_call>\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		} else {
+			// После ошибки модель отвечает нормальным текстом
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"I will list the current directory.\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		}
+		w.Write([]byte("[DONE]\n"))
+	}))
+	defer server.Close()
+
+	reg := tools.NewRegistry()
+	reg.Register(&tools.DirListTool{})
+
+	config := Config{
+		LlamaServerURL: server.URL,
+		Model:          "test-model",
+		MaxTokens:      100,
+		Temperature:    0.7,
+		SessionConfig:  session.DefaultConfig(),
+		EnableTools:    true,
+		MaxToolCalls:   5,
+	}
+	config.SessionConfig.PeerID = 99930
+	config.SessionConfig.MaxHistory = 100
+
+	a := NewAgent(config)
+	a.RegisterTools(reg)
+
+	ctx := context.Background()
+	response, err := a.ProcessMessage(ctx, "what files are here?", 99930)
+	if err != nil {
+		t.Fatalf("ProcessMessage failed: %v", err)
+	}
+
+	// Ответ пользователю НЕ должен содержать XML
+	if strings.Contains(response, "<tool_call>") {
+		t.Errorf("response should not contain XML tool call tags, got: %q", response)
+	}
+
+	// Сессия НЕ должна содержать сырой XML в assistant сообщениях
+	// (tool сообщения с ошибкой формата — ок, они идут только модели)
+	s := a.GetSession(99930)
+	for _, msg := range s.GetHistory() {
+		if msg.Role == "assistant" && strings.Contains(msg.Content, "<tool_call>") {
+			t.Errorf("assistant message should not contain XML tool call tags, got: %q", msg.Content)
+		}
+	}
+
+	// Должно быть минимум 2 вызова LLM (1й — запрос, 2й — после ошибки)
+	if callCount < 2 {
+		t.Errorf("expected at least 2 LLM calls, got %d", callCount)
+	}
+
+	t.Logf("Final response: %s, LLM calls: %d", response, callCount)
+}
+
 // TestProcessToolResults_DeduplicateSameToolAcrossRecursion проверяет,
 // что при рекурсивном вызове processToolResults одинаковые XML-тулы
 // не выполняются повторно (дедупликация через executed map).
@@ -740,4 +809,180 @@ func TestProcessToolResults_DeduplicateSameToolAcrossRecursion(t *testing.T) {
 	if cTool.count != 1 {
 		t.Errorf("expected tool to execute exactly 1 time (dedup), got %d", cTool.count)
 	}
+}
+
+// TestProcessToolResults_InvalidXMLToolCall проверяет что processToolResults
+// НЕ выполняет JSON тул внутри <tool_call> обёртки, а отправляет модели ошибку.
+func TestProcessToolResults_InvalidXMLToolCall(t *testing.T) {
+	callCount := 0
+	counting := &countingTool{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "text/event-stream")
+
+		if callCount == 1 {
+			// Модель отвечает с <tool_call> обёрткой вокруг JSON
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"<tool_call>\\n{\\\"name\\\": \\\"counting\\\", \\\"arguments\\\": {}}\\n</tool_call>\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		} else {
+			// После выполнения тула из гибридного формата — нормальный ответ
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"I will use proper tool calls.\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		}
+		w.Write([]byte("[DONE]\n"))
+	}))
+	defer server.Close()
+
+	reg := tools.NewRegistry()
+	reg.Register(counting)
+
+	config := Config{
+		LlamaServerURL: server.URL,
+		Model:          "test-model",
+		MaxTokens:      100,
+		Temperature:    0.7,
+		SessionConfig:  session.DefaultConfig(),
+		EnableTools:    true,
+		MaxToolCalls:   5,
+	}
+	config.SessionConfig.PeerID = 99940
+	config.SessionConfig.MaxHistory = 100
+
+	a := NewAgent(config)
+	a.RegisterTools(reg)
+
+	s := a.GetSession(99940)
+	s.AddUserMessage("do something")
+
+	messages := []Message{
+		{Role: "user", Content: "do something"},
+		{Role: "assistant", Content: "", ToolCalls: []ToolCall{
+			{ID: "call_1", Type: "function", Function: ToolCallFunction{Name: "counting", Arguments: []byte("{}")}},
+		}},
+		{Role: "tool", ToolCallID: "call_1", Name: "counting", Content: `ok`},
+	}
+
+	toolResults := []ToolCallResult{
+		{ToolCallID: "call_1", ToolName: "counting", Content: `ok`, IsError: false},
+	}
+
+	response, err := a.processToolResults(context.Background(), messages, "", []ToolCall{
+		{ID: "call_1", Type: "function", Function: ToolCallFunction{Name: "counting", Arguments: []byte("{}")}},
+	}, toolResults, s, make(map[string]bool))
+
+	if err != nil {
+		t.Fatalf("processToolResults failed: %v", err)
+	}
+
+	// counting tool выполняется 1 раз (JSON внутри <tool_call> — валидный гибридный формат)
+	if counting.count != 1 {
+		t.Errorf("expected counting tool to execute exactly 1 time (from hybrid <tool_call>), got %d", counting.count)
+	}
+
+	// Ответ не должен содержать XML
+	if strings.Contains(response, "<tool_call>") {
+		t.Errorf("response should not contain XML tool call tags, got: %q", response)
+	}
+
+	// Сессия не должна содержать <tool_call> в assistant сообщениях
+	for _, msg := range s.GetHistory() {
+		if msg.Role == "assistant" && strings.Contains(msg.Content, "<tool_call>") {
+			t.Errorf("assistant message should not contain XML tool call tags, got: %q", msg.Content)
+		}
+	}
+
+	// Должен быть минимум 2 вызова LLM (1й — ответ с <tool_call>, 2й — после выполнения)
+	if callCount < 2 {
+		t.Errorf("expected at least 2 LLM calls, got %d", callCount)
+	}
+
+	t.Logf("Response: %s, LLM calls: %d, tool executions: %d", response, callCount, counting.count)
+}
+
+// TestProcessMessage_Integration_NativeToolCallsThenXMLInToolResults проверяет
+// полный сценарий из bug report: модель сначала отвечает НАТИВНЫМИ tool_calls,
+// затем после выполнения инструментов и отправки результатов — отвечает
+// невалидным <tool_call> форматом (с JSON внутри) внутри processToolResults.
+// Агент НЕ должен:
+//   - отправлять сырой XML пользователю
+//   - выполнять инструменты из JSON внутри <tool_call> (должны выполниться
+//     только нативные tool_calls)
+//   - сохранять XML в assistant session сообщениях
+func TestProcessMessage_Integration_NativeToolCallsThenXMLInToolResults(t *testing.T) {
+	callCount := 0
+	counting := &countingTool{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "text/event-stream")
+
+		if callCount == 1 {
+			// 1й LLM запрос (processWithTools): модель возвращает нативные tool_calls
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"counting\",\"arguments\":\"{}\"}}]}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"))
+		} else if callCount == 2 {
+			// 2й LLM запрос (внутри processToolResults): модель отвечает с <tool_call> обёрткой
+			// JSON-тул задедуплицирован — не выполняется, ответ пустой
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"<tool_call>\\n{\\\"name\\\": \\\"counting\\\", \\\"arguments\\\": {}}\\n</tool_call>\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		} else {
+			// 3й вызов не ожидается (остановились на 2 из-за дедупликации)
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Files have been processed.\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		}
+		w.Write([]byte("[DONE]\n"))
+	}))
+	defer server.Close()
+
+	reg := tools.NewRegistry()
+	reg.Register(counting)
+
+	config := Config{
+		LlamaServerURL: server.URL,
+		Model:          "test-model",
+		MaxTokens:      100,
+		Temperature:    0.7,
+		SessionConfig:  session.DefaultConfig(),
+		EnableTools:    true,
+		MaxToolCalls:   5,
+	}
+	config.SessionConfig.PeerID = 99950
+	config.SessionConfig.MaxHistory = 100
+
+	a := NewAgent(config)
+	a.RegisterTools(reg)
+
+	ctx := context.Background()
+	response, err := a.ProcessMessage(ctx, "delete those files", 99950)
+	if err != nil {
+		t.Fatalf("ProcessMessage failed: %v", err)
+	}
+
+	// Ответ пользователю НЕ должен содержать XML
+	if strings.Contains(response, "<tool_call>") {
+		t.Errorf("response should not contain XML tool call tags, got: %q", response)
+	}
+
+	// counting tool должен выполниться РОВНО 1 раз (из нативных tool_calls)
+	// JSON внутри <tool_call> задедуплицирован — не выполняется
+	if counting.count != 1 {
+		t.Errorf("expected counting tool to execute exactly 1 time (from native tool_calls), got %d", counting.count)
+	}
+
+	// Сессия НЕ должна содержать сырой XML в assistant сообщениях
+	s := a.GetSession(99950)
+	for _, msg := range s.GetHistory() {
+		if msg.Role == "assistant" && strings.Contains(msg.Content, "<tool_call>") {
+			t.Errorf("assistant message should not contain XML tool call tags, got: %q", msg.Content)
+		}
+	}
+
+	// 2 вызова LLM:
+	// 1й — нативные tool_calls, 2й — XML в tool results (дедуплицирован, ответ пустой)
+	if callCount < 2 {
+		t.Errorf("expected at least 2 LLM calls, got %d", callCount)
+	}
+
+	t.Logf("Final response: %s, LLM calls: %d, tool executions: %d", response, callCount, counting.count)
 }

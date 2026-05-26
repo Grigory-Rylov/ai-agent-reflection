@@ -63,7 +63,7 @@ func ParseJSONToolCalls(input string) XMLParseResult {
 		i += int(dec.InputOffset())
 	}
 
-	result.Content = content.String()
+	result.Content = stripToolCallBlocks(content.String())
 	return result
 }
 
