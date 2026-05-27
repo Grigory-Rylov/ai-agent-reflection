@@ -3,6 +3,7 @@ package vk
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -86,6 +87,36 @@ func (m *mockAgentLoop) getOrCreateSession(peerID int64) *session.Session {
 	sess := session.NewSession(config)
 	m.sessions[peerID] = sess
 	return sess
+}
+
+// ============================================================
+// Mock Orchestrator для тестов /agent с оркестратором
+// ============================================================
+
+type mockOrchestrator struct {
+	mu            sync.Mutex
+	lastTask      string
+	lastPeerID    int64
+	fixedResponse string
+	fixedErr      error
+	callCount     int
+}
+
+func newMockOrchestrator(response string) *mockOrchestrator {
+	return &mockOrchestrator{fixedResponse: response}
+}
+
+func (m *mockOrchestrator) ExecuteTask(_ context.Context, task string, peerID int64) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastTask = task
+	m.lastPeerID = peerID
+	m.callCount++
+	return m.fixedResponse, m.fixedErr
+}
+
+func (m *mockOrchestrator) GetCurrentAgent() string {
+	return "mock-agent"
 }
 
 // ============================================================
@@ -308,5 +339,83 @@ func TestStatusShowsCorrectCharCount(t *testing.T) {
 	// Проверяем, что символов > 0
 	if strings.Contains(status, "Символов в контексте: 0") {
 		t.Error("BUG: Status shows 0 chars but should show > 0 after processing messages")
+	}
+}
+
+// ============================================================
+// Тесты сохранения /agent в сессию
+// ============================================================
+
+func TestAgentCommandSavesToSession(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+	mockOrch := newMockOrchestrator("Coordinator analysis result: project uses Go 1.21")
+	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, mockOrch)
+
+	response := handler.ProcessMessage("/agent analyze the project", 12345)
+
+	if !strings.Contains(response, "Coordinator analysis result") {
+		t.Errorf("Expected coordinator result in response, got: %s", response)
+	}
+
+	sess := mock.GetSession(12345)
+	if sess == nil {
+		t.Fatal("Expected session to exist after /agent command")
+	}
+
+	history := sess.GetHistory()
+	var hasUserMsg, hasAssistantMsg bool
+	for _, msg := range history {
+		if msg.Role == session.UserRole && strings.Contains(msg.Content, "/agent analyze the project") {
+			hasUserMsg = true
+		}
+		if msg.Role == session.AssistantRole && strings.Contains(msg.Content, "Coordinator analysis result") {
+			hasAssistantMsg = true
+		}
+	}
+
+	if !hasUserMsg {
+		t.Error("BUG: Session does not contain user message '/agent analyze the project' — /agent command was not saved")
+	}
+	if !hasAssistantMsg {
+		t.Error("BUG: Session does not contain assistant message with coordinator result — /agent result was not saved")
+	}
+}
+
+func TestFollowUpAfterAgentSeesCoordinatorResult(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+	coordinatorResult := "Coordinator: Found 3 main packages — handler, agent, tools"
+	mockOrch := newMockOrchestrator(coordinatorResult)
+	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, mockOrch)
+
+	// 1. Send /agent command
+	handler.ProcessMessage("/agent analyze the project", 12345)
+
+	// 2. Send follow-up message
+	handler.ProcessMessage("tell me more about the findings", 12345)
+
+	// 3. Verify that the session contains the coordinator result
+	sess := mock.GetSession(12345)
+	if sess == nil {
+		t.Fatal("Expected session to exist")
+	}
+
+	history := sess.GetHistory()
+	foundCoordinator := false
+	for _, msg := range history {
+		if msg.Role == session.AssistantRole && strings.Contains(msg.Content, coordinatorResult) {
+			foundCoordinator = true
+			break
+		}
+	}
+
+	if !foundCoordinator {
+		t.Error("BUG: Session does not contain coordinator result from /agent command. Follow-up LLM call won't see it.")
+	}
+
+	// Verify the follow-up was processed (the mockAgentLoop processes it as a normal message)
+	if mock.lastMessage == "" {
+		t.Error("Expected follow-up message to be processed by agent")
 	}
 }

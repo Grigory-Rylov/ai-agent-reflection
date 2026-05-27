@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/opencode/llama-client/pkg/tools"
 	"github.com/opencode/llama-client/session"
 )
 
@@ -293,21 +292,17 @@ func TestJSONFallback_Integration(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reg := tools.NewRegistry()
-	reg.Register(&tools.ShellExecuteTool{})
-
 	config := Config{
 		LlamaServerURL: server.URL,
 		Model:          "test-model",
 		MaxTokens:      100,
 		Temperature:    0.7,
 		SessionConfig:  session.DefaultConfig(),
-		EnableTools:    true,
-		MaxToolCalls:   5,
 	}
+	config.SessionConfig.PeerID = 99920
+	config.SessionConfig.MaxHistory = 100
 
-	a := NewAgent(config)
-	a.RegisterTools(reg)
+	a, executor := newTestAgentWithStub(t, config)
 
 	responseText := `{"name": "shell_execute", "arguments": {"command": "echo hello", "timeout": 10}}`
 
@@ -328,6 +323,9 @@ func TestJSONFallback_Integration(t *testing.T) {
 	}
 	if result.Response == "" {
 		t.Fatal("expected non-empty response")
+	}
+	if !executor.Contains("shell_execute") {
+		t.Error("expected shell_execute tool to be called via stub executor")
 	}
 	t.Logf("Response: %s", result.Response)
 }

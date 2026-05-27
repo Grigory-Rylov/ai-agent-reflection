@@ -48,6 +48,7 @@ type agentImpl struct {
 	systemPrompt    string            // системный промпт из файла или дефолтный
 	thinkingCallback ThinkingCallback  // callback для отправки thinking сообщений
 	toolSchemas     []map[string]interface{} // схемы инструментов, переданные извне
+	toolExecutor    ToolExecutor       // кастомный executor (для тестов через StubToolExecutor)
 }
 
 // ============================================================
@@ -253,6 +254,13 @@ func (a *agentImpl) SetTools(toolSchemas []map[string]interface{}) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.toolSchemas = toolSchemas
+}
+
+// SetToolExecutor устанавливает кастомный executor для инструментов
+func (a *agentImpl) SetToolExecutor(executor ToolExecutor) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.toolExecutor = executor
 }
 
 // ============================================================

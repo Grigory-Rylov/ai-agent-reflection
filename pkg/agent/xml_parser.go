@@ -113,8 +113,10 @@ func parseWithWrapper(input string) XMLParseResult {
 
 	i := 0
 	for i < len(input) {
-		// Пропускаем парсинг если внутри code block
-		if isInCodeBlock(input, i) {
+		// Пропускаем парсинг если внутри code block на верхнем уровне
+		// Внутри <tool_call> не применяем — иначе backtick-и внутри параметров
+		// меняют счётчик и блокируют matchCloseTag для </function>/</tool_call>.
+		if state == stateText && isInCodeBlock(input, i) {
 			content.WriteByte(input[i])
 			i++
 			continue
@@ -273,8 +275,10 @@ func parseWithoutWrapper(input string) XMLParseResult {
 
 	i := 0
 	for i < len(input) {
-		// Пропускаем парсинг если внутри code block
-		if isInCodeBlock(input, i) {
+		// Пропускаем парсинг если внутри code block на верхнем уровне
+		// Внутри <function> не применяем — иначе backtick-и внутри параметров
+		// меняют счётчик и блокируют matchCloseTag для </function>.
+		if state == stateText && isInCodeBlock(input, i) {
 			content.WriteByte(input[i])
 			i++
 			continue

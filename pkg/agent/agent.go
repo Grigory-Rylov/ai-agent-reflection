@@ -26,6 +26,9 @@ type Agent interface {
 
 	// SetTools регистрирует инструменты из реестра
 	SetTools(tools []map[string]interface{})
+
+	// SetToolExecutor устанавливает кастомный executor для инструментов
+	SetToolExecutor(executor ToolExecutor)
 }
 
 // ============================================================

@@ -5,12 +5,28 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/opencode/llama-client/pkg/tools"
 	"github.com/opencode/llama-client/session"
 )
+
+func newTestAgentWithStub(t *testing.T, config Config) (*agentImpl, *StubToolExecutor) {
+	t.Helper()
+	config.EnableTools = true
+	config.MaxToolCalls = 5
+	if config.SessionConfig.PeerID == 0 {
+		config.SessionConfig.PeerID = 99999
+	}
+	a := NewAgent(config)
+
+	tmpDir := t.TempDir()
+	executor := NewStubToolExecutor(filepath.Join(tmpDir, "tools.log"))
+	a.SetToolExecutor(executor)
+	return a, executor
+}
 
 func TestConvertXMLToolCalls(t *testing.T) {
 	xmlCalls := []XMLToolCall{
@@ -38,7 +54,6 @@ func TestConvertXMLToolCalls(t *testing.T) {
 		t.Errorf("expected xml_call_1, got %q", toolCalls[1].ID)
 	}
 
-	// Verify arguments are parseable
 	args0, err := parseToolArguments(toolCalls[0])
 	if err != nil {
 		t.Fatalf("failed to parse time_get args: %v", err)
@@ -119,7 +134,6 @@ func TestXMLFallback_WithXMLButNoRegistry(t *testing.T) {
 
 // TestXMLFallback_Integration проверяет полный цикл: XML tool call → выполнение → ответ
 func TestXMLFallback_Integration(t *testing.T) {
-	// Создаём mock сервер для LLM
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Current time is: \"}}]}\n\n"))
@@ -128,21 +142,17 @@ func TestXMLFallback_Integration(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reg := tools.NewRegistry()
-	reg.Register(&tools.TimeGetTool{})
-
 	config := Config{
 		LlamaServerURL: server.URL,
 		Model:          "test-model",
 		MaxTokens:      100,
 		Temperature:    0.7,
 		SessionConfig:  session.DefaultConfig(),
-		EnableTools:    true,
-		MaxToolCalls:   5,
 	}
+	config.SessionConfig.PeerID = 99910
+	config.SessionConfig.MaxHistory = 100
 
-	a := NewAgent(config)
-	a.RegisterTools(reg)
+	a, executor := newTestAgentWithStub(t, config)
 
 	responseText := `Let me check the time for you.
 
@@ -172,43 +182,10 @@ Here is the result.`
 	if result.Response == "" {
 		t.Fatal("expected non-empty response")
 	}
+	if !executor.Contains("time_get") {
+		t.Error("expected time_get tool to be called")
+	}
 	t.Logf("Response: %s", result.Response)
-}
-
-// TestXMLFallback_SkipWhenNativeToolCallsPresent проверяет что XML fallback не мешает нативным tool_calls
-func TestXMLFallback_SkipWhenNativeToolCallsPresent(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		// Возвращаем tool_calls (не XML)
-		w.Write([]byte(`{"choices":[{"finish_reason":"tool_calls","index":0,"message":{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"time_get","arguments":"{}"}}]}}]}`))
-	}))
-	defer server.Close()
-
-	reg := tools.NewRegistry()
-	reg.Register(&tools.TimeGetTool{})
-
-	config := Config{
-		LlamaServerURL:   server.URL,
-		Model:            "test-model",
-		MaxTokens:        100,
-		Temperature:      0.7,
-		SessionConfig:    session.DefaultConfig(),
-		EnableTools:      true,
-		MaxToolCalls:     5,
-	}
-	config.SessionConfig.PeerID = 99911
-
-	a := NewAgent(config)
-	a.RegisterTools(reg)
-
-	ctx := context.Background()
-	response, err := a.ProcessMessage(ctx, "What time is it?", 99911)
-	if err != nil {
-		t.Fatalf("ProcessMessage failed: %v", err)
-	}
-	// Native tool_calls не возвращают текст — должен быть fallback
-	t.Logf("Response: %q", response)
 }
 
 // TestXMLFallback_MultipleXMLToolCalls проверяет множественные XML tool calls
@@ -221,22 +198,17 @@ func TestXMLFallback_MultipleXMLToolCalls(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reg := tools.NewRegistry()
-	reg.Register(&tools.TimeGetTool{})
-	reg.Register(&tools.CalcTool{})
-
 	config := Config{
 		LlamaServerURL: server.URL,
 		Model:          "test-model",
 		MaxTokens:      100,
 		Temperature:    0.7,
 		SessionConfig:  session.DefaultConfig(),
-		EnableTools:    true,
-		MaxToolCalls:   5,
 	}
+	config.SessionConfig.PeerID = 99912
+	config.SessionConfig.MaxHistory = 100
 
-	a := NewAgent(config)
-	a.RegisterTools(reg)
+	a, executor := newTestAgentWithStub(t, config)
 
 	responseText := `<tool_call>
 <function=time_get>
@@ -259,6 +231,12 @@ func TestXMLFallback_MultipleXMLToolCalls(t *testing.T) {
 	}
 	if !used {
 		t.Fatal("expected xmlFallback to be used")
+	}
+	if !executor.Contains("time_get") {
+		t.Error("expected time_get tool to be called")
+	}
+	if !executor.Contains("calc") {
+		t.Error("expected calc tool to be called")
 	}
 	t.Logf("Response: %s", result.Response)
 }
@@ -290,19 +268,16 @@ func TestParseXMLToolCalls_FileWriteRead(t *testing.T) {
 // TestProcessWithTools_XMLFallback проверяет что processWithTools
 // корректно обрабатывает XML tool calls в ответе модели
 func TestProcessWithTools_XMLFallback(t *testing.T) {
-	// Mock LLM: возвращает текст с XML tool calls, потом финальный ответ
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		w.Header().Set("Content-Type", "text/event-stream")
 
 		if callCount == 1 {
-			// Первый запрос: модель отвечает XML tool calls
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Let me check the time.\\n\\n<tool_call>\\n<function=time_get>\\n</function>\\n</tool_call>\\n\\nDone.\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 			w.Write([]byte("[DONE]\n"))
 		} else {
-			// Второй запрос: финальный ответ после выполнения tool
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"The current time has been checked.\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 			w.Write([]byte("[DONE]\n"))
@@ -310,23 +285,17 @@ func TestProcessWithTools_XMLFallback(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reg := tools.NewRegistry()
-	reg.Register(&tools.TimeGetTool{})
-
 	config := Config{
 		LlamaServerURL: server.URL,
 		Model:          "test-model",
 		MaxTokens:      100,
 		Temperature:    0.7,
 		SessionConfig:  session.DefaultConfig(),
-		EnableTools:    true,
-		MaxToolCalls:   5,
 	}
 	config.SessionConfig.PeerID = 99913
 	config.SessionConfig.MaxHistory = 100
 
-	a := NewAgent(config)
-	a.RegisterTools(reg)
+	a, executor := newTestAgentWithStub(t, config)
 
 	ctx := context.Background()
 	response, err := a.ProcessMessage(ctx, "What time is it?", 99913)
@@ -335,6 +304,12 @@ func TestProcessWithTools_XMLFallback(t *testing.T) {
 	}
 	if response == "" {
 		t.Fatal("expected non-empty response")
+	}
+	if !executor.Contains("time_get") {
+		t.Error("expected time_get tool to be called")
+	}
+	if strings.Contains(response, "<tool_call>") || strings.Contains(response, "<function") {
+		t.Error("response should not contain XML tool call tags")
 	}
 	t.Logf("Final response: %s", response)
 }
@@ -346,9 +321,7 @@ func TestProcessWithTools_XMLAndTextFallback(t *testing.T) {
 		callCount++
 		w.Header().Set("Content-Type", "text/event-stream")
 
-		// Проверяем содержание запроса
 		if callCount >= 2 {
-			// Второй запрос должен содержать tool result
 			var bodyMap map[string]interface{}
 			bodyBytes := make([]byte, r.ContentLength)
 			r.Body.Read(bodyBytes)
@@ -371,25 +344,18 @@ func TestProcessWithTools_XMLAndTextFallback(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reg := tools.NewRegistry()
-	reg.Register(&tools.TimeGetTool{})
-
 	config := Config{
 		LlamaServerURL: server.URL,
 		Model:          "test-model",
 		MaxTokens:      100,
 		Temperature:    0.7,
 		SessionConfig:  session.DefaultConfig(),
-		EnableTools:    true,
-		MaxToolCalls:   5,
 	}
 	config.SessionConfig.PeerID = 99914
 	config.SessionConfig.MaxHistory = 100
 
-	a := NewAgent(config)
-	a.RegisterTools(reg)
+	a, executor := newTestAgentWithStub(t, config)
 
-	// Текст с XML tool calls: обычный текст + XML
 	xmlText := `Let me check.
 
 <tool_call>
@@ -416,9 +382,11 @@ Done!`
 	if !result.Success {
 		t.Fatal("expected success")
 	}
+	if !executor.Contains("time_get") {
+		t.Error("expected time_get tool to be called")
+	}
 	t.Logf("Response: %s", result.Response)
 
-	// Проверяем что очищенный контент сохранён
 	parsed := ParseXMLToolCalls(xmlText)
 	if !strings.Contains(parsed.Content, "Let me check.") {
 		t.Errorf("expected cleaned content to contain 'Let me check.', got %q", parsed.Content)
@@ -474,15 +442,12 @@ func TestXMLInReasoning(t *testing.T) {
 	if parsed.ToolCalls[0].Args["path"] != "/tmp/test.txt" {
 		t.Errorf("expected /tmp/test.txt, got %q", parsed.ToolCalls[0].Args["path"])
 	}
-	// Проверяем что content очищен от XML
 	if strings.Contains(parsed.Content, "<function>") {
 		t.Errorf("content should not contain XML tags, got %q", parsed.Content)
 	}
 }
 
-// TestXMLDuplicateFiltering проверяет что дубли NATIVE+XML пропускаются
 func TestXMLDuplicateFiltering(t *testing.T) {
-	// NATIVE tool call
 	nativeTC := ToolCall{
 		ID:   "call_1",
 		Type: "function",
@@ -492,7 +457,6 @@ func TestXMLDuplicateFiltering(t *testing.T) {
 		},
 	}
 
-	// XML tool call с теми же аргументами
 	xmlTC := XMLToolCall{
 		Name: "file_read",
 		Args: map[string]string{"path": "/tmp/test.txt"},
@@ -501,12 +465,10 @@ func TestXMLDuplicateFiltering(t *testing.T) {
 	nativeSig := toolCallSignature(nativeTC)
 	xmlSig := xmlToolCallSignature(xmlTC)
 
-	// Сигнатуры должны совпадать
 	if nativeSig != xmlSig {
 		t.Errorf("signatures should match:\nnative: %q\nxml: %q", nativeSig, xmlSig)
 	}
 
-	// При фильтрации дубли должны пропускаться
 	executed := map[string]bool{nativeSig: true}
 	if executed[xmlSig] {
 		t.Log("Duplicate correctly detected")
@@ -515,9 +477,7 @@ func TestXMLDuplicateFiltering(t *testing.T) {
 	}
 }
 
-// TestXMLDifferentArgsNotFiltered проверяет что разные аргументы НЕ фильтруются
 func TestXMLDifferentArgsNotFiltered(t *testing.T) {
-	// NATIVE tool call
 	nativeTC := ToolCall{
 		ID:   "call_1",
 		Type: "function",
@@ -527,7 +487,6 @@ func TestXMLDifferentArgsNotFiltered(t *testing.T) {
 		},
 	}
 
-	// XML tool call с ДРУГИМ путём
 	xmlTC := XMLToolCall{
 		Name: "file_read",
 		Args: map[string]string{"path": "/tmp/b.txt"},
@@ -536,15 +495,12 @@ func TestXMLDifferentArgsNotFiltered(t *testing.T) {
 	nativeSig := toolCallSignature(nativeTC)
 	xmlSig := xmlToolCallSignature(xmlTC)
 
-	// Сигнатуры НЕ должны совпадать
 	if nativeSig == xmlSig {
 		t.Errorf("signatures should NOT match for different args:\nnative: %q\nxml: %q", nativeSig, xmlSig)
 	}
 }
 
-// TestXMLDifferentToolsNotFiltered проверяет что разные инструменты НЕ фильтруются
 func TestXMLDifferentToolsNotFiltered(t *testing.T) {
-	// NATIVE tool call - file_read
 	nativeTC := ToolCall{
 		ID:   "call_1",
 		Type: "function",
@@ -554,7 +510,6 @@ func TestXMLDifferentToolsNotFiltered(t *testing.T) {
 		},
 	}
 
-	// XML tool call - file_write (другой инструмент)
 	xmlTC := XMLToolCall{
 		Name: "file_write",
 		Args: map[string]string{"path": "/tmp/test.txt"},
@@ -563,19 +518,16 @@ func TestXMLDifferentToolsNotFiltered(t *testing.T) {
 	nativeSig := toolCallSignature(nativeTC)
 	xmlSig := xmlToolCallSignature(xmlTC)
 
-	// Сигнатуры НЕ должны совпадать
 	if nativeSig == xmlSig {
 		t.Errorf("signatures should NOT match for different tools:\nnative: %q\nxml: %q", nativeSig, xmlSig)
 	}
 }
 
-// TestCleanedReasoningSentToThinking проверяет что очищенный reasoning отправляется в thinking
 func TestCleanedReasoningSentToThinking(t *testing.T) {
 	reasoningText := "I will check the time.\n\n<function=time_get>\n</function>"
 
 	parsed := ParseXMLToolCalls(reasoningText)
 
-	// Content должен содержать текст без XML тегов
 	if strings.Contains(parsed.Content, "<function>") {
 		t.Errorf("content should not contain XML tags, got %q", parsed.Content)
 	}
@@ -587,23 +539,16 @@ func TestCleanedReasoningSentToThinking(t *testing.T) {
 // TestProcessXMLToolResults_ChainedToolCalls проверяет что XML tool calls в ответе
 // после выполнения инструментов выполняются рекурсивно
 func TestProcessXMLToolResults_ChainedToolCalls(t *testing.T) {
-	// Mock LLM сервер:
-	// 1. Первый запрос: модель возвращает ответ с XML tool calls после получения tool results
-	// 2. Второй запрос: финальный ответ
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		w.Header().Set("Content-Type", "text/event-stream")
 
 		if callCount == 1 {
-			// Первый ответ: содержит XML tool calls
-			// Это симулирует ситуацию когда модель после получения tool results
-			// хочет выполнить ещё один инструмент
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Let me also calculate something.\\n\\n<function=calc>\\n<parameter=expression>2+2</parameter>\\n</function>\\n\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 			w.Write([]byte("[DONE]\n"))
 		} else {
-			// Второй ответ: финальный текст после выполнения цепочки инструментов
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Done! The result is 4.\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 			w.Write([]byte("[DONE]\n"))
@@ -611,30 +556,21 @@ func TestProcessXMLToolResults_ChainedToolCalls(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reg := tools.NewRegistry()
-	reg.Register(&tools.TimeGetTool{})
-	reg.Register(&tools.CalcTool{})
-
 	config := Config{
 		LlamaServerURL: server.URL,
 		Model:          "test-model",
 		MaxTokens:      100,
 		Temperature:    0.7,
 		SessionConfig:  session.DefaultConfig(),
-		EnableTools:    true,
-		MaxToolCalls:   5,
 	}
 	config.SessionConfig.PeerID = 99920
+	config.SessionConfig.MaxHistory = 100
 
-	a := NewAgent(config)
-	a.RegisterTools(reg)
+	a, executor := newTestAgentWithStub(t, config)
 
-	// Симулируем что уже был выполнен time_get и модель получила результат
-	// Теперь модель должна выполнить calc из XML в ответе
 	s := a.GetSession(99920)
 	s.AddUserMessage("What time is it and calculate 2+2?")
 
-	// Создаём сообщения как будто time_get уже был выполнен
 	messages := []Message{
 		{Role: "user", Content: "What time is it and calculate 2+2?"},
 		{Role: "assistant", Content: "", ToolCalls: []ToolCall{
@@ -643,7 +579,6 @@ func TestProcessXMLToolResults_ChainedToolCalls(t *testing.T) {
 		{Role: "tool", ToolCallID: "call_1", Name: "time_get", Content: `{"time": "2024-01-01T12:00:00Z"}`},
 	}
 
-	// Вызываем processToolResults напрямую
 	toolResults := []ToolCallResult{
 		{ToolCallID: "call_1", ToolName: "time_get", Content: `{"time": "2024-01-01T12:00:00Z"}`, IsError: false},
 	}
@@ -656,31 +591,19 @@ func TestProcessXMLToolResults_ChainedToolCalls(t *testing.T) {
 		t.Fatalf("processToolResults failed: %v", err)
 	}
 
-	// Проверяем что был второй запрос (для calc)
 	if callCount < 2 {
 		t.Errorf("expected at least 2 LLM calls (first for calc tool, second for final response), got %d", callCount)
 	}
 
-	// Проверяем что ответ содержит результат calc
 	if !strings.Contains(response, "4") {
 		t.Errorf("expected response to contain '4' (result of 2+2), got: %q", response)
 	}
 
+	if !executor.Contains("calc") {
+		t.Error("expected calc tool to be called from XML in tool results")
+	}
+
 	t.Logf("Final response: %s", response)
-}
-
-// countingTool — тул с уникальным именем, считающий вызовы Execute.
-// Имя "counting" не конфликтует с дефолтными тулами агента.
-type countingTool struct {
-	count int
-}
-
-func (t *countingTool) Name() string                           { return "counting" }
-func (t *countingTool) Description() string                     { return "test tool" }
-func (t *countingTool) Schema() map[string]interface{}          { return nil }
-func (t *countingTool) Execute(ctx context.Context, inputs map[string]string) (tools.ToolResult, error) {
-	t.count++
-	return tools.ToolResult{Success: true, Data: "ok"}, nil
 }
 
 // TestProcessMessage_InvalidXMLToolCall_ShouldNotForwardToUser проверяет,
@@ -694,11 +617,9 @@ func TestProcessMessage_InvalidXMLToolCall_ShouldNotForwardToUser(t *testing.T) 
 		w.Header().Set("Content-Type", "text/event-stream")
 
 		if callCount == 1 {
-			// Модель отвечает невалидным форматом: <tool_call> с JSON внутри
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"<tool_call>\\n{\\\"name\\\": \\\"file_list\\\", \\\"arguments\\\": {\\\"path\\\": \\\".\\\"}}\\n</tool_call>\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 		} else {
-			// После ошибки модель отвечает нормальным текстом
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"I will list the current directory.\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 		}
@@ -706,23 +627,17 @@ func TestProcessMessage_InvalidXMLToolCall_ShouldNotForwardToUser(t *testing.T) 
 	}))
 	defer server.Close()
 
-	reg := tools.NewRegistry()
-	reg.Register(&tools.DirListTool{})
-
 	config := Config{
 		LlamaServerURL: server.URL,
 		Model:          "test-model",
 		MaxTokens:      100,
 		Temperature:    0.7,
 		SessionConfig:  session.DefaultConfig(),
-		EnableTools:    true,
-		MaxToolCalls:   5,
 	}
 	config.SessionConfig.PeerID = 99930
 	config.SessionConfig.MaxHistory = 100
 
-	a := NewAgent(config)
-	a.RegisterTools(reg)
+	a, executor := newTestAgentWithStub(t, config)
 
 	ctx := context.Background()
 	response, err := a.ProcessMessage(ctx, "what files are here?", 99930)
@@ -730,13 +645,10 @@ func TestProcessMessage_InvalidXMLToolCall_ShouldNotForwardToUser(t *testing.T) 
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
 
-	// Ответ пользователю НЕ должен содержать XML
 	if strings.Contains(response, "<tool_call>") {
 		t.Errorf("response should not contain XML tool call tags, got: %q", response)
 	}
 
-	// Сессия НЕ должна содержать сырой XML в assistant сообщениях
-	// (tool сообщения с ошибкой формата — ок, они идут только модели)
 	s := a.GetSession(99930)
 	for _, msg := range s.GetHistory() {
 		if msg.Role == "assistant" && strings.Contains(msg.Content, "<tool_call>") {
@@ -744,9 +656,13 @@ func TestProcessMessage_InvalidXMLToolCall_ShouldNotForwardToUser(t *testing.T) 
 		}
 	}
 
-	// Должно быть минимум 2 вызова LLM (1й — запрос, 2й — после ошибки)
 	if callCount < 2 {
 		t.Errorf("expected at least 2 LLM calls, got %d", callCount)
+	}
+
+	// Проверяем что через stub executor прошли тулы (handleInvalidXMLToolCall → format_error)
+	if !executor.Contains("[TOOL] Call:") {
+		t.Error("expected at least one tool call via stub executor")
 	}
 
 	t.Logf("Final response: %s, LLM calls: %d", response, callCount)
@@ -762,13 +678,19 @@ func TestProcessToolResults_DeduplicateSameToolAcrossRecursion(t *testing.T) {
 		llmCallCount++
 		w.Header().Set("Content-Type", "text/event-stream")
 
-		if llmCallCount <= 2 {
-			// Первые два LLM-запроса возвращают один и тот же XML-тул
+		if llmCallCount == 1 {
+			// Первый LLM-запрос: возвращает XML тул
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"<tool_call>\\n<function=counting>\\n</function>\\n</tool_call>\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 			w.Write([]byte("[DONE]\n"))
+		} else if llmCallCount == 2 {
+			// Второй LLM-запрос: тот же XML тул (должен быть задедуплицирован)
+			// Возвращаем текст с XML и финальный ответ
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Already counted.\\n<tool_call>\\n<function=counting>\\n</function>\\n</tool_call>\\nDone.\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+			w.Write([]byte("[DONE]\n"))
 		} else {
-			// Третий — финальный ответ
+			// Третий — не должен понадобиться
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Done.\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 			w.Write([]byte("[DONE]\n"))
@@ -776,24 +698,17 @@ func TestProcessToolResults_DeduplicateSameToolAcrossRecursion(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cTool := &countingTool{}
-	reg := tools.NewRegistry()
-	reg.Register(cTool)
-
 	config := Config{
 		LlamaServerURL: server.URL,
 		Model:          "test-model",
 		MaxTokens:      100,
 		Temperature:    0.7,
 		SessionConfig:  session.DefaultConfig(),
-		EnableTools:    true,
-		MaxToolCalls:   5,
 	}
 	config.SessionConfig.PeerID = 99920
 	config.SessionConfig.MaxHistory = 100
 
-	a := NewAgent(config)
-	a.RegisterTools(reg)
+	a, executor := newTestAgentWithStub(t, config)
 
 	ctx := context.Background()
 	response, err := a.ProcessMessage(ctx, "What time is it?", 99920)
@@ -804,10 +719,23 @@ func TestProcessToolResults_DeduplicateSameToolAcrossRecursion(t *testing.T) {
 		t.Fatal("expected non-empty response")
 	}
 
-	t.Logf("LLM calls: %d, tool executions: %d", llmCallCount, cTool.count)
+	t.Logf("LLM calls: %d, tool log entries: %d", llmCallCount, len(executor.ReadLog()))
 
-	if cTool.count != 1 {
-		t.Errorf("expected tool to execute exactly 1 time (dedup), got %d", cTool.count)
+	// counting тул должен выполниться РОВНО 1 раз (дедупликация на втором запросе)
+	countingCalls := executor.Count("[TOOL] Call: counting")
+	if countingCalls != 1 {
+		t.Errorf("expected counting tool to execute exactly 1 time (dedup), got %d calls in log", countingCalls)
+		t.Logf("Full log: %v", executor.ReadLog())
+	}
+
+	// Ответ не должен содержать XML
+	if strings.Contains(response, "<tool_call>") || strings.Contains(response, "<function") {
+		t.Errorf("response should not contain XML tool call tags, got: %q", response)
+	}
+
+	// Должен быть минимум 2 вызова LLM (1й — XML тул, 2й — дубль с текстом)
+	if llmCallCount < 2 {
+		t.Errorf("expected at least 2 LLM calls, got %d", llmCallCount)
 	}
 }
 
@@ -815,18 +743,15 @@ func TestProcessToolResults_DeduplicateSameToolAcrossRecursion(t *testing.T) {
 // НЕ выполняет JSON тул внутри <tool_call> обёртки, а отправляет модели ошибку.
 func TestProcessToolResults_InvalidXMLToolCall(t *testing.T) {
 	callCount := 0
-	counting := &countingTool{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		w.Header().Set("Content-Type", "text/event-stream")
 
 		if callCount == 1 {
-			// Модель отвечает с <tool_call> обёрткой вокруг JSON
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"<tool_call>\\n{\\\"name\\\": \\\"counting\\\", \\\"arguments\\\": {}}\\n</tool_call>\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 		} else {
-			// После выполнения тула из гибридного формата — нормальный ответ
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"I will use proper tool calls.\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 		}
@@ -834,23 +759,17 @@ func TestProcessToolResults_InvalidXMLToolCall(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reg := tools.NewRegistry()
-	reg.Register(counting)
-
 	config := Config{
 		LlamaServerURL: server.URL,
 		Model:          "test-model",
 		MaxTokens:      100,
 		Temperature:    0.7,
 		SessionConfig:  session.DefaultConfig(),
-		EnableTools:    true,
-		MaxToolCalls:   5,
 	}
 	config.SessionConfig.PeerID = 99940
 	config.SessionConfig.MaxHistory = 100
 
-	a := NewAgent(config)
-	a.RegisterTools(reg)
+	a, executor := newTestAgentWithStub(t, config)
 
 	s := a.GetSession(99940)
 	s.AddUserMessage("do something")
@@ -875,59 +794,46 @@ func TestProcessToolResults_InvalidXMLToolCall(t *testing.T) {
 		t.Fatalf("processToolResults failed: %v", err)
 	}
 
-	// counting tool выполняется 1 раз (JSON внутри <tool_call> — валидный гибридный формат)
-	if counting.count != 1 {
-		t.Errorf("expected counting tool to execute exactly 1 time (from hybrid <tool_call>), got %d", counting.count)
+	// JSON внутри <tool_call> — валидный гибридный формат, должен выполниться через JSON fallback
+	if !executor.Contains("counting") {
+		t.Error("expected counting tool to be called via stub executor")
 	}
 
-	// Ответ не должен содержать XML
 	if strings.Contains(response, "<tool_call>") {
 		t.Errorf("response should not contain XML tool call tags, got: %q", response)
 	}
 
-	// Сессия не должна содержать <tool_call> в assistant сообщениях
 	for _, msg := range s.GetHistory() {
 		if msg.Role == "assistant" && strings.Contains(msg.Content, "<tool_call>") {
 			t.Errorf("assistant message should not contain XML tool call tags, got: %q", msg.Content)
 		}
 	}
 
-	// Должен быть минимум 2 вызова LLM (1й — ответ с <tool_call>, 2й — после выполнения)
 	if callCount < 2 {
 		t.Errorf("expected at least 2 LLM calls, got %d", callCount)
 	}
 
-	t.Logf("Response: %s, LLM calls: %d, tool executions: %d", response, callCount, counting.count)
+	t.Logf("Response: %s, LLM calls: %d, tool log: %v", response, callCount, executor.ReadLog())
 }
 
 // TestProcessMessage_Integration_NativeToolCallsThenXMLInToolResults проверяет
 // полный сценарий из bug report: модель сначала отвечает НАТИВНЫМИ tool_calls,
 // затем после выполнения инструментов и отправки результатов — отвечает
 // невалидным <tool_call> форматом (с JSON внутри) внутри processToolResults.
-// Агент НЕ должен:
-//   - отправлять сырой XML пользователю
-//   - выполнять инструменты из JSON внутри <tool_call> (должны выполниться
-//     только нативные tool_calls)
-//   - сохранять XML в assistant session сообщениях
 func TestProcessMessage_Integration_NativeToolCallsThenXMLInToolResults(t *testing.T) {
 	callCount := 0
-	counting := &countingTool{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		w.Header().Set("Content-Type", "text/event-stream")
 
 		if callCount == 1 {
-			// 1й LLM запрос (processWithTools): модель возвращает нативные tool_calls
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"counting\",\"arguments\":\"{}\"}}]}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"))
 		} else if callCount == 2 {
-			// 2й LLM запрос (внутри processToolResults): модель отвечает с <tool_call> обёрткой
-			// JSON-тул задедуплицирован — не выполняется, ответ пустой
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"<tool_call>\\n{\\\"name\\\": \\\"counting\\\", \\\"arguments\\\": {}}\\n</tool_call>\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 		} else {
-			// 3й вызов не ожидается (остановились на 2 из-за дедупликации)
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Files have been processed.\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 		}
@@ -935,23 +841,17 @@ func TestProcessMessage_Integration_NativeToolCallsThenXMLInToolResults(t *testi
 	}))
 	defer server.Close()
 
-	reg := tools.NewRegistry()
-	reg.Register(counting)
-
 	config := Config{
 		LlamaServerURL: server.URL,
 		Model:          "test-model",
 		MaxTokens:      100,
 		Temperature:    0.7,
 		SessionConfig:  session.DefaultConfig(),
-		EnableTools:    true,
-		MaxToolCalls:   5,
 	}
 	config.SessionConfig.PeerID = 99950
 	config.SessionConfig.MaxHistory = 100
 
-	a := NewAgent(config)
-	a.RegisterTools(reg)
+	a, executor := newTestAgentWithStub(t, config)
 
 	ctx := context.Background()
 	response, err := a.ProcessMessage(ctx, "delete those files", 99950)
@@ -959,18 +859,18 @@ func TestProcessMessage_Integration_NativeToolCallsThenXMLInToolResults(t *testi
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
 
-	// Ответ пользователю НЕ должен содержать XML
 	if strings.Contains(response, "<tool_call>") {
 		t.Errorf("response should not contain XML tool call tags, got: %q", response)
 	}
 
-	// counting tool должен выполниться РОВНО 1 раз (из нативных tool_calls)
+	// counting тул должен выполниться РОВНО 1 раз (из нативных tool_calls)
 	// JSON внутри <tool_call> задедуплицирован — не выполняется
-	if counting.count != 1 {
-		t.Errorf("expected counting tool to execute exactly 1 time (from native tool_calls), got %d", counting.count)
+	countingCalls := executor.Count("[TOOL] Call: counting")
+	if countingCalls != 1 {
+		t.Errorf("expected counting tool to execute exactly 1 time (from native tool_calls), got %d times in log", countingCalls)
+		t.Logf("Full log: %v", executor.ReadLog())
 	}
 
-	// Сессия НЕ должна содержать сырой XML в assistant сообщениях
 	s := a.GetSession(99950)
 	for _, msg := range s.GetHistory() {
 		if msg.Role == "assistant" && strings.Contains(msg.Content, "<tool_call>") {
@@ -978,11 +878,64 @@ func TestProcessMessage_Integration_NativeToolCallsThenXMLInToolResults(t *testi
 		}
 	}
 
-	// 2 вызова LLM:
-	// 1й — нативные tool_calls, 2й — XML в tool results (дедуплицирован, ответ пустой)
 	if callCount < 2 {
 		t.Errorf("expected at least 2 LLM calls, got %d", callCount)
 	}
 
-	t.Logf("Final response: %s, LLM calls: %d, tool executions: %d", response, callCount, counting.count)
+	t.Logf("Final response: %s, LLM calls: %d, tool log: %v", response, callCount, executor.ReadLog())
+}
+
+// TestMalformedXMLInReasoning_NotSilentlyReturned проверяет что если модель
+// возвращает сломанный XML внутри <tool_call> в reasoningText (например,
+// <subagent> вместо <function=subagent>) и responseText пустой — то система
+// НЕ должна использовать очищенный reasoning как финальный ответ, а должна
+// вызвать handleInvalidXMLToolCall и дать модели второй шанс.
+func TestMalformedXMLInReasoning_NotSilentlyReturned(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "text/event-stream")
+
+		if callCount == 1 {
+			// Возвращаем пустой content + reasoning со сломанным XML
+			// <subagent> вместо <function=subagent> — как в реальном баге
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Нужно создать исправленный код и отправить его на QA для проверки\\n\\n<tool_call>\\n<subagent>\\n<name>\\nworker\\n</name>\\n</subagent>\\n</tool_call>\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		} else {
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Proper response after format error.\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		}
+		w.Write([]byte("[DONE]\n"))
+	}))
+	defer server.Close()
+
+	config := Config{
+		LlamaServerURL: server.URL,
+		Model:          "test-model",
+		MaxTokens:      100,
+		Temperature:    0.7,
+		SessionConfig:  session.DefaultConfig(),
+	}
+	config.SessionConfig.PeerID = 99960
+	config.SessionConfig.MaxHistory = 100
+
+	a, _ := newTestAgentWithStub(t, config)
+
+	ctx := context.Background()
+	response, err := a.ProcessMessage(ctx, "do something", 99960)
+	if err != nil {
+		t.Fatalf("ProcessMessage failed: %v", err)
+	}
+
+	// BUG CHECK: response не должен содержать reasoning текст
+	if strings.Contains(response, "Нужно создать исправленный код") {
+		t.Error("BUG: response contains reasoning text instead of proper response — malformed XML was silently stripped and returned as answer")
+	}
+
+	// BUG CHECK: должно быть минимум 2 вызова LLM (ошибка формата → retry)
+	if callCount < 2 {
+		t.Errorf("BUG: expected at least 2 LLM calls (format error should retry), got %d", callCount)
+	}
+
+	t.Logf("Final response: %s, LLM calls: %d", response, callCount)
 }

@@ -30,6 +30,16 @@ func expandTilde(path string) string {
 }
 
 // ============================================================
+// AgentOrchestrator — интерфейс для многоагентного пайплайна
+// ============================================================
+
+// AgentOrchestrator определяет контракт для выполнения многоагентных задач
+type AgentOrchestrator interface {
+	ExecuteTask(ctx context.Context, task string, peerID int64) (string, error)
+	GetCurrentAgent() string
+}
+
+// ============================================================
 // VK Bot Handler — связующее звено между VK Bot API и AI Agent
 // ============================================================
 
@@ -37,7 +47,7 @@ func expandTilde(path string) string {
 type BotHandler struct {
 	vkClient      *BotClient
 	aiAgent       agentloop.AgentLoop
-	orchestrator  *agentloop.Orchestrator
+	orchestrator  AgentOrchestrator
 	log           *logger.Logger
 	sessions      map[int64]*session.Session
 	sessionMu     sync.RWMutex
@@ -60,7 +70,7 @@ func NewBotHandler(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger
 }
 
 // NewBotHandlerWithPeerID создаёт новый обработчик VK Bot с mainPeerID
-func NewBotHandlerWithPeerID(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger.Logger, mainPeerID, thinkingPeerID int64, orchestrator *agentloop.Orchestrator) *BotHandler {
+func NewBotHandlerWithPeerID(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger.Logger, mainPeerID, thinkingPeerID int64, orchestrator AgentOrchestrator) *BotHandler {
 	return &BotHandler{
 		vkClient:      vkClient,
 		aiAgent:       aiAgent,
@@ -259,6 +269,10 @@ func (h *BotHandler) handleAgentCommand(input string, peerID int64) string {
 			}
 			return "Произошла ошибка при выполнении команды /agent. Попробуйте позже."
 		}
+		// Сохраняем команду и результат в сессию, чтобы последующие сообщения видели контекст
+		s := h.aiAgent.EnsureSession(peerID)
+		s.AddUserMessage(input)
+		s.AddAssistantMessage(response)
 		return response
 	}
 

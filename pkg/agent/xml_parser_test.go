@@ -730,6 +730,57 @@ func TestParseXMLToolCalls_MultipleCodeBlocks(t *testing.T) {
 	}
 }
 
+// TestParseXMLToolCalls_CodeBlockInParamValue — регрессионный тест для бага,
+// когда внутри <parameter=task> есть секция ```\n```go\n...\n``` с нечётным
+// количеством backtick-последовательностей. Это заставляло isInCodeBlock()
+// блокировать matchCloseTag для </parameter>, из-за чего парсер застревал
+// в stateParam до EOF и возвращал 0 tool calls.
+func TestParseXMLToolCalls_CodeBlockInParamValue(t *testing.T) {
+	bt := "\x60\x60\x60"
+	input := "<tool_call>\n<function=subagent>\n<parameter=name>\nworker\n</parameter>\n<parameter=task>\nСоздать Go приложение\n\nНапишите код:\n" + bt + "\n" + bt + "go\n<код>\n" + bt + "\n</parameter>\n</function>\n</tool_call>"
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d (content: %q)", len(result.ToolCalls), result.Content)
+	}
+	tc := result.ToolCalls[0]
+	if tc.Name != "subagent" {
+		t.Errorf("expected subagent, got %q", tc.Name)
+	}
+	if tc.Args["name"] != "worker" {
+		t.Errorf("expected worker, got %q", tc.Args["name"])
+	}
+	if !strings.Contains(tc.Args["task"], "Создать Go приложение") {
+		t.Errorf("task should contain 'Создать Go приложение', got %q", tc.Args["task"])
+	}
+	if !strings.Contains(tc.Args["task"], bt) {
+		t.Errorf("task should contain backtick code blocks, got %q", tc.Args["task"])
+	}
+	if !strings.Contains(tc.Args["task"], "<код>") {
+		t.Errorf("task should contain '<код>', got %q", tc.Args["task"])
+	}
+}
+
+// TestParseXMLToolCalls_CodeBlockInParamValue_EvenCount — проверка,
+// что нормальный code block (с чётным count) по-прежнему работает.
+func TestParseXMLToolCalls_CodeBlockInParamValue_EvenCount(t *testing.T) {
+	bt := "\x60\x60\x60"
+	input := "<tool_call>\n<function=subagent>\n<parameter=name>\nqa\n</parameter>\n<parameter=task>\n" + bt + "go\npackage main\nimport \"fmt\"\n" + bt + "\n</parameter>\n</function>\n</tool_call>"
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d (content: %q)", len(result.ToolCalls), result.Content)
+	}
+	tc := result.ToolCalls[0]
+	if tc.Name != "subagent" {
+		t.Errorf("expected subagent, got %q", tc.Name)
+	}
+	if tc.Args["name"] != "qa" {
+		t.Errorf("expected qa, got %q", tc.Args["name"])
+	}
+	if !strings.Contains(tc.Args["task"], bt+"go") {
+		t.Errorf("task should contain code block, got %q", tc.Args["task"])
+	}
+}
+
 // Тест формата который модель реально выдаёт с префиксом
 func TestParseXMLToolCalls_NoWrapper_WithContentStartPrefix(t *testing.T) {
 	input := `_CONTENT_START__
