@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/opencode/llama-client/pkg/access"
 	"github.com/opencode/llama-client/pkg/agentloop"
 	"github.com/opencode/llama-client/pkg/logger"
 	"github.com/opencode/llama-client/pkg/mcp"
@@ -84,6 +85,13 @@ func main() {
 	toolRegistry.Register(&tools.GrepTool{})
 	toolRegistry.Register(&tools.CalcTool{})
 	toolRegistry.Register(&tools.EditTool{})
+
+	// Создаём контроллер доступа к файловой системе
+	allowedDirs := []string{tools.WorkingDir}
+	allowedDirs = append(allowedDirs, config.AllowedDirs...)
+	accessController := access.NewController(allowedDirs)
+	tools.SetAccessController(accessController)
+	log.InfoLogf("Access control initialized: allowed dirs = %v", accessController.AllowedDirs())
 
 	// Инициализируем MCP Manager если указан конфиг
 	var mcpManager *mcp.Manager
@@ -201,14 +209,15 @@ func main() {
 
 // Config представляет конфигурацию приложения
 type Config struct {
-	LlamaServerURL string  `json:"llama_server_url"`
-	Model          string  `json:"model"`
-	MaxTokens      int     `json:"max_tokens"`
-	Temperature    float64 `json:"temperature"`
-	TokenVK        string  `json:"token_vk"`
-	PeerID         int64   `json:"peer_id"`          // Основной чат для ответов
-	ThinkingPeerID int64   `json:"thinking_peer_id"` // Чат для thinking сообщений
-	MCPConfigPath  string  `json:"mcp_config_path"`  // Путь к конфигурации MCP серверов
+	LlamaServerURL string   `json:"llama_server_url"`
+	Model          string   `json:"model"`
+	MaxTokens      int      `json:"max_tokens"`
+	Temperature    float64  `json:"temperature"`
+	TokenVK        string   `json:"token_vk"`
+	PeerID         int64    `json:"peer_id"`          // Основной чат для ответов
+	ThinkingPeerID int64    `json:"thinking_peer_id"` // Чат для thinking сообщений
+	MCPConfigPath  string   `json:"mcp_config_path"`  // Путь к конфигурации MCP серверов
+	AllowedDirs    []string `json:"allowed_dirs"`     // Дополнительные разрешённые директории
 }
 
 // loadConfig загружает конфигурацию из файла

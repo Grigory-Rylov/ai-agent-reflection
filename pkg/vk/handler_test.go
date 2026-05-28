@@ -137,6 +137,7 @@ func TestCommandsDoNotReachModel(t *testing.T) {
 		{"help command", "/help"},
 		{"status command", "/status"},
 		{"newsession command", "/newsession /tmp"},
+		{"n alias command", "/n /tmp"},
 		{"unknown command", "/unknownxyz"},
 	}
 

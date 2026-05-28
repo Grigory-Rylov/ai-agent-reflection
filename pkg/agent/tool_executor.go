@@ -76,12 +76,6 @@ func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, 
 	fmt.Printf("[TOOL] Call: %s\n", brief)
 	e.agent.sendThinking(peerID, "[TOOL] Call: "+brief)
 
-	// Синхронизируем рабочую директорию сессии перед вызовом инструмента
-	sess := e.agent.getSession(peerID)
-	if wd := sess.GetWorkingDir(); wd != "" {
-		tools.SetWorkingDir(wd)
-	}
-
 	result, err := tool.Execute(ctx, args)
 	if err != nil {
 		errMsg := fmt.Sprintf("Execution error for %s: %v", toolName, err)

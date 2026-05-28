@@ -38,6 +38,7 @@ func SetWorkingDir(dir string) {
 }
 
 // resolvePath приводит путь к абсолютному, защищая от path traversal
+// и проверяя доступ к файловой системе.
 func resolvePath(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("path is empty")
@@ -51,6 +52,11 @@ func resolvePath(path string) (string, error) {
 	}
 
 	cleaned = filepath.Clean(cleaned)
+
+	// Проверяем доступ к файлу через глобальный контроллер доступа
+	if err := CheckPathAllowed(cleaned); err != nil {
+		return "", err
+	}
 
 	return cleaned, nil
 }
@@ -266,7 +272,7 @@ func (t *ShellExecuteTool) Name() string {
 }
 
 func (t *ShellExecuteTool) Description() string {
-	return "Execute a shell command and return the output. Use with caution — commands are executed directly. Default timeout is 60s, pass 'timeout' to override."
+	return "Execute a shell command in the current working directory and return the output. Use with caution — commands are executed directly. Default timeout is 60s, pass 'timeout' to override."
 }
 
 func (t *ShellExecuteTool) Schema() map[string]interface{} {
@@ -300,6 +306,11 @@ func (t *ShellExecuteTool) Execute(ctx context.Context, inputs map[string]string
 	cmd := exec.Command("sh", "-c", command)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+
+	// Устанавливаем рабочую директорию для команды (синхронизируется из сессии)
+	if WorkingDir != "" {
+		cmd.Dir = WorkingDir
+	}
 
 	// Создаём process group, чтобы убивать дочерние процессы вместе с sh
 	if runtime.GOOS != "windows" {

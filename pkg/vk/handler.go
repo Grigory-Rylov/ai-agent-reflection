@@ -200,13 +200,13 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 		}
 		return "История диалога очищена. Напишите /newsession [path] чтобы сменить рабочую директорию."
 
-	case "/newsession":
+	case "/newsession", "/n":
 		return h.handleNewSession(input, peerID)
 
 	case "/help":
 		return "Доступные команды:\n" +
 			"/reset - Очистить историю диалога\n" +
-			"/newsession [path] - Сбросить сессию и сменить рабочую директорию\n" +
+			"/newsession [path] (/n) - Сбросить сессию и сменить рабочую директорию\n" +
 			"/help - Показать эту справку\n" +
 			"/status - Показать статус агента (сообщения, символы, токены)\n" +
 			"/test-llama - Тест соединения с llama-server\n" +
@@ -334,6 +334,14 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 
 	// Синхронизируем с tools.WorkingDir для файловых операций
 	tools.SetWorkingDir(absPath)
+
+	// Добавляем новую директорию в список разрешённых для файловых операций
+	if ctrl := tools.GetAccessController(); ctrl != nil {
+		ctrl.AddAllowedDir(absPath)
+		if h.log != nil {
+			h.log.InfoLogf("Granted access to new working dir: %s", absPath)
+		}
+	}
 
 	// Очищаем локальную сессию хендлера
 	h.clearHandlerSession(peerID)

@@ -1,14 +1,12 @@
 package access
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
-
-// ============================================================
-// Access Control — контроль доступа к файловой системе
-// ============================================================
 
 // AccessLevel определяет уровень доступа
 type AccessLevel int
@@ -22,113 +20,186 @@ const (
 
 // AccessResult результат проверки доступа
 type AccessResult struct {
-	Allowed   bool
-	Reason    string
-	RequestID string // Для отслеживания запросов на разрешение
+	Allowed bool
+	Reason  string
 }
 
-// Controller управляет правилами доступа
+// Controller управляет правилами доступа к файловой системе.
+// Поддерживает два уровня разрешённых путей:
+//   - Global: из конфига, постоянные
+//   - Session: временные, выдаются через grant_access на сессию
 type Controller struct {
-	allowedDirs []string
-	configured  bool
+	mu          sync.RWMutex
+	allowedDirs []string // глобальные разрешённые директории (из конфига)
+	sessionDirs []string // временные разрешения для сессии (через grant_access)
 }
-
-// ============================================================
-// Инициализация
-// ============================================================
 
 // NewController создаёт новый контроллер доступа
 func NewController(allowedDirs []string) *Controller {
 	c := &Controller{
 		allowedDirs: make([]string, 0),
+		sessionDirs: make([]string, 0),
 	}
-
 	for _, dir := range allowedDirs {
 		c.addAllowedDir(dir)
 	}
-
-	c.configured = true
 	return c
 }
 
-// addAllowedDir добавляет разрешённую директорию с разрешением переменных окружения
+// addAllowedDir добавляет глобальную разрешённую директорию
 func (c *Controller) addAllowedDir(dir string) {
-	// Расширяем переменные окружения (например, $HOME)
 	dir = os.ExpandEnv(dir)
-
-	// Преобразуем в абсолютный путь
 	absPath, err := filepath.Abs(dir)
 	if err != nil {
 		return
 	}
-
-	// Канонизируем путь (разрешаем симлинки)
 	canonical, err := filepath.EvalSymlinks(absPath)
 	if err != nil {
 		canonical = absPath
 	}
-
 	c.allowedDirs = append(c.allowedDirs, canonical)
 }
 
-// ============================================================
-// Проверка доступа
-// ============================================================
+// AddAllowedDir добавляет глобальную разрешённую директорию (публичный метод)
+func (c *Controller) AddAllowedDir(dir string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.addAllowedDir(dir)
+}
 
-// CheckAccess проверяет, находится ли путь в разрешённых директориях
-func (c *Controller) CheckAccess(path string) AccessResult {
-	if !c.configured {
-		return AccessResult{
-			Allowed: false,
-			Reason:  "Access control not configured",
-		}
-	}
+// GrantPath добавляет временное разрешение для сессии
+func (c *Controller) GrantPath(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	// Расширяем переменные окружения
 	path = os.ExpandEnv(path)
-
-	// Преобразуем в абсолютный путь
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return AccessResult{
-			Allowed: false,
-			Reason:  "Cannot resolve path: " + err.Error(),
-		}
+		return
 	}
-
-	// Канонизируем путь (разрешаем симлинки)
 	canonical, err := filepath.EvalSymlinks(absPath)
 	if err != nil {
-		// Если файл не существует, канонизируем родительскую директорию
-		parentDir := filepath.Dir(absPath)
-		canonicalParent, parentErr := filepath.EvalSymlinks(parentDir)
-		if parentErr != nil {
-			// Если родитель тоже не существует, используем абсолютный путь
-			canonical = absPath
-		} else {
-			// Собираем путь из канонизированного родителя и имени файла
-			canonical = filepath.Join(canonicalParent, filepath.Base(absPath))
-		}
+		canonical = absPath
 	}
+	c.sessionDirs = append(c.sessionDirs, canonical)
+}
 
-	// Проверяем, что путь находится внутри разрешённых директорий
-	for _, allowedDir := range c.allowedDirs {
-		// Проверяем, начинается ли путь с разрешённой директории
-		if strings.HasPrefix(canonical, allowedDir) {
-			return AccessResult{
-				Allowed: true,
-				Reason:  "Path is within allowed directory",
-			}
-		}
+// RevokePath удаляет временное разрешение для сессии
+func (c *Controller) RevokePath(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return
 	}
-
-	return AccessResult{
-		Allowed: false,
-		Reason:  "Path is outside allowed directories: " + canonical,
+	canonical, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		canonical = absPath
+	}
+	for i, d := range c.sessionDirs {
+		if d == canonical {
+			c.sessionDirs = append(c.sessionDirs[:i], c.sessionDirs[i+1:]...)
+			return
+		}
 	}
 }
 
-// CheckReadAccess проверяет доступ на чтение
+// AllowedDirs возвращает все разрешённые директории (глобальные + сессионные)
+func (c *Controller) AllowedDirs() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	result := make([]string, 0, len(c.allowedDirs)+len(c.sessionDirs))
+	result = append(result, c.allowedDirs...)
+	result = append(result, c.sessionDirs...)
+	return result
+}
+
+// isPathInAllowed проверяет, находится ли путь в одном из списков
+func isPathInAllowed(canonical string, dirs []string) bool {
+	for _, allowedDir := range dirs {
+		if strings.HasPrefix(canonical, allowedDir) {
+			afterPrefix := canonical[len(allowedDir):]
+			if afterPrefix == "" || strings.HasPrefix(afterPrefix, string(filepath.Separator)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// resolveCanonical приводит путь к каноническому виду для проверки.
+// Обходит каждый компонент пути, разрешая симлинки по мере возможности.
+func resolveCanonical(path string) (string, error) {
+	path = os.ExpandEnv(path)
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve path: %w", err)
+	}
+	absPath = filepath.Clean(absPath)
+
+	volumeName := filepath.VolumeName(absPath)
+	dirPart := absPath[len(volumeName):]
+
+	var resolved string
+	if volumeName != "" {
+		resolved = volumeName + string(filepath.Separator)
+	}
+
+	parts := strings.Split(dirPart, string(filepath.Separator))
+	for _, part := range parts {
+		if part == "" {
+			if resolved == "" {
+				resolved = string(filepath.Separator)
+			}
+			continue
+		}
+		resolved = filepath.Join(resolved, part)
+		if eval, err := filepath.EvalSymlinks(resolved); err == nil {
+			resolved = eval
+		}
+	}
+
+	return filepath.Clean(resolved), nil
+}
+
+// CheckAccess проверяет, находится ли путь в разрешённых директориях
+func (c *Controller) CheckAccess(path string) AccessResult {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	canonical, err := resolveCanonical(path)
+	if err != nil {
+		return AccessResult{
+			Allowed: false,
+			Reason:  err.Error(),
+		}
+	}
+
+	if isPathInAllowed(canonical, c.allowedDirs) {
+		return AccessResult{
+			Allowed: true,
+			Reason:  "path is within allowed directories",
+		}
+	}
+
+	if isPathInAllowed(canonical, c.sessionDirs) {
+		return AccessResult{
+			Allowed: true,
+			Reason:  "path is within session-granted directories",
+		}
+	}
+
+	allowedDirs := append([]string{}, c.allowedDirs...)
+	allowedDirs = append(allowedDirs, c.sessionDirs...)
+
+	return AccessResult{
+		Allowed: false,
+		Reason:  fmt.Sprintf("access denied: path %q is outside allowed directories %v", canonical, allowedDirs),
+	}
+}
+
+// CheckReadAccess проверяет доступ на чтение (аналогично CheckAccess)
 func (c *Controller) CheckReadAccess(path string) AccessResult {
 	return c.CheckAccess(path)
 }
@@ -140,106 +211,33 @@ func (c *Controller) CheckWriteAccess(path string) AccessResult {
 		return result
 	}
 
-	// Дополнительно проверяем, что родительская директория существует и доступна
 	parentDir := filepath.Dir(path)
 	info, err := os.Stat(parentDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return AccessResult{
 				Allowed: false,
-				Reason:  "Parent directory does not exist: " + parentDir,
+				Reason:  fmt.Sprintf("parent directory does not exist: %s", parentDir),
 			}
 		}
 		return AccessResult{
 			Allowed: false,
-			Reason:  "Cannot stat parent directory: " + err.Error(),
+			Reason:  fmt.Sprintf("cannot stat parent directory: %v", err),
 		}
 	}
 
 	if !info.IsDir() {
 		return AccessResult{
 			Allowed: false,
-			Reason:  "Parent path is not a directory",
-		}
-	}
-
-	// Проверяем права на запись в родительскую директорию
-	writable := false
-	if info.Mode()&0222 != 0 {
-		writable = true
-	} else {
-		// Проверяем через попытку создания временного файла
-		tmpFile, err := os.CreateTemp(parentDir, ".access_check_*")
-		if err == nil {
-			writable = true
-			tmpFile.Close()
-			os.Remove(tmpFile.Name())
-		}
-	}
-
-	if !writable {
-		return AccessResult{
-			Allowed: false,
-			Reason:  "Parent directory is not writable",
+			Reason:  "parent path is not a directory",
 		}
 	}
 
 	return AccessResult{
 		Allowed: true,
-		Reason:  "Path is within allowed directory and parent is writable",
+		Reason:  "path is within allowed directory",
 	}
 }
-
-// ============================================================
-// Безопасное преобразование путей
-// ============================================================
-
-// SanitizePath удаляет потенциально опасные последовательности из пути
-func SanitizePath(path string) string {
-	// Убираем переменные окружения для безопасности
-	path = os.ExpandEnv(path)
-
-	// Заменяем .. на пустые сегменты для предотвращения traversal
-	cleaned := filepath.Clean(path)
-
-	// Если путь содержит .. после очистки — это попытка traversal
-	if strings.Contains(cleaned, "..") {
-		return ""
-	}
-
-	// Убедимся, что путь абсолютный
-	if !filepath.IsAbs(cleaned) {
-		absPath, err := filepath.Abs(cleaned)
-		if err == nil {
-			cleaned = absPath
-		}
-	}
-
-	return cleaned
-}
-
-// IsPathSafe проверяет, что путь не содержит опасных паттернов
-func IsPathSafe(path string) bool {
-	// Проверяем на наличие символов инъекции
-	dangerousChars := []string{";", "|", "&", "`", "$", "(", ")", "{", "}", "<", ">", "\\", "\n", "\r"}
-	for _, ch := range dangerousChars {
-		if strings.Contains(path, ch) {
-			return false
-		}
-	}
-
-	// Проверяем на наличие .. (path traversal)
-	cleaned := filepath.Clean(path)
-	if strings.Contains(cleaned, "..") {
-		return false
-	}
-
-	return true
-}
-
-// ============================================================
-// Безопасное чтение файлов
-// ============================================================
 
 // SafeReadFile читает файл с проверкой доступа
 func (c *Controller) SafeReadFile(path string) ([]byte, AccessResult) {
@@ -252,19 +250,15 @@ func (c *Controller) SafeReadFile(path string) ([]byte, AccessResult) {
 	if err != nil {
 		return nil, AccessResult{
 			Allowed: false,
-			Reason:  "Failed to read file: " + err.Error(),
+			Reason:  fmt.Sprintf("failed to read file: %v", err),
 		}
 	}
 
 	return data, AccessResult{
 		Allowed: true,
-		Reason:  "File read successfully",
+		Reason:  "file read successfully",
 	}
 }
-
-// ============================================================
-// Безопасная запись файлов
-// ============================================================
 
 // SafeWriteFile записывает файл с проверкой доступа
 func (c *Controller) SafeWriteFile(path string, data []byte) AccessResult {
@@ -273,33 +267,30 @@ func (c *Controller) SafeWriteFile(path string, data []byte) AccessResult {
 		return result
 	}
 
-	// Создаём временный файл в той же директории (атомарная запись)
 	dir := filepath.Dir(path)
 	tmpFile, err := os.CreateTemp(dir, ".write_temp_*")
 	if err != nil {
 		return AccessResult{
 			Allowed: false,
-			Reason:  "Failed to create temp file: " + err.Error(),
+			Reason:  fmt.Sprintf("failed to create temp file: %v", err),
 		}
 	}
 	tmpName := tmpFile.Name()
 
-	// Записываем данные
 	if _, err := tmpFile.Write(data); err != nil {
 		tmpFile.Close()
 		os.Remove(tmpName)
 		return AccessResult{
 			Allowed: false,
-			Reason:  "Failed to write to temp file: " + err.Error(),
+			Reason:  fmt.Sprintf("failed to write to temp file: %v", err),
 		}
 	}
 
-	// Закрываем и переименовываем (атомарная операция)
 	if err := tmpFile.Close(); err != nil {
 		os.Remove(tmpName)
 		return AccessResult{
 			Allowed: false,
-			Reason:  "Failed to close temp file: " + err.Error(),
+			Reason:  fmt.Sprintf("failed to close temp file: %v", err),
 		}
 	}
 
@@ -307,12 +298,43 @@ func (c *Controller) SafeWriteFile(path string, data []byte) AccessResult {
 		os.Remove(tmpName)
 		return AccessResult{
 			Allowed: false,
-			Reason:  "Failed to rename temp file: " + err.Error(),
+			Reason:  fmt.Sprintf("failed to rename temp file: %v", err),
 		}
 	}
 
 	return AccessResult{
 		Allowed: true,
-		Reason:  "File written successfully",
+		Reason:  "file written successfully",
 	}
+}
+
+// SanitizePath удаляет потенциально опасные последовательности из пути
+func SanitizePath(path string) string {
+	path = os.ExpandEnv(path)
+	cleaned := filepath.Clean(path)
+	if strings.Contains(cleaned, "..") {
+		return ""
+	}
+	if !filepath.IsAbs(cleaned) {
+		absPath, err := filepath.Abs(cleaned)
+		if err == nil {
+			cleaned = absPath
+		}
+	}
+	return cleaned
+}
+
+// IsPathSafe проверяет, что путь не содержит опасных паттернов
+func IsPathSafe(path string) bool {
+	dangerousChars := []string{";", "|", "&", "`", "$", "(", ")", "{", "}", "<", ">", "\\", "\n", "\r"}
+	for _, ch := range dangerousChars {
+		if strings.Contains(path, ch) {
+			return false
+		}
+	}
+	cleaned := filepath.Clean(path)
+	if strings.Contains(cleaned, "..") {
+		return false
+	}
+	return true
 }

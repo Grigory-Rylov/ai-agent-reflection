@@ -423,6 +423,107 @@ func TestShellExecuteToolExitCode(t *testing.T) {
 }
 
 // ============================================================
+// Тест ShellExecuteTool — рабочая директория
+// ============================================================
+
+func TestShellExecuteWorkingDir(t *testing.T) {
+	t.Run("creates file in WorkingDir", func(t *testing.T) {
+		dir, err := os.MkdirTemp("", "shell_wd_test_*")
+		if err != nil {
+			t.Fatalf("Failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(dir)
+
+		oldWd := WorkingDir
+		WorkingDir = dir
+		defer func() { WorkingDir = oldWd }()
+
+		tool := &ShellExecuteTool{}
+		result, err := tool.Execute(context.Background(), map[string]string{
+			"command": "touch test_working_dir.txt",
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if !result.Success {
+			t.Fatalf("Expected success, got: %s", result.Error)
+		}
+
+		// Файл должен быть создан в WorkingDir
+		createdFile := filepath.Join(dir, "test_working_dir.txt")
+		if _, err := os.Stat(createdFile); os.IsNotExist(err) {
+			t.Errorf("File should have been created in WorkingDir %s, but it doesn't exist", dir)
+		}
+		os.Remove(createdFile)
+	})
+
+	t.Run("pwd returns WorkingDir", func(t *testing.T) {
+		dir, err := os.MkdirTemp("", "shell_pwd_test_*")
+		if err != nil {
+			t.Fatalf("Failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(dir)
+
+		oldWd := WorkingDir
+		WorkingDir = dir
+		defer func() { WorkingDir = oldWd }()
+
+		tool := &ShellExecuteTool{}
+		result, err := tool.Execute(context.Background(), map[string]string{
+			"command": "pwd",
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if !result.Success {
+			t.Fatalf("Expected success, got: %s", result.Error)
+		}
+
+		data := result.Data.(map[string]interface{})
+		output := data["output"].(string)
+		// pwd возвращает путь с переносом строки
+		pwdOutput := strings.TrimSpace(output)
+		if pwdOutput != dir {
+			t.Errorf("Expected pwd to return %q, got %q", dir, pwdOutput)
+		}
+	})
+
+	t.Run("mkdir creates subdirectory in WorkingDir", func(t *testing.T) {
+		dir, err := os.MkdirTemp("", "shell_mkdir_test_*")
+		if err != nil {
+			t.Fatalf("Failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(dir)
+
+		oldWd := WorkingDir
+		WorkingDir = dir
+		defer func() { WorkingDir = oldWd }()
+
+		tool := &ShellExecuteTool{}
+		result, err := tool.Execute(context.Background(), map[string]string{
+			"command": "mkdir test_subdir && touch test_subdir/inside.txt",
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if !result.Success {
+			t.Fatalf("Expected success, got: %s", result.Error)
+		}
+
+		subdir := filepath.Join(dir, "test_subdir")
+		if _, err := os.Stat(subdir); os.IsNotExist(err) {
+			t.Errorf("Subdirectory should have been created in WorkingDir %s, but it doesn't exist", dir)
+		}
+		createdFile := filepath.Join(subdir, "inside.txt")
+		if _, err := os.Stat(createdFile); os.IsNotExist(err) {
+			t.Errorf("File inside subdirectory should exist: %s", createdFile)
+		}
+
+		os.RemoveAll(subdir)
+	})
+}
+
+// ============================================================
 // Дополнительные тесты GrepTool с фильтром include
 // ============================================================
 

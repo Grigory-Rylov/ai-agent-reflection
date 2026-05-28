@@ -437,6 +437,11 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 		return nil
 	})
 
+	// Синхронизируем рабочую директорию из сессии agentLoop (источник правды)
+	if wd := sess.GetWorkingDir(); wd != "" {
+		tools.SetWorkingDir(wd)
+	}
+
 	// Настраиваем инструменты если включены
 	if al.config.EnableTools && al.registry != nil {
 		al.registerToolsToAgent(a, al.registry)
