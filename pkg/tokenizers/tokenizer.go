@@ -74,8 +74,12 @@ func EstimateCompletionTokens(maxTokens int) int {
 
 // Message представляет сообщение в чате
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string `json:"role"`
+	Content    string `json:"content"`
+	ToolCallID string `json:"tool_call_id,omitempty"` // ID инструмента для role=tool
+	Name       string `json:"name,omitempty"`         // имя инструмента для role=tool
+	Compacted  bool   `json:"compacted,omitempty"`    // output обрезан pruning-ом
+	Summary    bool   `json:"summary,omitempty"`       // сообщение-суммаризация компакшена
 }
 
 // String возвращает строковое представление сообщения

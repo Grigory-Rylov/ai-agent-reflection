@@ -213,7 +213,11 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 
 	// 5. Проверяем сжатие контекста
 	if al.config.EnableCompression {
-		al.checkAndCompress(ctx, sess, peerID)
+		if al.config.EnableOpenCodeCompaction {
+			al.checkAndCompressOpenCode(ctx, sess, peerID)
+		} else {
+			al.checkAndCompress(ctx, sess, peerID)
+		}
 	}
 
 	// 6. Строим сообщения для API
@@ -228,17 +232,22 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 		return "", fmt.Errorf("LLM request failed: %w", err)
 	}
 
-	// 8. Проверяем loop detection
+	// 8. Pruning после ответа (fire-and-forget стиль opencode)
+	if al.config.EnableOpenCodeCompaction && al.config.EnablePruning {
+		al.runPruning(sess)
+	}
+
+	// 9. Проверяем loop detection
 	if al.checkLoopDetection(response, peerID) {
 		if al.log != nil {
 			al.log.WarnLogf("Adding loop alert to next prompt for peer %d", peerID)
 		}
 	}
 
-	// 9. Эмитим событие завершения
+	// 10. Эмитим событие завершения
 	al.dispatcher.Emit(NewEvent(EventResponseDone, peerID))
 
-	// 10. Возвращаем ответ
+	// 11. Возвращаем ответ
 	return response, nil
 }
 
@@ -621,6 +630,108 @@ func (al *agentLoop) checkAndCompress(ctx context.Context, sess *session.Session
 		}
 	} else if al.log != nil {
 		al.log.InfoLogf("Context compressed for peer %d", peerID)
+	}
+}
+
+// checkAndCompressOpenCode использует opencode-алгоритм
+func (al *agentLoop) checkAndCompressOpenCode(ctx context.Context, sess *session.Session, peerID int64) {
+	history := sess.GetHistory()
+
+	messages := al.convertHistoryToMessages(history)
+	tokensBefore := compress.EstimateMessagesTokensSimple(messages)
+
+	if al.log != nil {
+		al.log.DebugLogf("[OPENCODE-COMPACT] Peer %d: %d messages, ~%d tokens",
+			peerID, len(messages), tokensBefore)
+	}
+
+	if !compress.IsOverflow(tokensBefore, al.config.MaxTokens, al.config.CompactionReserved) {
+		if al.log != nil {
+			al.log.DebugLogf("[OPENCODE-COMPACT] Peer %d: No overflow, skipping", peerID)
+		}
+		return
+	}
+
+	if al.log != nil {
+		al.log.InfoLogf("[OPENCODE-COMPACT] Peer %d: Overflow detected (%d/%d), compacting",
+			peerID, tokensBefore, al.config.MaxTokens)
+	}
+
+	tailTurns := al.config.TailTurns
+	if tailTurns <= 0 {
+		tailTurns = 2
+	}
+
+	result, err := al.compactor.CompactWithOpenCode(ctx, messages, al.config.MaxTokens, tailTurns, al.config.PreserveRecentTokens)
+	if err != nil {
+		if al.log != nil {
+			al.log.WarnLogf("[OPENCODE-COMPACT] Peer %d: Compaction failed: %v", peerID, err)
+		}
+		return
+	}
+
+	if al.log != nil {
+		al.log.InfoLogf("[OPENCODE-COMPACT] Peer %d: %d -> %d tokens (%.1f%% reduction)",
+			peerID, result.TokensBefore, result.TokensAfter,
+			(float64(result.TokensBefore-result.TokensAfter)/float64(result.TokensBefore))*100)
+	}
+
+	al.applyOpenCodeCompactResult(sess, result)
+}
+
+func (al *agentLoop) applyOpenCodeCompactResult(sess *session.Session, result *compress.OpenCodeCompactResult) {
+	sess.Reset()
+
+	for _, msg := range result.KeptTail {
+		switch msg.Role {
+		case "system":
+			sess.UpdateSystemPrompt(msg.Content)
+		case "user":
+			sess.AddUserMessage(msg.Content)
+		case "assistant":
+			sess.AddAssistantMessage(msg.Content)
+		case "tool":
+			sess.AddUserMessage(msg.Content)
+		}
+	}
+}
+
+func (al *agentLoop) runPruning(sess *session.Session) {
+	if !al.config.EnablePruning {
+		return
+	}
+	history := sess.GetHistory()
+	messages := al.convertHistoryToMessages(history)
+	pruned := compress.PruneMessages(messages)
+
+	if len(pruned) == len(messages) {
+		return
+	}
+
+	if al.log != nil {
+		prunedCount := 0
+		for i, m := range pruned {
+			if m.Compacted && !messages[i].Compacted {
+				prunedCount++
+			}
+		}
+		if prunedCount > 0 {
+			al.log.DebugLogf("[PRUNE] Peer %d: Pruned %d tool outputs", sess.GetPeerID(), prunedCount)
+		}
+	}
+
+	sess.Reset()
+	for _, msg := range pruned {
+		switch msg.Role {
+		case "system":
+			sess.UpdateSystemPrompt(msg.Content)
+		case "user":
+			sess.AddUserMessage(msg.Content)
+		case "assistant":
+			sess.AddAssistantMessage(msg.Content)
+		case "tool":
+			sess.AddUserMessage(msg.Content)
+		}
 	}
 }
 

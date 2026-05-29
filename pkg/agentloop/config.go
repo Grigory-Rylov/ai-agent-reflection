@@ -53,6 +53,14 @@ type LoopConfig struct {
 	// New Compaction Settings
 	CompactionConfig compress.CompactionConfig
 
+	// Opencode-style Compaction
+	EnableOpenCodeCompaction bool   // использовать opencode-алгоритм
+	TailTurns                int    // сколько последних user-оборотов сохранять (default: 2)
+	PreserveRecentTokens     *int   // бюджет токенов для хвоста (default: 25% от usable, 2000-8000)
+	CompactionReserved       *int   // резерв токенов для ответа компакшена (default: 20000)
+	EnablePruning            bool   // pruning старых tool output-ов
+	AutoContinueAfterCompact bool   // авто-Continue после компакшена
+
 	// Artifact Store Path - путь для хранения больших результатов
 	ArtifactStorePath string
 }
@@ -78,6 +86,12 @@ func DefaultLoopConfig() LoopConfig {
 		CompressionTokenThreshold: 6000,
 		CompressionPercentageThreshold: 0.75,
 		CompactionConfig:          compress.DefaultCompactionConfig(),
+		EnableOpenCodeCompaction:  true,
+		TailTurns:                 2,
+		PreserveRecentTokens:      nil,
+		CompactionReserved:        nil,
+		EnablePruning:             true,
+		AutoContinueAfterCompact:  true,
 		ArtifactStorePath:         "./artifacts",
 	}
 }
