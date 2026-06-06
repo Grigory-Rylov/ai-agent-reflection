@@ -91,7 +91,7 @@ func (a *agentImpl) saveDebugResponse(content, reasoning, finishReason string, t
 	}
 
 	if err := os.WriteFile("debug_response.txt", []byte(sb.String()), 0644); err != nil {
-		fmt.Printf("[DEBUG] Failed to write debug_response.txt: %v\n", err)
+		a.debugLog.Debug("Failed to write debug_response.txt: %v", err)
 	}
 }
 

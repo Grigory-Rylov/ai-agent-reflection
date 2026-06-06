@@ -18,8 +18,8 @@ import (
 	"github.com/opencode/llama-client/pkg/vk"
 )
 
-// Version - текущая версия бота, инкрементируйте при изменениях
-const Version = "2026.05.20-18:28"
+// Version - текущая версия бота (переопределяется через -ldflags при сборке)
+var Version = "dev"
 
 // ============================================================
 // VK Gateway — точка входа для VK Bot Gateway режима

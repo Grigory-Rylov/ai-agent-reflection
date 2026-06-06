@@ -62,7 +62,7 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 		// Читаем тело ответа для логирования ошибки
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		fmt.Printf("[API ERROR] Status %d, response: %s\n", resp.StatusCode, string(body))
+		a.debugLog.Error("API ERROR: Status %d, response: %s", resp.StatusCode, string(body))
 		logger.DebugToFile("[LLM REQUEST] API error: status %d", resp.StatusCode)
 		return nil, fmt.Errorf("API error: status %d, body: %s", resp.StatusCode, string(body))
 	}

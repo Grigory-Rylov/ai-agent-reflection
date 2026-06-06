@@ -219,7 +219,7 @@ func TestEventDispatcherIntegration(t *testing.T) {
 }
 
 func TestDefaultLogger(t *testing.T) {
-	l := NewDefaultLogger()
+	l := NewDefaultLogger(false)
 	if l == nil {
 		t.Fatal("expected non-nil logger")
 	}

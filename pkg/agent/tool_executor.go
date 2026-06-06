@@ -58,7 +58,7 @@ func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, 
 	if !ok {
 		availableTools := e.agent.getAvailableToolsList()
 		errMsg := fmt.Sprintf("Tool '%s' not found. Available tools: %s", toolName, availableTools)
-		fmt.Printf("[TOOL] Error: %s\n", errMsg)
+		e.agent.debugLog.Error("%s", errMsg)
 		e.agent.sendThinking(peerID, "[TOOL] Error: "+errMsg)
 		return e.agent.createErrorResult(toolCall.ID, toolName, errMsg), fmt.Errorf("%s", errMsg)
 	}
@@ -67,30 +67,30 @@ func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, 
 	if err != nil {
 		schema := tool.Schema()
 		errMsg := fmt.Sprintf("Invalid arguments for '%s': %v. Expected schema: %v", toolName, err, schema)
-		fmt.Printf("[TOOL] Error: %s\n", errMsg)
+		e.agent.debugLog.Error("%s", errMsg)
 		e.agent.sendThinking(peerID, "[TOOL] Error: "+errMsg)
 		return e.agent.createErrorResult(toolCall.ID, toolName, errMsg), err
 	}
 
 	brief := briefToolCall(toolName, args)
-	fmt.Printf("[TOOL] Call: %s\n", brief)
+	e.agent.debugLog.Debug("Call: %s", brief)
 	e.agent.sendThinking(peerID, "[TOOL] Call: "+brief)
 
 	result, err := tool.Execute(ctx, args)
 	if err != nil {
 		errMsg := fmt.Sprintf("Execution error for %s: %v", toolName, err)
-		fmt.Printf("[TOOL] Error: %s\n", errMsg)
+		e.agent.debugLog.Error("%s", errMsg)
 		e.agent.sendThinking(peerID, "[TOOL] Error: "+errMsg)
 		return e.agent.createErrorResult(toolCall.ID, toolName, errMsg), err
 	}
 
 	content := tools.MarshalToolResult(result)
 	if result.Success {
-		fmt.Printf("[TOOL] Result: %s success\n", toolName)
+		e.agent.debugLog.Debug("Result: %s success", toolName)
 		e.agent.sendThinking(peerID, "[TOOL] Result: "+toolName+" success")
 	} else {
 		resultMsg := fmt.Sprintf("[TOOL] Result: %s failed - %s", toolName, truncateStr(content, 200))
-		fmt.Println(resultMsg)
+		e.agent.debugLog.Info("%s", resultMsg)
 		e.agent.sendThinking(peerID, resultMsg)
 	}
 

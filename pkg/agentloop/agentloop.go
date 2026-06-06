@@ -92,13 +92,25 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 	if config.Logger != nil {
 		l = config.Logger
 	} else if config.EnableLogging {
-		l = NewDefaultLogger()
+		l = NewDefaultLogger(config.Debug)
 	}
 
 	// Инициализируем токенайзер (всегда)
 	tokenizer := tokenizers.NewLlamaServerTokenizer(config.LlamaServerURL, config.Model, config.MaxTokens)
 	if config.EnableLogging {
 		tokenizer.SetDebug(true)
+	}
+
+	// Пытаемся получить реальный контекст от llama-server
+	if err := tokenizer.InitializeContextLimit(); err != nil {
+		if l != nil {
+			l.WarnLogf("Failed to get actual context limit from server: %v (using configured maxTokens=%d)", err, config.MaxTokens)
+		}
+	} else if l != nil {
+		actualCtx := tokenizer.GetActualContextLimit()
+		l.InfoLogf("Using actual model context limit: %d tokens (config had %d)", actualCtx, config.MaxTokens)
+		// Обновляем конфиг с реальным значением
+		config.MaxTokens = actualCtx
 	}
 
 	// Инициализируем новый Compactor
@@ -958,15 +970,23 @@ func truncate(s string, maxLen int) string {
 // ============================================================
 
 // NewDefaultLogger создаёт логгер по умолчанию
-func NewDefaultLogger() Logger {
-	return &defaultLogger{}
+func NewDefaultLogger(debug bool) Logger {
+	return newDefaultLogger(debug)
 }
 
 // defaultLogger — простой логгер для дебага
-type defaultLogger struct{}
+type defaultLogger struct {
+	debug bool
+}
+
+func newDefaultLogger(debug bool) Logger {
+	return &defaultLogger{debug: debug}
+}
 
 func (l *defaultLogger) DebugLog(msg string, args ...interface{}) {
-	fmt.Printf("[DEBUG] "+msg+"\n", args...)
+	if l.debug {
+		fmt.Printf("[DEBUG] "+msg+"\n", args...)
+	}
 }
 
 func (l *defaultLogger) InfoLog(msg string, args ...interface{}) {

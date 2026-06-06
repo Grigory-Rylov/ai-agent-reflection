@@ -392,12 +392,12 @@ func ErrorLogfGlobal(format string, args ...interface{}) {
 
 // DebugToFile пишет дебаг-сообщение в файл и консоль
 // Используется для детального логирования в debug режиме
+// Пишет в консоль только если включено файловое логирование (debug.log)
 func DebugToFile(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	// Всегда пишем в консоль
-	fmt.Printf("%s\n", msg)
-	// Если есть глобальный логгер с файлом - пишем в файл
+	// Пишем в консоль только если включено файловое логирование (режим -d)
 	if globalLogger != nil && globalLogger.IsFileLogging() {
+		fmt.Printf("%s\n", msg)
 		timestamp := time.Now().Format("2006-01-02 15:04:05")
 		fullMsg := fmt.Sprintf("[%s] [DEBUG] %s", timestamp, msg)
 		globalLogger.WriteToFile(fullMsg)

@@ -900,6 +900,63 @@ func TestParseXMLToolCalls_SimplifiedParams_RealWorldExample(t *testing.T) {
 	}
 }
 
+// TestParseXMLToolCalls_FunctionTagContentFormat — тест для формата,
+// который реально выдаёт модель: <function>name</function> (значение как содержимое тега).
+// Параметры могут быть внутри <function>...</function>.
+func TestParseXMLToolCalls_FunctionTagContentFormat(t *testing.T) {
+	input := `<tool_call>
+<function>read_file_text<parameter=path>
+/home/orangepi/projects/go/agent/README.md
+</parameter></function>
+</tool_call>`
+	expected := XMLParseResult{
+		ToolCalls: []XMLToolCall{
+			{
+				Name: "read_file_text",
+				Args: map[string]string{
+					"path": "/home/orangepi/projects/go/agent/README.md",
+				},
+			},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+// TestParseXMLToolCalls_FunctionTagContentFormat_Malformed — тест для формата,
+// где модель пишет <function>read_file_text> (без закрывающего тега, с > в конце содержимого).
+func TestParseXMLToolCalls_FunctionTagContentFormat_Malformed(t *testing.T) {
+	input := `<tool_call>
+<function>read_file_text>
+<parameter=path>
+/home/orangepi/projects/go/agent/README.md
+</parameter>
+</function>
+</tool_call>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d (content: %q)", len(result.ToolCalls), result.Content)
+	}
+	tc := result.ToolCalls[0]
+	if tc.Name != "read_file_text" {
+		t.Errorf("expected read_file_text, got %q", tc.Name)
+	}
+	if tc.Args["path"] != "/home/orangepi/projects/go/agent/README.md" {
+		t.Errorf("expected path, got %q", tc.Args["path"])
+	}
+}
+
+// TestParseXMLToolCalls_FunctionTagContentFormat_NoWrapper — упрощённый формат без <tool_call>
+func TestParseXMLToolCalls_FunctionTagContentFormat_NoWrapper(t *testing.T) {
+	input := `<function>time_get</function>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].Name != "time_get" {
+		t.Errorf("expected time_get, got %q", result.ToolCalls[0].Name)
+	}
+}
+
 // TestParseXMLToolCalls_MalformedCloseTagInFunction проверяет, что парсер
 // корректно обрабатывает malformed XML: <tool_call><function=name></parameter></task></tool_call>
 // (LLM закрывает </parameter> и </task> вместо </function>).

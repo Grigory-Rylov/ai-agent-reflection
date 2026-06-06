@@ -106,19 +106,21 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	}
 
 	prefix := a.agentPrefix()
-	logger.DebugToFile("\n--------------------------------")
 	logger.DebugToFile("%sprocessToolResults: content=%d, reasoning=%d, tool_calls=%d, finish=%q",
 		prefix, len(responseText), len(reasoningText), len(streamToolCalls), finishReason)
 	if len(responseText) > 0 {
-		logger.DebugToFile("%sresponse content: %s", prefix, responseText)
+		logger.DebugToFile("\n---------------- response content ----------------------")
+		logger.DebugToFile("%s%s", prefix, responseText)
 	}
 	if len(reasoningText) > 0 {
-		logger.DebugToFile("%sresponse reasoning: %s", prefix, reasoningText)
+		logger.DebugToFile("\n---------------- response reasoning ------------------")
+		logger.DebugToFile("%s%s", prefix, reasoningText)
 	}
+	logger.DebugToFile("\n====================================================")
 
 	// Если модель вернула новые NATIVE tool_calls — выполняем их рекурсивно
 	if len(streamToolCalls) > 0 {
-		fmt.Printf("[TOOL] NATIVE format: detected %d tool calls in tool results response\n", len(streamToolCalls))
+		a.debugLog.Debug("NATIVE format: detected %d tool calls in tool results response", len(streamToolCalls))
 		for _, tc := range streamToolCalls {
 			executed[toolCallSignature(tc)] = true
 		}
@@ -149,14 +151,14 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	}
 
 	if len(parsed.ToolCalls) > 0 {
-		fmt.Printf("[TOOL] XML fallback: detected %d tool calls in tool results response\n", len(parsed.ToolCalls))
+		a.debugLog.Debug("XML fallback: detected %d tool calls in tool results response", len(parsed.ToolCalls))
 		toolCalls := convertXMLToolCalls(parsed.ToolCalls)
 		// Фильтруем дубли уже выполненных
 		var uniqueCalls []ToolCall
 		for _, tc := range toolCalls {
 			sig := toolCallSignature(tc)
 			if executed[sig] {
-				fmt.Printf("[TOOL] XML duplicate skipped in tool results: %s\n", tc.Function.Name)
+				a.debugLog.Debug("XML duplicate skipped in tool results: %s", tc.Function.Name)
 				continue
 			}
 			executed[sig] = true
@@ -173,7 +175,7 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	// JSON fallback в tool results response
 	jsonParsed := ParseJSONToolCalls(responseText)
 	if len(jsonParsed.ToolCalls) > 0 {
-		fmt.Printf("[TOOL] JSON fallback: detected %d tool calls in tool results response\n", len(jsonParsed.ToolCalls))
+		a.debugLog.Debug("JSON fallback: detected %d tool calls in tool results response", len(jsonParsed.ToolCalls))
 		responseText = jsonParsed.Content
 
 		toolCalls := convertXMLToolCalls(jsonParsed.ToolCalls)
@@ -181,7 +183,7 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		for _, tc := range toolCalls {
 			sig := toolCallSignature(tc)
 			if executed[sig] {
-				fmt.Printf("[TOOL] JSON duplicate skipped in tool results: %s\n", tc.Function.Name)
+				a.debugLog.Debug("JSON duplicate skipped in tool results: %s", tc.Function.Name)
 				continue
 			}
 			executed[sig] = true
@@ -204,7 +206,7 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	if cleanedReasoning != "" && a.thinkingCallback != nil {
 		logger.DebugToFile("%s[THINKING] Sending %d chars of reasoning to thinking chat", a.agentPrefix(), len(cleanedReasoning))
 		if err := a.thinkingCallback(session.GetPeerID(), cleanedReasoning); err != nil {
-			fmt.Printf("%s[WARN] Failed to send thinking message: %v\n", a.agentPrefix(), err)
+			a.debugLog.Warn("%sFailed to send thinking message: %v", a.agentPrefix(), err)
 			logger.DebugToFile("%s[THINKING] Failed to send: %v", a.agentPrefix(), err)
 		}
 	}

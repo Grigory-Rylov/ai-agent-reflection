@@ -166,6 +166,14 @@ func parseWithWrapper(input string) XMLParseResult {
 				i = n
 				continue
 			}
+			if name, n := parseFunctionTagAsContent(input, i); n > 0 {
+				pendingContent.WriteString(input[i:n])
+				funcName = name
+				args = make(map[string]string)
+				state = stateFunction
+				i = n
+				continue
+			}
 			if input[i] == '<' {
 				end := findChar(input, i+1, '>')
 				if end > 0 {
@@ -295,6 +303,14 @@ func parseWithoutWrapper(input string) XMLParseResult {
 				i = n
 				continue
 			}
+			if name, n := parseFunctionTagAsContent(input, i); n > 0 {
+				logger.DebugToFile("parseWithoutWrapper: found <function>%s</function> at pos %d", name, i)
+				funcName = name
+				args = make(map[string]string)
+				state = stateFunctionNoWrapper
+				i = n
+				continue
+			}
 			content.WriteByte(input[i])
 			i++
 
@@ -410,6 +426,47 @@ func matchCloseTag(input string, i int, tagName string) int {
 	}
 
 	return -1
+}
+
+// parseFunctionTagAsContent парсит <function>name</function>, <function>name>
+// или <function>name<parameter...>
+// Возвращает (name, newPos) где newPos — позиция для продолжения парсинга,
+// после которой state machine обработает </function> сама.
+func parseFunctionTagAsContent(input string, i int) (string, int) {
+	if !hasPrefixAt(input, i, "<function>") {
+		return "", -1
+	}
+	contentStart := i + len("<function>")
+
+	closeFunc := strings.Index(input[contentStart:], "</function>")
+	endBracket := findChar(input, contentStart, '>')
+	firstLT := findChar(input, contentStart, '<')
+
+	var name string
+	var nextPos int
+
+	if endBracket >= 0 && (firstLT < 0 || endBracket < firstLT) {
+		// Случай 1: <function>name> — malformed, > после имени без вложенных тегов
+		name = strings.TrimSpace(input[contentStart:endBracket])
+		nextPos = endBracket + 1
+	} else if closeFunc >= 0 && (firstLT < 0 || firstLT == contentStart+closeFunc) {
+		// Случай 2: <function>name</function> — без вложенных тегов
+		name = strings.TrimSpace(input[contentStart : contentStart+closeFunc])
+		nextPos = contentStart + closeFunc
+	} else if firstLT >= 0 {
+		// Случай 3: <function>name<...> — имя до первого вложенного тега
+		name = strings.TrimSpace(input[contentStart:firstLT])
+		nextPos = firstLT
+	} else {
+		return "", -1
+	}
+
+	if name == "" {
+		return "", -1
+	}
+
+	logger.DebugToFile("parseFunctionTagAsContent: name=%q, nextPos=%d", name, nextPos)
+	return name, nextPos
 }
 
 func parseTagWithValue(input string, i int, tagName string) (string, int) {

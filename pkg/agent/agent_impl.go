@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/opencode/llama-client/pkg/compress"
+	"github.com/opencode/llama-client/pkg/debug"
 	"github.com/opencode/llama-client/pkg/tokenizers"
 	"github.com/opencode/llama-client/pkg/tools"
 	"github.com/opencode/llama-client/session"
@@ -49,6 +50,7 @@ type agentImpl struct {
 	thinkingCallback ThinkingCallback  // callback для отправки thinking сообщений
 	toolSchemas     []map[string]interface{} // схемы инструментов, переданные извне
 	toolExecutor    ToolExecutor       // кастомный executor (для тестов через StubToolExecutor)
+	debugLog        debug.Logger       // логгер для отладочных сообщений
 }
 
 // ============================================================
@@ -67,6 +69,7 @@ func NewAgent(config Config) *agentImpl {
 				DisableKeepAlives: true,
 			},
 		},
+		debugLog: debug.NewLogger(config.Debug),
 	}
 
 	// Загружаем системный промпт из файла или используем дефолтный
@@ -99,7 +102,7 @@ func (a *agentImpl) loadSystemPrompt() {
 	// Пытаемся прочитать файл
 	data, err := os.ReadFile(a.config.SystemPromptFile)
 	if err != nil {
-		fmt.Printf("[WARN] Could not read system prompt file '%s': %v. Using default.\n", a.config.SystemPromptFile, err)
+		a.debugLog.Warn("Could not read system prompt file '%s': %v. Using default.", a.config.SystemPromptFile, err)
 		a.systemPrompt = defaultPrompt
 		return
 	}
@@ -107,14 +110,14 @@ func (a *agentImpl) loadSystemPrompt() {
 	// Проверяем что файл не пустой
 	content := strings.TrimSpace(string(data))
 	if content == "" {
-		fmt.Printf("[WARN] System prompt file '%s' is empty. Using default.\n", a.config.SystemPromptFile)
+		a.debugLog.Warn("System prompt file '%s' is empty. Using default.", a.config.SystemPromptFile)
 		a.systemPrompt = defaultPrompt
 		return
 	}
 
 	// Используем прочитанный промпт
 	a.systemPrompt = content
-	fmt.Printf("[INFO] Loaded system prompt from '%s' (%d bytes)\n", a.config.SystemPromptFile, len(content))
+	a.debugLog.Info("Loaded system prompt from '%s' (%d bytes)", a.config.SystemPromptFile, len(content))
 }
 
 // GetSystemPrompt возвращает системный промпт
@@ -178,7 +181,7 @@ func (a *agentImpl) RegisterTools(registry *tools.Registry) {
 
 // ProcessMessage обрабатывает сообщение пользователя и возвращает ответ
 func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID int64) (string, error) {
-	fmt.Printf("[PROCESS] ProcessMessage called: peerID=%d, message=%q, tools=%d\n", peerID, message, len(a.toolsRegistry.GetAll()))
+	a.debugLog.Debug("ProcessMessage called: peerID=%d, message=%q, tools=%d", peerID, message, len(a.toolsRegistry.GetAll()))
 	// Получаем или создаём сессию
 	s := a.getSession(peerID)
 
@@ -212,7 +215,7 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 		err := a.contextManager.CheckAndCompress(ctx, peerID, tokenizerMessages, a.config.MaxTokens)
 		if err != nil {
 			// Если сжатие не удалось — продолжаем без него
-			fmt.Printf("[CONTEXT] Compression skipped: %v\n", err)
+			a.debugLog.Warn("Compression skipped: %v", err)
 		}
 	}
 
@@ -336,7 +339,7 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 		}
 		if cleanedReasoning != "" {
 			if err := a.thinkingCallback(session.GetPeerID(), cleanedReasoning); err != nil {
-				fmt.Printf("[WARN] Failed to send thinking message: %v\n", err)
+				a.debugLog.Warn("Failed to send thinking message: %v", err)
 			}
 		}
 	}

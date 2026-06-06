@@ -3,12 +3,14 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/opencode/llama-client/pkg/debug"
 	"github.com/opencode/llama-client/pkg/tools"
 	"github.com/opencode/llama-client/session"
 )
@@ -110,6 +112,7 @@ func TestXMLFallback_EmptyResponse(t *testing.T) {
 func TestXMLFallback_WithXMLButNoRegistry(t *testing.T) {
 	a := &agentImpl{
 		toolsRegistry: tools.NewRegistry(),
+		debugLog:      debug.NewLogger(false),
 	}
 	ctx := context.Background()
 	messages := []Message{{Role: "user", Content: "Check time"}}
@@ -939,3 +942,79 @@ func TestMalformedXMLInReasoning_NotSilentlyReturned(t *testing.T) {
 
 	t.Logf("Final response: %s, LLM calls: %d", response, callCount)
 }
+
+// TestProcessWithTools_XMLInResponseText_LongerReasoning проверяет что XML tool calls
+// в responseText выполняются даже если reasoningText длиннее responseText.
+// Баг: processWithTools выбирал для XML-проверки самый длинный текст (reasoning),
+// игнорируя XML в responseText.
+func TestProcessWithTools_XMLInResponseText_LongerReasoning(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "text/event-stream")
+
+		if callCount == 1 {
+			content := "Let me read some files.\n\n<tool_call>\n<function=file_read>\n<parameter=path>/tmp/test.txt</parameter>\n</function>\n</tool_call>\n\nDone."
+			longReasoning := "I need to analyze the project structure. Let me read the key files first. "
+			longReasoning += strings.Repeat("more reasoning ", 300)
+
+			event1 := fmt.Sprintf(`data: {"choices":[{"delta":{"content":"%s"}}]}`+"\n\n",
+				strings.ReplaceAll(content, "\n", "\\n"))
+			event2 := fmt.Sprintf(`data: {"choices":[{"delta":{"reasoning_content":"%s"}}]}`+"\n\n",
+				longReasoning)
+			event3 := `data: {"choices":[{"delta":{},"finish_reason":"stop"}]}` + "\n\n"
+
+			w.Write([]byte(event1))
+			w.Write([]byte(event2))
+			w.Write([]byte(event3))
+		} else {
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Files have been read successfully.\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		}
+		w.Write([]byte("[DONE]\n"))
+	}))
+	defer server.Close()
+
+	config := Config{
+		LlamaServerURL: server.URL,
+		Model:          "test-model",
+		MaxTokens:      100,
+		Temperature:    0.7,
+		SessionConfig:  session.DefaultConfig(),
+	}
+	config.SessionConfig.PeerID = 99970
+	config.SessionConfig.MaxHistory = 100
+
+	a, executor := newTestAgentWithStub(t, config)
+
+	ctx := context.Background()
+	response, err := a.ProcessMessage(ctx, "analyze the project", 99970)
+	if err != nil {
+		t.Fatalf("ProcessMessage failed: %v", err)
+	}
+	if response == "" {
+		t.Fatal("expected non-empty response")
+	}
+
+	if !executor.Contains("file_read") {
+		t.Error("BUG: file_read tool was NOT called — XML in responseText was ignored because reasoningText was longer")
+	}
+	if strings.Contains(response, "<tool_call>") || strings.Contains(response, "<function") {
+		t.Error("response should not contain XML tool call tags")
+	}
+
+	s := a.GetSession(99970)
+	for _, msg := range s.GetHistory() {
+		if msg.Role == "assistant" && strings.Contains(msg.Content, "<tool_call>") {
+			t.Errorf("assistant message should not contain XML tool call tags, got: %q", msg.Content)
+		}
+	}
+
+	if callCount < 2 {
+		t.Errorf("expected at least 2 LLM calls, got %d", callCount)
+	}
+
+	t.Logf("Final response: %s, LLM calls: %d", response, callCount)
+}
+
+
