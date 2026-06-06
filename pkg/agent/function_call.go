@@ -129,10 +129,6 @@ func (a *agentImpl) handleNativeToolCalls(ctx context.Context, messages []Messag
 	}
 	if len(toolCalls) == 0 {
 		logger.DebugToFile("[FLOW] No tool_calls after all attempts, returning empty")
-		if reasoningText != "" {
-			session.AddAssistantMessage(reasoningText)
-			return &FunctionCallResult{Success: true, Response: reasoningText}, nil
-		}
 		return &FunctionCallResult{Success: true, Response: ""}, nil
 	}
 
@@ -276,12 +272,6 @@ func (a *agentImpl) handleInvalidOrTextResponse(ctx context.Context, messages []
 	}
 
 	if responseText == "" {
-		parsed := ParseXMLToolCalls(reasoningText)
-		if parsed.Content != "" {
-			logger.DebugToFile("%sresponseText is empty, using reasoning as response (%d chars)", a.agentPrefix(), len(parsed.Content))
-			session.AddAssistantMessage(parsed.Content)
-			return &FunctionCallResult{Success: true, Response: parsed.Content}, nil
-		}
 		return &FunctionCallResult{Success: true, Response: ""}, nil
 	}
 

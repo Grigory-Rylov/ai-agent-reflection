@@ -888,6 +888,47 @@ func TestProcessMessage_Integration_NativeToolCallsThenXMLInToolResults(t *testi
 	t.Logf("Final response: %s, LLM calls: %d, tool log: %v", response, callCount, executor.ReadLog())
 }
 
+// TestReasoningNotLeakedToResponse проверяет что reasoning текст не попадает
+// в обычный ответ (peer_id), а остаётся только в thinking_peer_id.
+func TestReasoningNotLeakedToResponse(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "text/event-stream")
+
+		// Всегда возвращаем только reasoning, без content
+		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Это reasoning текст который должен остаться только в thinking канале.\"}}]}\n\n"))
+		w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		w.Write([]byte("[DONE]\n"))
+	}))
+	defer server.Close()
+
+	config := Config{
+		LlamaServerURL: server.URL,
+		Model:          "test-model",
+		MaxTokens:      100,
+		Temperature:    0.7,
+		SessionConfig:  session.DefaultConfig(),
+	}
+	config.SessionConfig.PeerID = 99970
+	config.SessionConfig.MaxHistory = 100
+
+	a, _ := newTestAgentWithStub(t, config)
+
+	ctx := context.Background()
+	response, err := a.ProcessMessage(ctx, "hello", 99970)
+	if err != nil {
+		t.Fatalf("ProcessMessage failed: %v", err)
+	}
+
+	// BUG CHECK: response НЕ должен содержать reasoning текст
+	if strings.Contains(response, "Это reasoning текст") {
+		t.Error("BUG: response contains reasoning text — reasoning leaked into regular chat")
+	}
+
+	t.Logf("Final response: %q, LLM calls: %d", response, callCount)
+}
+
 // TestMalformedXMLInReasoning_NotSilentlyReturned проверяет что если модель
 // возвращает сломанный XML внутри <tool_call> в reasoningText (например,
 // <subagent> вместо <function=subagent>) и responseText пустой — то система

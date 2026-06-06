@@ -217,13 +217,8 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		responseText = parsedResp.Content
 	}
 
-	// Если модель не вернула content — используем очищенный reasoning
+	// Если модель не вернула content — reasoning уже отправлен в thinking_peer_id
 	if responseText == "" {
-		if cleanedReasoning != "" {
-			logger.DebugToFile("%sresponseText is empty, using reasoning as response (%d chars)", a.agentPrefix(), len(cleanedReasoning))
-			session.AddAssistantMessage(cleanedReasoning)
-			return cleanedReasoning, nil
-		}
 		return "", nil
 	}
 

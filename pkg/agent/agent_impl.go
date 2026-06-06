@@ -344,10 +344,10 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 		}
 	}
 
-	// Если reasoning есть но response пустой — возвращаем reasoning
+	// Если reasoning есть но response пустой — reasoning уже отправлен в thinking_peer_id
+	// Не возвращаем его как обычный ответ
 	if responseText == "" && reasoningText != "" {
-		session.AddAssistantMessage(reasoningText)
-		return reasoningText, nil
+		return "", nil
 	}
 
 	session.AddAssistantMessage(responseText)
