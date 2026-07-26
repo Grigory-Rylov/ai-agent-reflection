@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/opencode/llama-client/pkg/store"
 )
 
 // ============================================================
@@ -73,6 +75,8 @@ type Config struct {
 	LoopAlertMessage string
 	// WorkingDir — текущая рабочая директория для инструментов
 	WorkingDir string
+	// Store — SQLite store для персистентности (если nil, используется SessionFile)
+	Store store.Store
 }
 
 // DefaultConfig возвращает конфигурацию по умолчанию
@@ -127,13 +131,15 @@ func NewSession(config Config) *Session {
 		})
 	}
 
-	// Если указан файл сессии — загружаем существующую
-	if config.SessionFile != "" {
+	// Загружаем существующую сессию
+	if config.Store != nil {
+		s.loadFromStore(config.Store)
+	} else if config.SessionFile != "" {
 		s.Load()
-		// Обновляем системный промпт после загрузки (на случай если промпт изменился)
-		if config.SystemPrompt != "" {
-			s.UpdateSystemPrompt(config.SystemPrompt)
-		}
+	}
+
+	if config.SystemPrompt != "" {
+		s.UpdateSystemPrompt(config.SystemPrompt)
 	}
 
 	return s
@@ -545,6 +551,10 @@ func (s *Session) saveNow() error {
 
 // saveInternal — внутренняя версия Save (без блокировки, вызывается из locked-контекста)
 func (s *Session) saveInternal() error {
+
+	if s.config.Store != nil {
+		return s.saveToStore(s.config.Store)
+	}
 
 	if s.config.SessionFile == "" {
 		return nil

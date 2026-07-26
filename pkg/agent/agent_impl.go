@@ -12,6 +12,7 @@ import (
 
 	"github.com/opencode/llama-client/pkg/compress"
 	"github.com/opencode/llama-client/pkg/debug"
+	"github.com/opencode/llama-client/pkg/prompt"
 	"github.com/opencode/llama-client/pkg/tokenizers"
 	"github.com/opencode/llama-client/pkg/tools"
 	"github.com/opencode/llama-client/session"
@@ -29,6 +30,8 @@ type GlobTool = tools.GlobTool
 type GrepTool = tools.GrepTool
 type CalcTool = tools.CalcTool
 type EditTool = tools.EditTool
+type ApplyPatchTool = tools.ApplyPatchTool
+type QuestionTool = tools.QuestionTool
 
 // ============================================================
 // AI Agent Implementation — реализация агента с подключением к llama-server
@@ -51,6 +54,12 @@ type agentImpl struct {
 	toolSchemas     []map[string]interface{} // схемы инструментов, переданные извне
 	toolExecutor    ToolExecutor       // кастомный executor (для тестов через StubToolExecutor)
 	debugLog        debug.Logger       // логгер для отладочных сообщений
+	permissionChecker PermissionChecker  // проверка разрешений для инструментов
+}
+
+// PermissionChecker проверяет разрешения на выполнение инструментов
+type PermissionChecker interface {
+	Check(toolName string) string // "allow", "deny", "ask"
 }
 
 // ============================================================
@@ -88,36 +97,69 @@ func NewAgent(config Config) *agentImpl {
 	return agent
 }
 
-// loadSystemPrompt загружает системный промпт из файла или использует дефолтный
+// loadSystemPrompt загружает системный промпт из шаблонов или файла
 func (a *agentImpl) loadSystemPrompt() {
-	// Дефолтный системный промпт
 	defaultPrompt := "You are a helpful assistant."
 
-	if a.config.SystemPromptFile == "" {
-		// Если путь не указан — используем дефолтный
-		a.systemPrompt = defaultPrompt
-		return
+	// Пробуем использовать TemplateEngine если указана директория с шаблонами
+	if a.config.PromptsDir != "" {
+		a.loadFromTemplates()
+		if a.systemPrompt != "" {
+			return
+		}
 	}
 
-	// Пытаемся прочитать файл
-	data, err := os.ReadFile(a.config.SystemPromptFile)
+	// Fallback: читаем из файла
+	if a.config.SystemPromptFile != "" {
+		data, err := os.ReadFile(a.config.SystemPromptFile)
+		if err == nil && strings.TrimSpace(string(data)) != "" {
+			a.systemPrompt = strings.TrimSpace(string(data))
+			a.debugLog.Info("Loaded system prompt from '%s' (%d bytes)",
+				a.config.SystemPromptFile, len(a.systemPrompt))
+			return
+		}
+	}
+
+	a.systemPrompt = defaultPrompt
+}
+
+func (a *agentImpl) loadFromTemplates() {
+	engine := prompt.NewEngine(a.config.PromptsDir)
+
+	provider := prompt.DetectProvider(a.config.Model)
+	toolNames := a.config.ToolsList
+	if toolNames == nil {
+		toolNames = extractToolNames(a.toolsRegistry.GetAll())
+	}
+
+	result, err := engine.Resolve(prompt.Config{
+		Model:       a.config.Model,
+		Provider:    provider,
+		WorkingDir:  tools.WorkingDir,
+		Tools:       toolNames,
+		MaxTokens:   a.config.MaxTokens,
+		Temperature: a.config.Temperature,
+		Mode:        a.config.Mode,
+	})
 	if err != nil {
-		a.debugLog.Warn("Could not read system prompt file '%s': %v. Using default.", a.config.SystemPromptFile, err)
-		a.systemPrompt = defaultPrompt
+		a.debugLog.Warn("Template resolution failed: %v, falling back", err)
 		return
 	}
 
-	// Проверяем что файл не пустой
-	content := strings.TrimSpace(string(data))
-	if content == "" {
-		a.debugLog.Warn("System prompt file '%s' is empty. Using default.", a.config.SystemPromptFile)
-		a.systemPrompt = defaultPrompt
-		return
-	}
+	a.systemPrompt = result
+	a.debugLog.Info("Loaded system prompt from templates (%s, %d chars)",
+		provider, len(result))
+}
 
-	// Используем прочитанный промпт
-	a.systemPrompt = content
-	a.debugLog.Info("Loaded system prompt from '%s' (%d bytes)", a.config.SystemPromptFile, len(content))
+func extractToolNames(toolList []tools.Tool) []string {
+	if toolList == nil {
+		return nil
+	}
+	names := make([]string, 0, len(toolList))
+	for _, t := range toolList {
+		names = append(names, t.Name())
+	}
+	return names
 }
 
 // GetSystemPrompt возвращает системный промпт
@@ -156,6 +198,8 @@ func (a *agentImpl) registerDefaultTools() {
 	a.toolsRegistry.Register(&GrepTool{})
 	a.toolsRegistry.Register(&CalcTool{})
 	a.toolsRegistry.Register(&EditTool{})
+	a.toolsRegistry.Register(&ApplyPatchTool{})
+	a.toolsRegistry.Register(&QuestionTool{})
 }
 
 // RegisterTools регистрирует инструменты из внешнего реестра
@@ -266,6 +310,13 @@ func (a *agentImpl) SetToolExecutor(executor ToolExecutor) {
 	a.toolExecutor = executor
 }
 
+// SetPermissionChecker устанавливает проверку разрешений
+func (a *agentImpl) SetPermissionChecker(checker PermissionChecker) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.permissionChecker = checker
+}
+
 // ============================================================
 // Управление сессиями
 // ============================================================
@@ -349,6 +400,8 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 	if responseText == "" && reasoningText != "" {
 		return "", nil
 	}
+
+	responseText = a.stripThinkingTags(responseText, session.GetPeerID())
 
 	session.AddAssistantMessage(responseText)
 	return responseText, nil

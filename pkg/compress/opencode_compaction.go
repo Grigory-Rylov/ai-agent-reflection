@@ -262,15 +262,12 @@ func (c *Compactor) CompactWithOpenCode(ctx context.Context, messages []tokenize
 		return nil, fmt.Errorf("LLM compaction failed: %w", err)
 	}
 
-	// Извлекаем summary из результата
-	summary := compResult.Summary
-	summaryContent := summary
-	if len(compResult.CompressedMessages) > 0 {
-		for _, m := range compResult.CompressedMessages {
-			if m.Content != "" {
-				summaryContent = m.Content
-				break
-			}
+	// Извлекаем summary из результата (raw LLM ответ в user-сообщении)
+	summaryContent := compResult.Summary
+	for _, m := range compResult.CompressedMessages {
+		if m.Role == "user" && m.Content != "" {
+			summaryContent = m.Content
+			break
 		}
 	}
 

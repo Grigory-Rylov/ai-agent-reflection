@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 type ToolCallFunction struct {
@@ -178,15 +179,57 @@ func isToolCallResponse(rawMessage map[string]interface{}) bool {
 }
 
 // parseToolArguments распарсивает JSON-аргументы tool_call в map[string]string
+// Автоматически нормализует camelCase ключи в snake_case для совместимости
 func parseToolArguments(tc ToolCall) (map[string]string, error) {
 	argsStr := ToolCallArgumentsStr(tc)
 	if argsStr == "" {
 		return make(map[string]string), nil
 	}
 
-	var args map[string]string
-	if err := json.Unmarshal([]byte(argsStr), &args); err != nil {
+	var rawArgs map[string]interface{}
+	if err := json.Unmarshal([]byte(argsStr), &rawArgs); err != nil {
 		return nil, fmt.Errorf("parse tool arguments: %w", err)
 	}
+
+	args := make(map[string]string, len(rawArgs))
+	for k, v := range rawArgs {
+		normalized := k
+		// Пробуем snake_case сначала
+		// Если ключ в camelCase — конвертируем в snake_case
+		if _, hasSnake := rawArgs[toSnakeCase(k)]; !hasSnake && k != toSnakeCase(k) {
+			normalized = toSnakeCase(k)
+		}
+		switch val := v.(type) {
+		case string:
+			args[normalized] = val
+		case float64:
+			args[normalized] = fmt.Sprintf("%v", val)
+		case bool:
+			args[normalized] = fmt.Sprintf("%v", val)
+		default:
+			if v != nil {
+				args[normalized] = fmt.Sprintf("%v", v)
+			}
+		}
+	}
 	return args, nil
+}
+
+// toSnakeCase конвертирует camelCase в snake_case
+func toSnakeCase(s string) string {
+	if s == "" {
+		return s
+	}
+	var result strings.Builder
+	for i, r := range s {
+		if r >= 'A' && r <= 'Z' {
+			if i > 0 {
+				result.WriteByte('_')
+			}
+			result.WriteRune(r + 32)
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
 }

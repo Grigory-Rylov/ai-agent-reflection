@@ -215,10 +215,18 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	if responseText != "" {
 		parsedResp := ParseXMLToolCalls(responseText)
 		responseText = parsedResp.Content
+		responseText = a.stripThinkingTags(responseText, session.GetPeerID())
 	}
 
-	// Если модель не вернула content — reasoning уже отправлен в thinking_peer_id
+	// Если модель не вернула content — пробуем последнее сообщение сессии
 	if responseText == "" {
+		hist := session.GetHistory()
+		if len(hist) > 0 {
+			last := hist[len(hist)-1]
+			if last.Role == sess.AssistantRole && last.Content != "" {
+				return last.Content, nil
+			}
+		}
 		return "", nil
 	}
 
@@ -227,10 +235,15 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 }
 
 // handleInvalidXMLToolCall обрабатывает случай когда модель отправила
-// невалидный XML tool call (<tool_call> обёртку без <function=name> формата).
-// Создаёт виртуальный tool call с ошибкой и отправляет модели через processToolResults.
+// невалидный XML tool call. Создаёт виртуальный tool call с ошибкой
+// и отправляет модели через processToolResults.
 func (a *agentImpl) handleInvalidXMLToolCall(ctx context.Context, messages []Message, session *sess.Session, executed map[string]bool) (FunctionCallResult, error) {
-	errMsg := "ERROR: Invalid tool call format. You used <tool_call> XML format which is not supported. Use the native tool_calls format instead (function name and arguments in the tool_calls array). Do NOT use XML tags for tool calls."
+	a.sendThinking(session.GetPeerID(), "[TOOL] Error: Invalid XML tool call format. Send the model a corrective message.")
+	logger.DebugToFile("%s[TOOL] Invalid XML: sending format error to model", a.agentPrefix())
+
+	errMsg := "FORMAT ERROR: You tried to use XML tags (<tool_call>, <function=...>) for tool calls, but this format is incorrect. " +
+		"You must use native function calling: declare the function name and arguments in the tool_calls array provided by the API. " +
+		"Do NOT write XML tool tags yourself. If you included any text along with the tool call, re-send it with the correct format."
 
 	toolCall := ToolCall{
 		ID:   "format_error",

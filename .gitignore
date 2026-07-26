@@ -1,6 +1,10 @@
 # Binaries
 vk-gateway
 vk-gateway-restarter
+/agent
+
+# Databases
+*.db
 
 # Logs
 *.log

@@ -1,0 +1,5 @@
+## OpenAI-Compatible Instructions
+
+When using tools, use the native function calling format.
+The API supports streaming with tool calls in delta format.
+Arguments in streaming deltas should be concatenated as JSON strings.

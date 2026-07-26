@@ -113,8 +113,9 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 		config.MaxTokens = actualCtx
 	}
 
-	// Инициализируем новый Compactor
-	compactor := compress.NewCompactor(config.CompactionConfig, nil, nil)
+	// Инициализируем новый Compactor с LLM-компрессором
+	llmCompressor := compress.NewLLMCompressor(config.LlamaServerURL, config.Model, config.Temperature)
+	compactor := compress.NewCompactor(config.CompactionConfig, llmCompressor, nil)
 
 	// Инициализируем artifact store
 	var artifactStore *compress.FileArtifactStore
@@ -440,6 +441,10 @@ func (al *agentLoop) buildAPIMessages(sess *session.Session) []agent.Message {
 
 // sendToLLM отправляет запрос в LLM и собирает ответ
 func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, sess *session.Session, peerID int64, prompt string) (string, error) {
+	if al.log != nil {
+		al.log.DebugLog("[sendToLLM] creating agent")
+	}
+
 	// Создаём agent для обработки
 	agentConfig := al.buildAgentConfig()
 	var a agent.Agent = agent.NewAgent(agentConfig)
@@ -468,10 +473,40 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 		al.registerToolsToAgent(a, al.registry)
 	}
 
+	// Переносим историю из agentLoop в agent если сессия агента пустая
+	agentSess := a.GetSession(peerID)
+	if len(agentSess.GetHistory()) <= 1 {
+		for _, msg := range messages {
+			switch msg.Role {
+			case "system":
+				continue
+			case "assistant":
+				agentSess.AddAssistantMessage(msg.Content)
+			case "tool":
+				agentSess.AddUserMessage(msg.Content)
+			case "user":
+				agentSess.AddUserMessage(msg.Content)
+			}
+		}
+	} else if al.log != nil {
+		al.log.DebugLog("[sendToLLM] agent session already has %d messages, skipping pre-seed", len(agentSess.GetHistory()))
+	}
+
 	// Отправляем запрос с реальным сообщением пользователя
 	response, err := a.ProcessMessage(ctx, prompt, peerID)
 	if err != nil {
 		return "", err
+	}
+
+	// Если ответ пустой но есть reasoning — используем его
+	if response == "" {
+		hist := agentSess.GetHistory()
+		if len(hist) > 0 {
+			last := hist[len(hist)-1]
+			if last.Role == session.AssistantRole && last.Content != "" {
+				response = last.Content
+			}
+		}
 	}
 
 	// Добавляем ответ в сессию
@@ -488,6 +523,7 @@ func (al *agentLoop) buildAgentConfig() agent.Config {
 		MaxTokens:                     al.config.MaxTokens,
 		Temperature:                   al.config.Temperature,
 		SessionConfig:                 al.config.SessionConfig,
+		SystemPromptFile:              al.config.SystemPromptFile,
 		EnableTools:                   al.config.EnableTools,
 		MaxToolCalls:                  al.config.MaxToolCalls,
 		EnableContextCompression:      false,
@@ -693,6 +729,13 @@ func (al *agentLoop) checkAndCompressOpenCode(ctx context.Context, sess *session
 
 func (al *agentLoop) applyOpenCodeCompactResult(sess *session.Session, result *compress.OpenCodeCompactResult) {
 	sess.Reset()
+
+	// Вставляем summary-сообщение первым
+	if result.SummaryMsg.Content != "" {
+		sess.AddAssistantMessage(
+			"<<CONVERSATION CHECKPOINT>>\n" + result.SummaryMsg.Content,
+		)
+	}
 
 	for _, msg := range result.KeptTail {
 		switch msg.Role {

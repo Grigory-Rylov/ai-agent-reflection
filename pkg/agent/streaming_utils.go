@@ -109,3 +109,42 @@ func (a *agentImpl) returnTextResponse(session *session.Session, responseText st
 		Response: responseText,
 	}
 }
+
+func (a *agentImpl) stripThinkingTags(text string, peerID int64) string {
+	if a.thinkingCallback == nil || !strings.Contains(text, "<thinking>") {
+		return text
+	}
+
+	var clean strings.Builder
+	var thinkingContent strings.Builder
+	remaining := text
+
+	for {
+		startIdx := strings.Index(remaining, "<thinking>")
+		if startIdx < 0 {
+			clean.WriteString(remaining)
+			break
+		}
+
+		clean.WriteString(remaining[:startIdx])
+		afterOpen := remaining[startIdx+len("<thinking>"):]
+
+		endIdx := strings.Index(afterOpen, "</thinking>")
+		if endIdx < 0 {
+			clean.WriteString("<thinking>" + afterOpen)
+			break
+		}
+
+		thinkingContent.WriteString(afterOpen[:endIdx])
+		thinkingContent.WriteString("\n")
+
+		remaining = afterOpen[endIdx+len("</thinking>"):]
+	}
+
+	extracted := strings.TrimSpace(thinkingContent.String())
+	if extracted != "" {
+		a.thinkingCallback(peerID, extracted)
+	}
+
+	return strings.TrimSpace(clean.String())
+}

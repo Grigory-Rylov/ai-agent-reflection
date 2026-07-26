@@ -259,7 +259,9 @@ func (a *agentImpl) handleJSONFallback(ctx context.Context, responseText string,
 // handleInvalidOrTextResponse обрабатывает финальный текстовый ответ или ошибки формата
 func (a *agentImpl) handleInvalidOrTextResponse(ctx context.Context, messages []Message, responseText, reasoningText, finishReason string, session *sess.Session, executedToolCalls map[string]bool) (*FunctionCallResult, error) {
 	if responseText == "" && reasoningText != "" && strings.Contains(reasoningText, "<tool_call>") {
-		logger.DebugToFile("%smalformed <tool_call> detected in reasoning", a.agentPrefix())
+		reasoningSnippet := truncateStr(reasoningText, 300)
+		a.debugLog.Error("[TOOL] Invalid XML tool call in reasoning: %s", reasoningSnippet)
+		a.sendThinking(session.GetPeerID(), "[TOOL] Error: malformed XML tool call in reasoning, sending corrective feedback")
 		result, err := a.handleInvalidXMLToolCall(ctx, messages, session, executedToolCalls)
 		if err != nil {
 			return nil, fmt.Errorf("handle invalid xml: %w", err)
@@ -267,25 +269,50 @@ func (a *agentImpl) handleInvalidOrTextResponse(ctx context.Context, messages []
 		return &result, nil
 	}
 
+	// Если текст содержит битый <tool_call> без валидных инструментов
+	// — модель сгенерировала неверный XML, отправляем ошибку формата
+	if strings.Contains(responseText, "<tool_call") {
+		stripped := ParseXMLToolCalls(responseText)
+		if len(stripped.ToolCalls) == 0 {
+			respSnippet := truncateStr(responseText, 300)
+			a.debugLog.Error("[TOOL] Invalid XML tool call in response (no valid tools parsed): %s", respSnippet)
+			a.sendThinking(session.GetPeerID(), "[TOOL] Error: invalid XML tool call format, sending corrective feedback")
+			result, err := a.handleInvalidXMLToolCall(ctx, messages, session, executedToolCalls)
+			if err != nil {
+				return nil, fmt.Errorf("handle invalid xml: %w", err)
+			}
+			return &result, nil
+		}
+	}
+
 	if !a.isNonToolResponse(finishReason) {
 		return nil, nil
 	}
 
 	if responseText == "" {
+		if a.config.Debug {
+			fmt.Printf("[DEBUG] Empty response from LLM\n")
+		}
 		return &FunctionCallResult{Success: true, Response: ""}, nil
 	}
 
 	parsedResp := ParseXMLToolCalls(responseText)
-	responseText = parsedResp.Content
-	session.AddAssistantMessage(responseText)
-	return &FunctionCallResult{Success: true, Response: responseText}, nil
+	cleanText := parsedResp.Content
+	cleanText = a.stripThinkingTags(cleanText, session.GetPeerID())
+	if cleanText != "" {
+		session.AddAssistantMessage(cleanText)
+	}
+	return &FunctionCallResult{Success: true, Response: cleanText}, nil
 }
 
 // makeTextResponse создаёт текстовый ответ с очисткой XML тегов
 func (a *agentImpl) makeTextResponse(responseText string, session *sess.Session) FunctionCallResult {
 	parsedResp := ParseXMLToolCalls(responseText)
 	responseText = parsedResp.Content
-	session.AddAssistantMessage(responseText)
+	responseText = a.stripThinkingTags(responseText, session.GetPeerID())
+	if responseText != "" {
+		session.AddAssistantMessage(responseText)
+	}
 	return FunctionCallResult{Success: true, Response: responseText}
 }
 

@@ -67,6 +67,12 @@ type Config struct {
 	Debug bool
 	// AgentName — имя агента для логов (coordinator, worker, qa и т.д.)
 	AgentName string
+	// PromptsDir — директория с шаблонами промптов (если пустая — используется SystemPromptFile)
+	PromptsDir string
+	// Mode — режим работы агента ("normal", "plan")
+	Mode string
+	// ToolsList — список имён доступных инструментов (для подстановки в шаблон)
+	ToolsList []string
 }
 
 // DefaultConfig возвращает конфигурацию по умолчанию

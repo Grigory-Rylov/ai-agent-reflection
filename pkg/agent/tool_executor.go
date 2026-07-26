@@ -9,6 +9,8 @@ import (
 	"github.com/opencode/llama-client/pkg/tools"
 )
 
+
+
 // MaxToolResultSize — максимальный размер результата инструмента в символах
 const MaxToolResultSize = 50000
 
@@ -54,6 +56,8 @@ func (e *agentToolExecutor) ExecuteAll(ctx context.Context, toolCalls []ToolCall
 func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, peerID int64) (ToolCallResult, error) {
 	toolName := ToolCallName(toolCall)
 
+	toolName = resolveToolAlias(toolName)
+
 	tool, ok := e.agent.toolsRegistry.Get(toolName)
 	if !ok {
 		availableTools := e.agent.getAvailableToolsList()
@@ -70,6 +74,13 @@ func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, 
 		e.agent.debugLog.Error("%s", errMsg)
 		e.agent.sendThinking(peerID, "[TOOL] Error: "+errMsg)
 		return e.agent.createErrorResult(toolCall.ID, toolName, errMsg), err
+	}
+
+	// Проверяем permission: если "ask" — спрашиваем пользователя
+	if !e.checkPermissionAsk(ctx, toolName, args, peerID) {
+		errMsg := fmt.Sprintf("Permission denied for tool '%s' by user", toolName)
+		e.agent.sendThinking(peerID, "[TOOL] Denied: "+toolName)
+		return e.agent.createErrorResult(toolCall.ID, toolName, errMsg), fmt.Errorf("%s", errMsg)
 	}
 
 	brief := briefToolCall(toolName, args)
@@ -102,11 +113,135 @@ func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, 
 	}, nil
 }
 
+func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName string, args map[string]string, peerID int64) bool {
+	agentConfig := e.agent.config
+	if agentConfig.AgentName == "" {
+		return true
+	}
+
+	checker := e.agent.getPermissionChecker()
+	if checker == nil {
+		return true
+	}
+
+	decision := checker.Check(toolName)
+	if decision != "ask" {
+		return true
+	}
+
+	e.agent.sendThinking(peerID, fmt.Sprintf("[PERMISSION] Asking user for tool '%s'...", toolName))
+
+	resource := ""
+	if path, ok := args["path"]; ok {
+		resource = path
+	}
+
+	return askUserPermission(ctx, peerID, toolName, resource)
+}
+
+func (e *agentToolExecutor) getPermissionChecker() permissionChecker {
+	if e.agent == nil {
+		return nil
+	}
+	return e.agent.permissionChecker
+}
+
+type permissionChecker interface {
+	Check(toolName string) string
+}
+
+func (a *agentImpl) getPermissionChecker() permissionChecker {
+	if a.permissionChecker == nil {
+		return nil
+	}
+	return a.permissionChecker
+}
+
+func askUserPermission(ctx context.Context, peerID int64, toolName, resource string) bool {
+	cb, _ := getQuestionState()
+	if cb == nil {
+		return true
+	}
+
+	q := map[string]interface{}{
+		"question": fmt.Sprintf("Allow tool '%s'?", toolName),
+		"header":   "Permission",
+		"options": []map[string]interface{}{
+			{"label": "Allow", "description": "Allow this one time"},
+			{"label": "Deny", "description": "Deny this time"},
+			{"label": "Always allow", "description": "Always allow for this session"},
+		},
+	}
+
+	if resource != "" {
+		q["question"] = fmt.Sprintf("Allow tool '%s' on '%s'?", toolName, resource)
+	}
+
+	select {
+	case <-ctx.Done():
+		return false
+	default:
+	}
+
+	answer, err := cb(peerID, q)
+	if err != nil {
+		return true
+	}
+
+	selected, _ := answer["selected"].([]interface{})
+	if len(selected) == 0 {
+		rawAnswer, _ := answer["answer"].(string)
+		selected = []interface{}{rawAnswer}
+	}
+
+	if len(selected) == 0 {
+		return false
+	}
+
+	choice, _ := selected[0].(string)
+	switch choice {
+	case "Allow", "allow":
+		return true
+	case "Always allow", "always allow":
+		return true
+	default:
+		return false
+	}
+}
+
+func getQuestionState() (func(int64, map[string]interface{}) (map[string]interface{}, error), int64) {
+	return tools.GetQuestionState()
+}
+
 func (a *agentImpl) executeAllTools(ctx context.Context, toolCalls []ToolCall, peerID int64) FunctionCallResult {
 	if a.toolExecutor != nil {
 		return a.toolExecutor.ExecuteAll(ctx, toolCalls, peerID)
 	}
 	return newAgentToolExecutor(a).ExecuteAll(ctx, toolCalls, peerID)
+}
+
+var toolAliases = map[string]string{
+	"grep":         "search_code",
+	"grep_search":  "search_code",
+	"read_file":    "file_read",
+	"write_file":   "file_write",
+	"list_dir":     "file_list",
+	"dir_list":     "file_list",
+	"shell":        "shell_execute",
+	"bash":         "shell_execute",
+	"fetch":        "web_fetch",
+	"search":       "web_search",
+	"find_files":   "glob",
+	"calculate":    "calc",
+	"edit_file":    "edit",
+	"patch_apply":  "apply_patch",
+}
+
+func resolveToolAlias(name string) string {
+	if resolved, ok := toolAliases[name]; ok {
+		return resolved
+	}
+	return name
 }
 
 func briefToolCall(toolName string, args map[string]string) string {
@@ -126,10 +261,6 @@ func briefToolCall(toolName string, args map[string]string) string {
 	case "file_list", "list_dir", "dir_list":
 		if path, ok := args["path"]; ok {
 			return fmt.Sprintf("list_dir(%q)", truncateStr(path, 80))
-		}
-	case "edit", "edit_file":
-		if path, ok := args["path"]; ok {
-			return fmt.Sprintf("edit(%q)", truncateStr(path, 80))
 		}
 	case "shell_execute", "shell":
 		if cmd, ok := args["command"]; ok {
@@ -157,6 +288,22 @@ func briefToolCall(toolName string, args map[string]string) string {
 		}
 	case "time_get":
 		return "time_get()"
+	case "subagent":
+		if name, ok := args["name"]; ok {
+			if task, ok := args["task"]; ok {
+				return fmt.Sprintf("subagent(%q, task=%q)", name, truncateStr(task, 60))
+			}
+			return fmt.Sprintf("subagent(%q)", name)
+		}
+		return "subagent(...)"
+	case "edit", "edit_file":
+		if path, ok := args["path"]; ok {
+			oldStr := args["old_string"]
+			if oldStr != "" {
+				return fmt.Sprintf("edit(%q, old=%q)", truncateStr(path, 60), truncateStr(oldStr, 40))
+			}
+			return fmt.Sprintf("edit(%q)", truncateStr(path, 80))
+		}
 	}
 	return toolName
 }

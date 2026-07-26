@@ -334,14 +334,17 @@ func TestLLMToolCall_tool_schemas_format(t *testing.T) {
 	}
 
 	// Отправляем schemas на сервер и проверяем что он отвечает
-	serverURL, _, _, _, err := loadTestConfig()
+	serverURL, model, _, _, err := loadTestConfig()
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
 	skipIfNoServer(t, serverURL)
+	if model == "" {
+		model = "local-model"
+	}
 
 	reqBody := map[string]interface{}{
-		"model":      "local-model",
+		"model":      model,
 		"messages":   []map[string]string{{"role": "user", "content": "What time is it?"}},
 		"tools":      schemas,
 		"max_tokens": 100,

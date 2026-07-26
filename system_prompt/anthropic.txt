@@ -1,0 +1,10 @@
+## Claude/Anthropic Instructions
+
+Use XML-style tool calls when native function calling is not available.
+Format:
+<tool_call>
+<tool_name>tool_name</tool_name>
+<parameters>
+<param_name>value</param_name>
+</parameters>
+</tool_call>

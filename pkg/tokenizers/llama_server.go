@@ -116,6 +116,7 @@ func (t *LlamaServerTokenizer) CountMessagesTokens(messages []Message) (int, err
 
 	reqBody := map[string]interface{}{
 		"content": text,
+		"model":   t.model,
 	}
 
 	jsonData, err := json.Marshal(reqBody)

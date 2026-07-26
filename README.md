@@ -36,6 +36,8 @@ go build -o vk-gateway-restarter ./cmd/vk-gateway-restarter
 
 ## Configuration
 
+Config is loaded from `~/.config/ai-agent/config.json` (priority) or `./config.json` (fallback).
+
 ```json
 {
     "llama_server_url": "192.168.1.212:8081",

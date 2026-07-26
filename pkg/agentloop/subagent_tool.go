@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/opencode/llama-client/pkg/agent"
 	"github.com/opencode/llama-client/pkg/tools"
@@ -30,7 +31,7 @@ func (t *SubAgentTool) Name() string {
 }
 
 func (t *SubAgentTool) Description() string {
-	return "Delegate a task to a sub-agent (worker or qa). The sub-agent will complete the task and return the result."
+	return "Launch a sub-agent to handle a task autonomously. Available sub-agents:\n- worker: executes code changes, writes files, runs commands. Has full tool access.\n- qa: reviews code, builds/tests, can call worker for fixes, calls review_approve when done.\n\nUse this for complex multi-step tasks. Delegate work, do not duplicate it."
 }
 
 func (t *SubAgentTool) Schema() map[string]interface{} {
@@ -47,14 +48,54 @@ func (t *SubAgentTool) Schema() map[string]interface{} {
 }
 
 func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (tools.ToolResult, error) {
-	name, ok := inputs["name"]
-	if !ok || name == "" {
-		return tools.ToolResult{Success: false, Error: "name parameter is required"}, nil
+	// Normalize parameter names (accept common aliases)
+	name := inputs["name"]
+	if name == "" {
+		name = inputs["agent"]
 	}
-	task, ok := inputs["task"]
-	if !ok || task == "" {
-		return tools.ToolResult{Success: false, Error: "task parameter is required"}, nil
+	if name == "" {
+		name = inputs["type"]
 	}
+	if name == "" {
+		name = inputs["subagent_type"]
+	}
+
+	task := inputs["task"]
+	if task == "" {
+		task = inputs["prompt"]
+	}
+	if task == "" {
+		task = inputs["description"]
+	}
+	if task == "" {
+		task = inputs["instruction"]
+	}
+	if task == "" {
+		task = inputs["title"]
+	}
+
+	if name == "" {
+		available := fmt.Sprintf("available params: name=%q, agent=%q, type=%q", inputs["name"], inputs["agent"], inputs["type"])
+		return tools.ToolResult{Success: false, Error: fmt.Sprintf("name parameter is required (use 'worker' or 'qa'). %s", available)}, nil
+	}
+	if task == "" {
+		available := fmt.Sprintf("available params: task=%q, prompt=%q, description=%q", inputs["task"], inputs["prompt"], inputs["description"])
+		return tools.ToolResult{Success: false, Error: fmt.Sprintf("task parameter is required (describe what the agent should do). %s", available)}, nil
+	}
+
+	// Flexible name matching
+	normalizedName := name
+	switch {
+	case strings.Contains(name, "worker") || strings.Contains(name, "coder") || strings.Contains(name, "developer"):
+		normalizedName = "worker"
+	case strings.Contains(name, "qa") || strings.Contains(name, "review") || strings.Contains(name, "tester"):
+		normalizedName = "qa"
+	}
+
+	if normalizedName != name {
+		t.debugLog("Agent name %q normalized to %q", name, normalizedName)
+	}
+	name = normalizedName
 
 	if name != "worker" && name != "qa" {
 		return tools.ToolResult{Success: false, Error: fmt.Sprintf("unknown agent name: %q, use 'worker' or 'qa'", name)}, nil
@@ -174,6 +215,15 @@ func (t *SubAgentTool) registerReviewTool(name string, a agent.Agent) {
 		if len(schemas) > 0 {
 			a.SetTools(schemas)
 		}
+	}
+}
+
+func (t *SubAgentTool) debugLog(format string, args ...interface{}) {
+	if !t.Debug {
+		return
+	}
+	if t.Log != nil {
+		t.Log.DebugLogf("[SUBAGENT] "+format, args...)
 	}
 }
 
