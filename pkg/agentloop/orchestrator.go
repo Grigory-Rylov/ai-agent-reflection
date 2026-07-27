@@ -58,7 +58,8 @@ func (o *Orchestrator) ExecuteTask(ctx context.Context, task string, peerID int6
 	o.setActiveAgent("coordinator")
 	coordinator := agent.NewAgent(o.makeAgentConfig())
 	coordinator.SetThinkingCallback(o.makeThinkingCallback("coordinator"))
-	o.addMainTools(coordinator)
+	// Coordinator has ONLY the task tool — no direct file/shell tools.
+	// This forces delegation to subagents (worker, qa, explore, general).
 	o.registerSubAgentTool(coordinator, peerID)
 
 	result, err := coordinator.ProcessMessage(ctx, task, peerID)

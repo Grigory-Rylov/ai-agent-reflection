@@ -1,5 +1,5 @@
 All three tasks implemented. Now QA review.
-<tool_call><function=subagent><parameter=name>qa</parameter><parameter=task>Review all three files:
+<tool_call><function=task><parameter=name>qa</parameter><parameter=task>Review all three files:
 
 1. README.md
 # go-agent

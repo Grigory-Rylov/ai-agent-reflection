@@ -86,11 +86,12 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		})
 	}
 
-	// Отправляем запрос в LLM
+	// Отправляем запрос в LLM (с инструментами, чтобы модель могла продолжить)
 	streamConfig := StreamingConfig{
 		Model:       a.config.Model,
 		MaxTokens:   a.config.MaxTokens,
 		Temperature: a.config.Temperature,
+		Tools:       a.toolsRegistry.ToOpenAISchema(),
 		Stream:      true,
 	}
 

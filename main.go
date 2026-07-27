@@ -16,6 +16,7 @@ import (
 	"github.com/opencode/llama-client/pkg/access"
 	"github.com/opencode/llama-client/pkg/agent"
 	"github.com/opencode/llama-client/pkg/agentloop"
+	"github.com/opencode/llama-client/pkg/agentpolicy"
 	"github.com/opencode/llama-client/pkg/logger"
 	"github.com/opencode/llama-client/pkg/mcp"
 	"github.com/opencode/llama-client/pkg/store"
@@ -27,17 +28,34 @@ import (
 var Version = "dev"
 
 type Config struct {
-	LlamaServerURL string   `json:"llama_server_url"`
-	Model          string   `json:"model"`
-	MaxTokens      int      `json:"max_tokens"`
-	Temperature    float64  `json:"temperature"`
-	TokenVK        string   `json:"token_vk"`
-	PeerID         int64    `json:"peer_id"`
-	ThinkingPeerID int64    `json:"thinking_peer_id"`
-	MCPConfigPath  string   `json:"mcp_config_path"`
-	AllowedDirs    []string `json:"allowed_dirs"`
-	DBPath         string   `json:"db_path"`
-	PromptsDir     string   `json:"prompts_dir"`
+	LlamaServerURL string                         `json:"llama_server_url"`
+	Model          string                         `json:"model"`
+	MaxTokens      int                            `json:"max_tokens"`
+	Temperature    float64                        `json:"temperature"`
+	TokenVK        string                         `json:"token_vk"`
+	PeerID         int64                          `json:"peer_id"`
+	ThinkingPeerID int64                          `json:"thinking_peer_id"`
+	MCPConfigPath  string                         `json:"mcp_config_path"`
+	AllowedDirs    []string                       `json:"allowed_dirs"`
+	DBPath         string                         `json:"db_path"`
+	PromptsDir     string                         `json:"prompts_dir"`
+	Agents         map[string]agentpolicy.AgentCfg `json:"agents"`
+}
+
+// resolvePrompt resolves a prompt value: if it's "{file:./path}", reads from file.
+func resolvePrompt(prompt, baseDir string) (string, error) {
+	if strings.HasPrefix(prompt, "{file:") && strings.HasSuffix(prompt, "}") {
+		path := strings.TrimSuffix(strings.TrimPrefix(prompt, "{file:"), "}")
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(baseDir, path)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("reading prompt file %s: %w", path, err)
+		}
+		return string(data), nil
+	}
+	return prompt, nil
 }
 
 func main() {
@@ -175,6 +193,26 @@ func main() {
 		return handleQuestion(vkClient, peerID, q)
 	})
 
+	// Инициализируем AgentManager из конфига
+	agentManager := agentpolicy.NewAgentManager()
+	if config.Agents != nil {
+		agentManager.LoadFromConfig(config.Agents)
+	}
+	// Resolve {file:...} prompts in config-loaded agents
+	for _, name := range agentManager.ListAgentNames() {
+		info, err := agentManager.GetAgent(name)
+		if err != nil || !strings.HasPrefix(info.Prompt, "{file:") {
+			continue
+		}
+		resolved, rErr := resolvePrompt(info.Prompt, agentDir)
+		if rErr != nil {
+			log.WarnLogf("Failed to resolve prompt for agent %s: %v", name, rErr)
+		} else {
+			info.Prompt = resolved
+			agentManager.RegisterAgent(info)
+		}
+	}
+
 	// Регистрируем subagent tool как обычный тул (как task в opencode)
 	sysPromptDir := filepath.Join(agentDir, "system_prompt")
 	subAgentCfg := agent.Config{
@@ -195,6 +233,7 @@ func main() {
 		AgentConfig:     subAgentCfg,
 		MainTools:       toolRegistry,
 		SystemPromptDir: sysPromptDir,
+		AgentManager:    agentManager,
 		CurrentDepth:    0,
 		MaxDepth:        2,
 		ThinkingPeerID:  config.ThinkingPeerID,
@@ -204,8 +243,22 @@ func main() {
 		SetActiveAgent:  func(name string) {},
 	})
 
+	// Создаём оркестратор для многоагентного режима
+	orchestrator := agentloop.NewOrchestrator(agentloop.OrchestratorConfig{
+		LlamaServerURL:  llamaURL,
+		Model:           config.Model,
+		MaxTokens:       config.MaxTokens,
+		Temperature:     config.Temperature,
+		ToolRegistry:    toolRegistry,
+		Debug:           *debug,
+		Logger:          log,
+		ThinkingPeerID:  config.ThinkingPeerID,
+		VKClient:        vkClient,
+		SystemPromptDir: sysPromptDir,
+	})
+
 	botHandler := vk.NewBotHandlerWithPeerID(vkClient, agentLoop, log,
-		config.PeerID, config.ThinkingPeerID, nil)
+		config.PeerID, config.ThinkingPeerID, orchestrator)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -246,7 +299,7 @@ func main() {
 		}
 	}()
 
-	// Если указан начальный промпт — отправляем его в обработку
+	// Если указан начальный промпт — отправляем его в обработку (через обычный agent loop)
 	if *initialPrompt != "" && config.PeerID > 0 {
 		log.InfoLogf("Processing initial prompt: %s", truncate(*initialPrompt, 100))
 
@@ -256,7 +309,7 @@ func main() {
 
 		if err != nil {
 			errMsg := fmt.Sprintf("Initial prompt failed: %v", err)
-			log.ErrorLog(errMsg)
+			log.ErrorLogf("Initial prompt failed: %v", err)
 			vkClient.SendMessage(config.PeerID, "❌ "+errMsg)
 		} else if response != "" {
 			log.InfoLogf("Initial prompt response: %s", truncate(response, 200))

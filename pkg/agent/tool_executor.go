@@ -221,6 +221,19 @@ func (a *agentImpl) executeAllTools(ctx context.Context, toolCalls []ToolCall, p
 }
 
 var toolAliases = map[string]string{
+	// opencode PascalCase aliases
+	"WebFetch":     "web_fetch",
+	"WebSearch":    "web_search",
+	"Glob":         "glob",
+	"Grep":         "search_code",
+	"Read":         "file_read",
+	"Edit":         "edit",
+	"Write":        "file_write",
+	"Bash":         "shell_execute",
+	"Task":         "task",
+	"TodoWrite":    "todowrite",
+	"TodoRead":     "todoread",
+	// legacy aliases
 	"grep":         "search_code",
 	"grep_search":  "search_code",
 	"read_file":    "file_read",
@@ -235,6 +248,7 @@ var toolAliases = map[string]string{
 	"calculate":    "calc",
 	"edit_file":    "edit",
 	"patch_apply":  "apply_patch",
+	"subagent":     "task",
 }
 
 func resolveToolAlias(name string) string {
@@ -289,11 +303,22 @@ func briefToolCall(toolName string, args map[string]string) string {
 	case "time_get":
 		return "time_get()"
 	case "subagent":
-		if name, ok := args["name"]; ok {
-			if task, ok := args["task"]; ok {
-				return fmt.Sprintf("subagent(%q, task=%q)", name, truncateStr(task, 60))
-			}
-			return fmt.Sprintf("subagent(%q)", name)
+		ag := args["subagent_type"]
+		if ag == "" {
+			ag = args["name"]
+		}
+		t := args["prompt"]
+		if t == "" {
+			t = args["task"]
+		}
+		if t == "" {
+			t = args["description"]
+		}
+		if ag != "" && t != "" {
+			return fmt.Sprintf("subagent(%q, prompt=%q)", ag, truncateStr(t, 60))
+		}
+		if ag != "" {
+			return fmt.Sprintf("subagent(%q)", ag)
 		}
 		return "subagent(...)"
 	case "edit", "edit_file":

@@ -970,3 +970,204 @@ func TestParseXMLToolCalls_MalformedCloseTagInFunction(t *testing.T) {
 		t.Errorf("expected tool name 'review_approve', got %q", result.ToolCalls[0].Name)
 	}
 }
+
+// TestParseXMLToolCalls_SubagentAttrParam тестирует формат:
+// <tool_call><function=subagent><parameter name="subagent_type">worker</parameter><parameter name="prompt">Create HTTP server</parameter></function></tool_call>
+func TestParseXMLToolCalls_SubagentAttrParam(t *testing.T) {
+	input := `<tool_call><function=subagent><parameter name="subagent_type">worker</parameter><parameter name="prompt">Create a simple HTTP server in Go</parameter></function></tool_call>`
+	expected := XMLParseResult{
+		ToolCalls: []XMLToolCall{
+			{
+				Name: "subagent",
+				Args: map[string]string{
+					"subagent_type": "worker",
+					"prompt":        "Create a simple HTTP server in Go",
+				},
+			},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+// TestParseXMLToolCalls_SubagentAttrParamNoWrapper тестирует формат без <tool_call> обёртки:
+// <function=subagent><parameter name="subagent_type">worker</parameter><parameter name="prompt">Create HTTP server</parameter></function>
+func TestParseXMLToolCalls_SubagentAttrParamNoWrapper(t *testing.T) {
+	input := `<function=subagent><parameter name="subagent_type">worker</parameter><parameter name="prompt">Create a simple HTTP server in Go</parameter></function>`
+	expected := XMLParseResult{
+		ToolCalls: []XMLToolCall{
+			{
+				Name: "subagent",
+				Args: map[string]string{
+					"subagent_type": "worker",
+					"prompt":        "Create a simple HTTP server in Go",
+				},
+			},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+// TestParseXMLToolCalls_SubagentSimpleTags тестирует упрощённый формат:
+// <function=subagent><subagent_type>worker</subagent_type><prompt>Create</prompt></function>
+func TestParseXMLToolCalls_SubagentSimpleTags(t *testing.T) {
+	input := `<function=subagent><subagent_type>worker</subagent_type><prompt>Create HTTP server</prompt></function>`
+	expected := XMLParseResult{
+		ToolCalls: []XMLToolCall{
+			{
+				Name: "subagent",
+				Args: map[string]string{
+					"subagent_type": "worker",
+					"prompt":        "Create HTTP server",
+				},
+			},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+// TestParseXMLToolCalls_SubagentMixedFormats тестирует смешанный формат:
+// <function=subagent><parameter=subagent_type>worker</parameter><parameter name="prompt">Create</parameter></function>
+func TestParseXMLToolCalls_SubagentMixedFormats(t *testing.T) {
+	input := `<function=subagent><parameter=type>worker</parameter><parameter name="prompt">Create HTTP server</parameter></function>`
+	expected := XMLParseResult{
+		ToolCalls: []XMLToolCall{
+			{
+				Name: "subagent",
+				Args: map[string]string{
+					"type":   "worker",
+					"prompt": "Create HTTP server",
+				},
+			},
+		},
+	}
+	result := ParseXMLToolCalls(input)
+	if !eq(result, expected) {
+		t.Errorf("ParseXMLToolCalls(%q) =\n  %+v\n  want %+v", input, result, expected)
+	}
+}
+
+// TestParseXMLToolCalls_SubagentStandardFormat тестирует стандартный XML формат:
+// <tool_call><function=subagent><parameter name="subagent_type">worker</parameter><parameter name="prompt">task</parameter><parameter name="description">desc</parameter></function></tool_call>
+func TestParseXMLToolCalls_SubagentStandardFormat(t *testing.T) {
+	input := `<tool_call>
+<function=subagent>
+<parameter name="subagent_type">worker</parameter>
+<parameter name="prompt">Create HTTP server</parameter>
+<parameter name="description">Simple HTTP server</parameter>
+</function>
+</tool_call>`
+	expected := XMLParseResult{
+		ToolCalls: []XMLToolCall{
+			{
+				Name: "subagent",
+				Args: map[string]string{
+					"subagent_type": "worker",
+					"prompt":        "Create HTTP server",
+					"description":   "Simple HTTP server",
+				},
+			},
+		},
+	}
+	assertParse(t, input, expected)
+}
+
+// TestParseXMLToolCalls_AttrParamInReasoning тестирует формат с аттрибутами в reasoning тексте
+func TestParseXMLToolCalls_AttrParamInReasoning(t *testing.T) {
+	input := "I'll create the HTTP server for you.\n\n<function=subagent>\n<parameter name=\"subagent_type\">worker</parameter>\n<parameter name=\"prompt\">Create a simple HTTP server in Go that serves GET /hello returning {\"message\":\"hello\"}. Use only stdlib. Listen on :8080.</parameter>\n</function>"
+	result := ParseXMLToolCalls(input)
+	// Check tool calls first
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].Name != "subagent" {
+		t.Errorf("expected subagent, got %q", result.ToolCalls[0].Name)
+	}
+	if result.ToolCalls[0].Args["subagent_type"] != "worker" {
+		t.Errorf("expected worker, got %q", result.ToolCalls[0].Args["subagent_type"])
+	}
+	if !strings.Contains(result.ToolCalls[0].Args["prompt"], "HTTP server") {
+		t.Errorf("prompt should mention HTTP server, got: %s", result.ToolCalls[0].Args["prompt"])
+	}
+	if !strings.Contains(result.Content, "I'll create") {
+		t.Errorf("content should retain text before tool call, got: %s", result.Content)
+	}
+}
+
+// TestParseXMLToolCalls_EmptyAttrParam тестирует пустые значения в attr параметрах
+func TestParseXMLToolCalls_EmptyAttrParam(t *testing.T) {
+	input := `<function=subagent><parameter name="name"></parameter><parameter name="prompt">task</parameter></function>`
+	result := ParseXMLToolCalls(input)
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].Args["prompt"] != "task" {
+		t.Errorf("expected prompt='task', got %q", result.ToolCalls[0].Args["prompt"])
+	}
+}
+
+// TestParseXMLToolCalls_SubagentAllAliases тестирует что все алиасы имён параметров работают
+func TestParseXMLToolCalls_SubagentAllAliases(t *testing.T) {
+	tests := []struct {
+		name     string
+		xml      string
+		expected string // expected value for the "name" equivalent
+	}{
+		{
+			"parameter=subagent_type",
+			`<function=subagent><parameter=subagent_type>worker</parameter><parameter=prompt>task</parameter></function>`,
+			"worker",
+		},
+		{
+			"parameter=name",
+			`<function=subagent><parameter=name>worker</parameter><parameter=prompt>task</parameter></function>`,
+			"worker",
+		},
+		{
+			"parameter=agent",
+			`<function=subagent><parameter=agent>worker</parameter><parameter=prompt>task</parameter></function>`,
+			"worker",
+		},
+		{
+			"parameter=type",
+			`<function=subagent><parameter=type>worker</parameter><parameter=prompt>task</parameter></function>`,
+			"worker",
+		},
+		{
+			"attr subagent_type",
+			`<function=subagent><parameter name="subagent_type">worker</parameter><parameter name="prompt">task</parameter></function>`,
+			"worker",
+		},
+		{
+			"attr name",
+			`<function=subagent><parameter name="type">worker</parameter><parameter name="task">task</parameter></function>`,
+			"worker",
+		},
+		{
+			"simplified subagent_type",
+			`<function=subagent><subagent_type>worker</subagent_type><prompt>task</prompt></function>`,
+			"worker",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ParseXMLToolCalls(tt.xml)
+			if len(result.ToolCalls) != 1 {
+				t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
+			}
+			// Check that at least one of the name aliases has the expected value
+			args := result.ToolCalls[0].Args
+			found := args["subagent_type"] == tt.expected ||
+				args["name"] == tt.expected ||
+				args["agent"] == tt.expected ||
+				args["type"] == tt.expected
+			if !found {
+				t.Errorf("no name alias found with value %q in args: %v", tt.expected, args)
+			}
+			// Check that prompt or task has content
+			if args["prompt"] == "" && args["task"] == "" {
+				t.Errorf("no task/prompt found in args: %v", args)
+			}
+		})
+	}
+}

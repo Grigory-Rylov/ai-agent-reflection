@@ -1,5 +1,5 @@
 main.go fixed. Now reviewing handler.go: missing input validation and Content-Type header.
-<tool_call><function=subagent><parameter=name>worker</parameter><parameter=task>Fix handler.go: add Content-Type header and input validation
+<tool_call><function=task><parameter=name>worker</parameter><parameter=task>Fix handler.go: add Content-Type header and input validation
 
 Current code:
 package main

@@ -13,18 +13,20 @@ const (
 
 // AgentInfo описывает конфигурацию агента
 type AgentInfo struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	Mode        AgentMode   `json:"mode"`
-	Native      bool        `json:"native"`
-	Hidden      bool        `json:"hidden"`
-	Prompt      string      `json:"prompt"`
-	Model       string      `json:"model"`
-	Temperature *float64    `json:"temperature"`
-	TopP        *float64    `json:"topP"`
-	Color       string      `json:"color"`
-	Permission  Permission  `json:"permission"`
-	Options     map[string]interface{} `json:"options"`
+	Name        string                   `json:"name"`
+	Description string                   `json:"description"`
+	Mode        AgentMode                `json:"mode"`
+	Native      bool                     `json:"native"`
+	Hidden      bool                     `json:"hidden"`
+	Leaf        bool                     `json:"leaf"`
+	Review      bool                     `json:"review"`
+	Prompt      string                   `json:"prompt"`
+	Model       string                   `json:"model"`
+	Temperature *float64                 `json:"temperature"`
+	TopP        *float64                 `json:"topP"`
+	Color       string                   `json:"color"`
+	Permission  Permission               `json:"permission"`
+	Options     map[string]interface{}    `json:"options"`
 }
 
 // AgentManager управляет доступными агентами
@@ -76,10 +78,43 @@ func (am *AgentManager) initDefaults() {
 	// General subagent — для исследования и параллельных задач
 	am.agents["general"] = AgentInfo{
 		Name:        "general",
-		Description: "General-purpose agent for researching complex questions and executing multi-step tasks.",
+		Description: "General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.",
 		Mode:        ModeSubagent,
 		Native:      true,
 		Permission:  defaultPerm,
+		Prompt:      `You are a General-purpose agent. Research and execute multi-step tasks autonomously.
+
+## Instructions
+1. Use available tools to gather information and execute tasks
+2. Be thorough — search widely, read strategically
+3. Return clear, structured results to the caller
+4. Do NOT make assumptions — verify with tools
+
+## Rules
+- You can create files and run commands as needed
+- Return complete results — the caller has no other context`,
+		Options:     map[string]interface{}{},
+	}
+
+	// Worker agent — leaf agent для выполнения задач
+	am.agents["worker"] = AgentInfo{
+		Name:        "worker",
+		Description: "Implements code changes, writes files, runs commands. Has full tool access.",
+		Mode:        ModeSubagent,
+		Leaf:        true,
+		Native:      true,
+		Permission:  DefaultPermission(),
+		Options:     map[string]interface{}{},
+	}
+
+	// QA agent — review агент, может вызывать worker для исправлений
+	am.agents["qa"] = AgentInfo{
+		Name:        "qa",
+		Description: "Reviews code, builds/tests it, calls worker for fixes, approves when done.",
+		Mode:        ModeSubagent,
+		Review:      true,
+		Native:      true,
+		Permission:  DefaultPermission(),
 		Options:     map[string]interface{}{},
 	}
 
@@ -98,11 +133,11 @@ func (am *AgentManager) initDefaults() {
 	})
 	am.agents["explore"] = AgentInfo{
 		Name:        "explore",
-		Description: "Fast agent specialized for exploring codebases. Use for finding files, searching code, answering questions about the codebase.",
+		Description: "Fast agent specialized for exploring codebases. Use for finding files by patterns, searching code for keywords, answering questions about the codebase. Returns file paths as absolute paths.",
 		Mode:        ModeSubagent,
 		Native:      true,
 		Permission:  explorePerm,
-		Prompt:      "You are an explorer. Be thorough but fast. Search widely, read strategically.",
+		Prompt:      "You are an Explorer. Search and investigate the codebase quickly.\n\n## Available tools\n- `glob` — find files by pattern\n- `search_code` — grep for patterns in files\n- `file_read` — read file contents\n- `file_list` — list directory contents\n- `shell_execute` — run commands (read-only, e.g. git log, ls)\n- `web_fetch` — fetch URLs\n\n## Instructions\n1. Search thoroughly but quickly\n2. Report file paths as absolute paths\n3. Read key files to provide relevant context\n\n## Rules\n- You CANNOT create or modify files\n- You CANNOT edit code\n- Be fast — focus on finding what's needed",
 		Options:     map[string]interface{}{},
 	}
 
@@ -125,6 +160,15 @@ func (am *AgentManager) GetAgent(name string) (AgentInfo, error) {
 		return AgentInfo{}, fmt.Errorf("agent not found: %s", name)
 	}
 	return a, nil
+}
+
+// ListAgentNames возвращает имена всех зарегистрированных агентов
+func (am *AgentManager) ListAgentNames() []string {
+	names := make([]string, 0, len(am.agents))
+	for name := range am.agents {
+		names = append(names, name)
+	}
+	return names
 }
 
 // ListAgents возвращает список всех доступных агентов
@@ -184,4 +228,33 @@ func (am *AgentManager) DefaultAgent() (AgentInfo, error) {
 // GetAvailableModes возвращает доступные режимы для агента
 func (am *AgentManager) GetAvailableModes() []AgentMode {
 	return []AgentMode{ModePrimary, ModeSubagent, ModeAll}
+}
+
+// LoadFromConfig загружает агентов из конфига (map[name]AgentCfg)
+func (am *AgentManager) LoadFromConfig(cfg map[string]AgentCfg) {
+	for name, ac := range cfg {
+		mode := AgentMode(ac.Mode)
+		if mode == "" {
+			mode = ModeSubagent
+		}
+		am.RegisterAgent(AgentInfo{
+			Name:        name,
+			Description: ac.Description,
+			Mode:        mode,
+			Hidden:      ac.Hidden,
+			Leaf:        ac.Leaf,
+			Review:      ac.Review,
+			Prompt:      ac.Prompt,
+		})
+	}
+}
+
+// AgentCfg — упрощённая конфигурация агента из JSON-конфига
+type AgentCfg struct {
+	Mode        string `json:"mode"`
+	Description string `json:"description"`
+	Prompt      string `json:"prompt"`
+	Hidden      bool   `json:"hidden"`
+	Leaf        bool   `json:"leaf"`
+	Review      bool   `json:"review"`
 }

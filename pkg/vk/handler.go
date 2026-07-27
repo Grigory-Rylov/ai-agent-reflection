@@ -86,12 +86,66 @@ func NewBotHandlerWithPeerID(vkClient *BotClient, aiAgent agentloop.AgentLoop, l
 // Обработка сообщений
 // ============================================================
 
+// agentNames возвращает список известных имён агентов для @mention
+func agentNames() []string {
+	return []string{"worker", "qa", "explore", "general", "agent", "coordinator"}
+}
+
+// parseAgentMention проверяет, начинается ли текст с @agent_name,
+// и возвращает имя агента и очищенный текст задачи.
+func parseAgentMention(text string) (agentName string, task string) {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "@") {
+		return "", text
+	}
+	spaceIdx := strings.Index(text, " ")
+	if spaceIdx < 0 {
+		// Только @agent_name без задачи
+		return text[1:], ""
+	}
+	maybeName := text[1:spaceIdx]
+	for _, name := range agentNames() {
+		if strings.EqualFold(maybeName, name) {
+			return name, strings.TrimSpace(text[spaceIdx+1:])
+		}
+	}
+	return "", text
+}
+
 // ProcessMessage обрабатывает входящее сообщение от пользователя
 func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	h.ensureSession(peerID)
 
-	// Извлекаем команду из сообщения (удаляем mention если есть)
+	// Извлекаем команду из сообщения (удаляем VK mention если есть)
 	command := extractCommand(message)
+
+	// Проверяем @mention агента (worker, qa, explore, general, agent)
+	if agentName, task := parseAgentMention(command); agentName != "" {
+		if h.log != nil {
+			h.log.InfoLogf("Agent @%s invoked by peer %d with task: %s", agentName, peerID, truncateStr(task, 100))
+		}
+
+		// Если нет задачи — запрашиваем
+		if task == "" {
+			return fmt.Sprintf("Укажите задачу для @%s. Например: @%s создай простой HTTP сервер", agentName, agentName)
+		}
+
+		// Если есть оркестратор — используем его
+		if h.orchestrator != nil {
+			ctx := context.Background()
+			response, err := h.orchestrator.ExecuteTask(ctx, task, peerID)
+			if err != nil {
+				if h.log != nil {
+					h.log.ErrorLogf("Orchestrator error for @%s: %v", agentName, err)
+				}
+				return fmt.Sprintf("❌ Ошибка при выполнении задачи через @%s: %v", agentName, err)
+			}
+			return response
+		}
+
+		// Fallback: передаём в обычный AI Agent с пометкой
+		message = fmt.Sprintf("[Задача для @%s]\n\n%s", agentName, task)
+	}
 
 	// Команды бота не передаются модели
 	if strings.HasPrefix(command, "/") {

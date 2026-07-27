@@ -198,7 +198,6 @@ func parseWithWrapper(input string) XMLParseResult {
 				continue
 			}
 			if n := matchCloseTag(input, i, "tool_call"); n > 0 {
-				// Закрывающий тег </tool_call> внутри функции — финализируем тул
 				if funcName != "" {
 					result.ToolCalls = append(result.ToolCalls, XMLToolCall{
 						Name: funcName,
@@ -225,6 +224,16 @@ func parseWithWrapper(input string) XMLParseResult {
 				paramName = name
 				paramValue.Reset()
 				state = stateParam
+				i = n
+				continue
+			}
+			// Стандартный XML: <parameter name="key">value</parameter>
+			if attrName, content, n := parseAttrTag(input, i); n > 0 {
+				pendingContent.WriteString(input[i:n])
+				if args == nil {
+					args = make(map[string]string)
+				}
+				args[attrName] = content
 				i = n
 				continue
 			}
@@ -337,6 +346,16 @@ func parseWithoutWrapper(input string) XMLParseResult {
 				paramValue.Reset()
 				depth = 0
 				state = stateParam
+				i = n
+				continue
+			}
+			// Стандартный XML: <parameter name="key">value</parameter>
+			if attrName, content, n := parseAttrTag(input, i); n > 0 {
+				logger.DebugToFile("parseWithoutWrapper: found <parameter name=%q>%s</parameter>", attrName, content)
+				if args == nil {
+					args = make(map[string]string)
+				}
+				args[attrName] = content
 				i = n
 				continue
 			}
@@ -522,6 +541,52 @@ func findChar(s string, start int, ch byte) int {
 		}
 	}
 	return -1
+}
+
+// parseAttrTag парсит формат: <tag attr="value">content</tag> или <tag attr='value'>content</tag>
+// Возвращает (attrValue, content, endPosition) или ("", "", -1).
+// Парсит ТОЛЬКО для тега "parameter" — извлекает name-атрибут и содержимое.
+func parseAttrTag(input string, i int) (string, string, int) {
+	if i >= len(input) || input[i] != '<' {
+		return "", "", -1
+	}
+	close := findChar(input, i+1, '>')
+	if close < 0 {
+		return "", "", -1
+	}
+	openTag := input[i+1 : close]
+	// Должно быть: parameter name="..." или parameter name='...'
+	if !strings.HasPrefix(openTag, "parameter ") {
+		return "", "", -1
+	}
+	rest := strings.TrimSpace(openTag[len("parameter "):])
+	var attrVal string
+	if strings.HasPrefix(rest, `name="`) {
+		end := strings.Index(rest[6:], `"`)
+		if end < 0 {
+			return "", "", -1
+		}
+		attrVal = rest[6 : 6+end]
+	} else if strings.HasPrefix(rest, `name='`) {
+		end := strings.Index(rest[6:], `'`)
+		if end < 0 {
+			return "", "", -1
+		}
+		attrVal = rest[6 : 6+end]
+	} else {
+		return "", "", -1
+	}
+	if attrVal == "" {
+		return "", "", -1
+	}
+	contentStart := close + 1
+	closeTag := "</parameter>"
+	closePos := strings.Index(input[contentStart:], closeTag)
+	if closePos < 0 {
+		return "", "", -1
+	}
+	content := strings.TrimSpace(input[contentStart : contentStart+closePos])
+	return attrVal, content, contentStart + closePos + len(closeTag)
 }
 
 // parseSimpleTag парсит упрощённый формат тега: <tagname>value</tagname>

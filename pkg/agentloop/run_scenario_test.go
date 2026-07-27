@@ -17,9 +17,9 @@ func setupSystemPromptDir(t *testing.T) string {
 		t.Fatalf("mkdir system_prompt: %v", err)
 	}
 	files := map[string]string{
-		"coordinator.txt": "You are a coordinator. Delegate tasks to worker or qa via subagent tool.",
+		"coordinator.txt": "You are a coordinator. Delegate tasks to worker or qa via task tool.",
 		"worker.txt":      "You are a worker. Implement the task. You cannot delegate.",
-		"qa.txt":          "You are a QA. Review code. Use subagent(worker) for fixes and review_approve.",
+		"qa.txt":          "You are a QA. Review code. Use task(worker) for fixes and review_approve.",
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(promptDir, name), []byte(content), 0644); err != nil {

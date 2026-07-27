@@ -93,6 +93,9 @@ func (s *Scenario) MockServer() *httptest.Server {
 		var content string
 		if idx < len(s.Steps) {
 			content = s.Steps[idx].Content
+		} else if len(s.Steps) > 0 {
+			// Повторяем последний шаг для continuation/loop
+			content = s.Steps[len(s.Steps)-1].Content
 		} else {
 			content = "Done."
 		}

@@ -1,5 +1,5 @@
 Reviewing main.go: missing error handling for ListenAndServe. Also no graceful shutdown.
-<tool_call><function=subagent><parameter=name>worker</parameter><parameter=task>Fix main.go: add graceful shutdown with signal handling, wrap log.Fatal properly
+<tool_call><function=task><parameter=name>worker</parameter><parameter=task>Fix main.go: add graceful shutdown with signal handling, wrap log.Fatal properly
 
 Current code:
 package main
