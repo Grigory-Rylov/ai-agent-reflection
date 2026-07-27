@@ -45,9 +45,12 @@ type StreamChunkEvent struct {
 func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig, messages []Message) (<-chan StreamChunkEvent, error) {
 	reqBody := a.buildRequestJSON(config, messages)
 
-	charCount := len(reqBody)
+	contentChars := 0
+	for _, m := range messages {
+		contentChars += len(m.Content)
+	}
 
-	logger.DebugToFile("[LLM REQUEST] Sending request to %s, model=%s, messages=%d, chars=%d", a.config.LlamaServerURL, config.Model, len(messages), charCount)
+	logger.DebugToFile("[LLM REQUEST] Sending request to %s, model=%s, messages=%d, chars=%d, tokens=%d", a.config.LlamaServerURL, config.Model, len(messages), len(reqBody), contentChars/3)
 
 	req, err := a.createStreamingRequest(ctx, reqBody)
 	if err != nil {
