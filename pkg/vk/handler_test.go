@@ -2,6 +2,8 @@ package vk
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -43,13 +45,13 @@ func (m *mockAgentLoop) ProcessMessage(ctx context.Context, prompt string, peerI
 	return m.ProcessPrompt(ctx, prompt, peerID)
 }
 
-func (m *mockAgentLoop) Start(ctx context.Context)           {}
-func (m *mockAgentLoop) Stop()                               {}
-func (m *mockAgentLoop) ResetSession(peerID int64)           {}
+func (m *mockAgentLoop) Start(ctx context.Context)      {}
+func (m *mockAgentLoop) Stop()                              {}
+func (m *mockAgentLoop) ResetSession(peerID int64)          { delete(m.sessions, peerID) }
 func (m *mockAgentLoop) SetThinkingCallback(cb func(peerID int64, content string) error) {}
 
 func (m *mockAgentLoop) GetSession(peerID int64) *session.Session {
-	return m.sessions[peerID]
+	return m.getOrCreateSession(peerID)
 }
 
 func (m *mockAgentLoop) EnsureSession(peerID int64) *session.Session {
@@ -568,5 +570,85 @@ func TestParseAgentHashMention(t *testing.T) {
 				t.Errorf("parseAgentHashMention() task = %q, want %q", gotTask, tt.wantTask)
 			}
 		})
+	}
+}
+
+// ============================================================
+// Tests for handleNewSession (/n command)
+// ============================================================
+
+func TestHandleNewSession(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+	handler := NewBotHandler(nil, mock, log)
+
+	tests := []struct {
+		name        string
+		message     string
+		checkWorkingDir func(t *testing.T, dir string)
+	}{
+		{
+			name:    "/n with /tmp should set working directory",
+			message: "/n /tmp",
+			checkWorkingDir: func(t *testing.T, dir string) {
+				if dir != "/tmp" && dir != filepath.Join(os.Getenv("TMPDIR"), "tmp") {
+					t.Errorf("Expected /tmp or temp dir, got %q", dir)
+				}
+			},
+		},
+		{
+			name:    "/newsession with /tmp should set working directory",
+			message: "/newsession /tmp",
+			checkWorkingDir: func(t *testing.T, dir string) {
+				if dir != "/tmp" && dir != filepath.Join(os.Getenv("TMPDIR"), "tmp") {
+					t.Errorf("Expected /tmp or temp dir, got %q", dir)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler.ProcessMessage(tt.message, 12345)
+			sess := mock.GetSession(12345)
+			if sess == nil {
+				t.Fatal("Expected session to exist")
+			}
+			wd := sess.GetWorkingDir()
+			tt.checkWorkingDir(t, wd)
+		})
+	}
+}
+
+func TestHandleNewSessionWithTilde(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+	handler := NewBotHandler(nil, mock, log)
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("Cannot get home directory")
+	}
+
+	message := "/n ~"
+	handler.ProcessMessage(message, 12345)
+	sess := mock.GetSession(12345)
+	if sess == nil {
+		t.Fatal("Expected session to exist")
+	}
+	wd := sess.GetWorkingDir()
+	if wd != home {
+		t.Errorf("Expected home dir %q, got %q", home, wd)
+	}
+}
+
+func TestHandleNewSessionWithNonexistentPath(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+	handler := NewBotHandler(nil, mock, log)
+
+	response := handler.ProcessMessage("/n /nonexistent/path/12345", 12345)
+	if !strings.Contains(response, "не существует") && !strings.Contains(response, "Ошибка") {
+		t.Errorf("Expected error about nonexistent path, got %q", response)
 	}
 }
