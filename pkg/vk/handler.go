@@ -86,35 +86,14 @@ func NewBotHandlerWithPeerID(vkClient *BotClient, aiAgent agentloop.AgentLoop, l
 // Обработка сообщений
 // ============================================================
 
-// agentNames возвращает список известных имён агентов для @mention
+// agentNames возвращает список известных имён агентов для #mention
 func agentNames() []string {
 	return []string{"worker", "qa", "explore", "general", "agent", "coordinator"}
 }
 
-// parseAgentMention проверяет, начинается ли текст с @agent_name,
+// ParseAgentHashMention проверяет, начинается ли текст с #agent_name,
 // и возвращает имя агента и очищенный текст задачи.
-func parseAgentMention(text string) (agentName string, task string) {
-	text = strings.TrimSpace(text)
-	if !strings.HasPrefix(text, "@") {
-		return "", text
-	}
-	spaceIdx := strings.Index(text, " ")
-	if spaceIdx < 0 {
-		// Только @agent_name без задачи
-		return text[1:], ""
-	}
-	maybeName := text[1:spaceIdx]
-	for _, name := range agentNames() {
-		if strings.EqualFold(maybeName, name) {
-			return name, strings.TrimSpace(text[spaceIdx+1:])
-		}
-	}
-	return "", text
-}
-
-// parseAgentHashMention проверяет, начинается ли текст с #agent_name,
-// и возвращает имя агента и очищенный текст задачи.
-func parseAgentHashMention(text string) (agentName string, task string) {
+func ParseAgentHashMention(text string) (agentName string, task string) {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "#") {
 		return "", text
@@ -139,24 +118,16 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	// Извлекаем команду из сообщения (удаляем VK mention если есть)
 	command := extractCommand(message)
 
-	// Проверяем #agent_name или @mention агента (worker, qa, explore, general, agent)
-	var agentName string
-	var task string
-	if agentName, task = parseAgentHashMention(command); agentName == "" {
-		agentName, task = parseAgentMention(command)
-	}
+	// Проверяем #agent_name (worker, qa, explore, general, agent, coordinator)
+	agentName, task := ParseAgentHashMention(command)
 	if agentName != "" {
-		logPrefix := "@"
-		if strings.HasPrefix(strings.TrimSpace(command), "#") {
-			logPrefix = "#"
-		}
 		if h.log != nil {
-			h.log.InfoLogf("Agent %s%s invoked by peer %d with task: %s", logPrefix, agentName, peerID, truncateStr(task, 100))
+			h.log.InfoLogf("Agent #%s invoked by peer %d with task: %s", agentName, peerID, truncateStr(task, 100))
 		}
 
 		// Если нет задачи — запрашиваем
 		if task == "" {
-			return fmt.Sprintf("Укажите задачу для @%s. Например: @%s создай простой HTTP сервер", agentName, agentName)
+			return fmt.Sprintf("Укажите задачу для #%s. Например: #%s создай простой HTTP сервер", agentName, agentName)
 		}
 
 		// Если есть оркестратор — используем его
@@ -165,15 +136,15 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 			response, err := h.orchestrator.ExecuteTask(ctx, task, peerID)
 			if err != nil {
 				if h.log != nil {
-					h.log.ErrorLogf("Orchestrator error for @%s: %v", agentName, err)
+					h.log.ErrorLogf("Orchestrator error for #%s: %v", agentName, err)
 				}
-				return fmt.Sprintf("❌ Ошибка при выполнении задачи через @%s: %v", agentName, err)
+				return fmt.Sprintf("❌ Ошибка при выполнении задачи через #%s: %v", agentName, err)
 			}
 			return response
 		}
 
 		// Fallback: передаём в обычный AI Agent с пометкой
-		message = fmt.Sprintf("[Задача для @%s]\n\n%s", agentName, task)
+		message = fmt.Sprintf("[Задача для #%s]\n\n%s", agentName, task)
 	}
 
 	// Команды бота не передаются модели
@@ -294,10 +265,9 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 			"/status - Показать статус агента (сообщения, символы, токены)\n" +
 			"/test-llama - Тест соединения с llama-server\n" +
 			"/agent [задача] - Запустить AI Agent для исследования проекта\n\n" +
-			"Перенаправление задачи агенту:\n" +
+			"Перенаправление задачи агенту через #:\n" +
 			"#coordinator создай HTTP сервер — направит задачу координатору\n" +
-			"#worker, #qa, #explore, #general, #agent — доступные роли\n" +
-			"(можно использовать @ вместо #)"
+			"#worker, #qa, #explore, #general, #agent — доступные роли"
 
 	case "/test-llama":
 		return h.handleTestLlama()
