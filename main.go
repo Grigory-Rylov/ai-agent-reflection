@@ -299,23 +299,46 @@ func main() {
 		}
 	}()
 
-	// Если указан начальный промпт — отправляем его в обработку (через обычный agent loop)
+	// Если указан начальный промпт — отправляем его в обработку
 	if *initialPrompt != "" && config.PeerID > 0 {
-		log.InfoLogf("Processing initial prompt: %s", truncate(*initialPrompt, 100))
+		prompt := *initialPrompt
 
-		promptCtx, promptCancel := context.WithTimeout(ctx, 10*time.Minute)
-		response, err := agentLoop.ProcessPrompt(promptCtx, *initialPrompt, config.PeerID)
-		promptCancel()
+		// Проверяем @mention агента — если есть, пускаем через оркестратор
+		if agentName, task := parseAgentMention(prompt); agentName != "" && orchestrator != nil && task != "" {
+			log.InfoLogf("Processing initial prompt via orchestrator (@%s): %s", agentName, truncate(task, 100))
 
-		if err != nil {
-			errMsg := fmt.Sprintf("Initial prompt failed: %v", err)
-			log.ErrorLogf("Initial prompt failed: %v", err)
-			vkClient.SendMessage(config.PeerID, "❌ "+errMsg)
-		} else if response != "" {
-			log.InfoLogf("Initial prompt response: %s", truncate(response, 200))
-			vkClient.SendMessage(config.PeerID, "✅ Result:\n"+response)
+			promptCtx, promptCancel := context.WithTimeout(ctx, 15*time.Minute)
+			response, err := orchestrator.ExecuteTask(promptCtx, task, config.PeerID)
+			promptCancel()
+
+			if err != nil {
+				errMsg := fmt.Sprintf("Initial prompt failed: %v", err)
+				log.ErrorLogf("Initial prompt failed: %v", err)
+				vkClient.SendMessage(config.PeerID, "❌ "+errMsg)
+			} else if response != "" {
+				log.InfoLogf("Initial prompt response: %s", truncate(response, 200))
+				vkClient.SendMessage(config.PeerID, "✅ Result:\n"+response)
+			} else {
+				vkClient.SendMessage(config.PeerID, "⚠️ Initial prompt returned empty response")
+			}
 		} else {
-			vkClient.SendMessage(config.PeerID, "⚠️ Initial prompt returned empty response")
+			// Обычный промпт — через agent loop
+			log.InfoLogf("Processing initial prompt: %s", truncate(prompt, 100))
+
+			promptCtx, promptCancel := context.WithTimeout(ctx, 10*time.Minute)
+			response, err := agentLoop.ProcessPrompt(promptCtx, prompt, config.PeerID)
+			promptCancel()
+
+			if err != nil {
+				errMsg := fmt.Sprintf("Initial prompt failed: %v", err)
+				log.ErrorLogf("Initial prompt failed: %v", err)
+				vkClient.SendMessage(config.PeerID, "❌ "+errMsg)
+			} else if response != "" {
+				log.InfoLogf("Initial prompt response: %s", truncate(response, 200))
+				vkClient.SendMessage(config.PeerID, "✅ Result:\n"+response)
+			} else {
+				vkClient.SendMessage(config.PeerID, "⚠️ Initial prompt returned empty response")
+			}
 		}
 	}
 
@@ -461,6 +484,31 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "..."
+}
+
+// agentNames возвращает список известных имён агентов для @mention
+func agentNames() []string {
+	return []string{"worker", "qa", "explore", "general", "agent", "coordinator"}
+}
+
+// parseAgentMention проверяет, начинается ли текст с @agent_name,
+// и возвращает имя агента и очищенный текст задачи.
+func parseAgentMention(text string) (agentName string, task string) {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "@") {
+		return "", text
+	}
+	spaceIdx := strings.Index(text, " ")
+	if spaceIdx < 0 {
+		return text[1:], ""
+	}
+	maybeName := text[1:spaceIdx]
+	for _, name := range agentNames() {
+		if strings.EqualFold(maybeName, name) {
+			return name, strings.TrimSpace(text[spaceIdx+1:])
+		}
+	}
+	return "", text
 }
 
 func contains(slice []string, s string) bool {
