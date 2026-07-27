@@ -170,7 +170,7 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 		if h.log != nil {
 			h.log.ErrorLogf("AI Agent error: %v", err)
 		}
-		return "Произошла ошибка при обработке запроса. Попробуйте позже."
+		return fmt.Sprintf("❌ Ошибка: %v", err)
 	}
 
 	return response
@@ -226,7 +226,7 @@ func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, tim
 		if h.log != nil {
 			h.log.ErrorLogf("AI Agent error: %v", err)
 		}
-		return "Произошла ошибка при обработке запроса. Попробуйте позже."
+		return fmt.Sprintf("❌ Ошибка: %v", err)
 	}
 
 	return response
