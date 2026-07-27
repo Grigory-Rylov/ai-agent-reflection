@@ -16,25 +16,27 @@ VK Bot API → Agent Gateway → llama-server (local LLM)
 
 | Binary | Description |
 |--------|-------------|
-| `vk-gateway` | Main AI agent with tools and LLM integration |
+| `agent` | Main AI agent with tools and LLM integration |
 | `vk-gateway-restarter` | Watchdog for remote updates via VK commands |
 
 ## Quick Start
 
 ```bash
 # Build both binaries
-go build -o vk-gateway ./cmd/vk-gateway
+go build -o agent .
 go build -o vk-gateway-restarter ./cmd/vk-gateway-restarter
 
 # Configure config.json with VK token
 # Run agent directly:
-./vk-gateway
+./agent
 
 # Or run via restarter (recommended for remote updates):
 ./vk-gateway-restarter
 ```
 
-## Configuration
+These commands are handled by `vk-gateway-restarter` via VK:
+
+```
 
 Config is loaded from `~/.config/ai-agent/config.json` (priority) or `./config.json` (fallback).
 
@@ -94,8 +96,8 @@ func TestScenario_MyCase(t *testing.T) { runScenario(t, "my_case") }
 ## Project Structure
 
 ```
-cmd/vk-gateway/              # Main AI agent entry point
-cmd/vk-gateway-restarter/    # Watchdog/restarter for remote updates
+.                         # Main AI agent (main.go)
+cmd/vk-gateway-restarter/  # Watchdog/restarter for remote updates
 pkg/agent/                   # AI Agent: streaming, function calling
 pkg/agentloop/               # Conversation orchestration
 pkg/tools/                   # 11 tool implementations
