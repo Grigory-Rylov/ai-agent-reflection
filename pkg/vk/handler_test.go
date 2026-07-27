@@ -424,84 +424,8 @@ func TestFollowUpAfterAgentSeesCoordinatorResult(t *testing.T) {
 }
 
 // ============================================================
-// Tests for parseAgentMention and parseAgentHashMention
+// Tests for ParseAgentHashMention
 // ============================================================
-
-func TestParseAgentMention(t *testing.T) {
-	tests := []struct {
-		name       string
-		input      string
-		wantName   string
-		wantTask   string
-	}{
-		{
-			name:     "empty string",
-			input:    "",
-			wantName: "",
-			wantTask: "",
-		},
-		{
-			name:     "no mention prefix",
-			input:    "just some text",
-			wantName: "",
-			wantTask: "just some text",
-		},
-		{
-			name:     "@worker with task",
-			input:    "@worker создай функцию",
-			wantName: "worker",
-			wantTask: "создай функцию",
-		},
-		{
-			name:     "@coordinator only name no space",
-			input:    "@coordinator",
-			wantName: "coordinator",
-			wantTask: "",
-		},
-		{
-			name:     "@qa with long task",
-			input:    "@qa протестируй модуль авторизации",
-			wantName: "qa",
-			wantTask: "протестируй модуль авторизации",
-		},
-		{
-			name:     "@explore case insensitive",
-			input:    "@EXPLORE найди баги",
-			wantName: "explore",
-			wantTask: "найди баги",
-		},
-		{
-			name:     "@general with extra spaces",
-			input:    "@general   привет",
-			wantName: "general",
-			wantTask: "привет",
-		},
-		{
-			name:     "@agent with empty task after space",
-			input:    "@agent ",
-			wantName: "agent",
-			wantTask: "",
-		},
-		{
-			name:     "@unknown agent falls through",
-			input:    "@unknown сделай что-то",
-			wantName: "",
-			wantTask: "@unknown сделай что-то",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotName, gotTask := parseAgentMention(tt.input)
-			if gotName != tt.wantName {
-				t.Errorf("parseAgentMention() name = %q, want %q", gotName, tt.wantName)
-			}
-			if gotTask != tt.wantTask {
-				t.Errorf("parseAgentMention() task = %q, want %q", gotTask, tt.wantTask)
-			}
-		})
-	}
-}
 
 func TestParseAgentHashMention(t *testing.T) {
 	tests := []struct {
@@ -552,22 +476,16 @@ func TestParseAgentHashMention(t *testing.T) {
 			wantName: "general",
 			wantTask: "привет",
 		},
-		{
-			name:     "@ prefix should not match hash parser",
-			input:    "@worker задача",
-			wantName: "",
-			wantTask: "@worker задача",
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotName, gotTask := parseAgentHashMention(tt.input)
+			gotName, gotTask := ParseAgentHashMention(tt.input)
 			if gotName != tt.wantName {
-				t.Errorf("parseAgentHashMention() name = %q, want %q", gotName, tt.wantName)
+				t.Errorf("ParseAgentHashMention() name = %q, want %q", gotName, tt.wantName)
 			}
 			if gotTask != tt.wantTask {
-				t.Errorf("parseAgentHashMention() task = %q, want %q", gotTask, tt.wantTask)
+				t.Errorf("ParseAgentHashMention() task = %q, want %q", gotTask, tt.wantTask)
 			}
 		})
 	}
