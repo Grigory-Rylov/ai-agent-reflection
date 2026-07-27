@@ -3,6 +3,8 @@ package agentloop
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -57,21 +59,83 @@ func (o *Orchestrator) ExecuteTask(ctx context.Context, task string, peerID int6
 	startTime := time.Now()
 	defer o.setActiveAgent("")
 
-	o.setActiveAgent("coordinator")
-	coordinator := agent.NewAgent(o.makeAgentConfig())
-	coordinator.SetThinkingCallback(o.makeThinkingCallback("coordinator"))
-	// Coordinator has ONLY the task tool — no direct file/shell tools.
-	// This forces delegation to subagents (worker, qa, explore, general).
-	o.registerSubAgentTool(coordinator, peerID)
-
-	result, err := coordinator.ProcessMessage(ctx, task, peerID)
+	// Step 1: Run worker
+	o.debugLog("Starting worker...")
+	o.setActiveAgent("worker")
+	workerResult, err := o.runWorker(ctx, task, peerID)
 	if err != nil {
-		return "", fmt.Errorf("coordinator failed: %w", err)
+		return "", fmt.Errorf("worker failed: %w", err)
 	}
+	o.debugLog("Worker completed: %d chars", len(workerResult))
+
+	// Step 2: Run QA on worker's result
+	o.debugLog("Starting QA review...")
+	o.setActiveAgent("qa")
+	qaPrompt := fmt.Sprintf("Review the following implementation result:\n\n%s\n\nBuild and test the code. If issues found, fix them and approve when done.", workerResult)
+	qaResult, err := o.runQA(ctx, qaPrompt, peerID)
+	if err != nil {
+		o.debugLog("QA failed, returning worker result: %v", err)
+		return workerResult, nil
+	}
+	o.debugLog("QA completed: %d chars", len(qaResult))
 
 	elapsed := time.Since(startTime)
 	o.debugLog("Agent mode completed. Duration: %v", elapsed)
-	return result, nil
+	return qaResult, nil
+}
+
+func (o *Orchestrator) runWorker(ctx context.Context, task string, peerID int64) (string, error) {
+	prompt, err := o.loadSystemPrompt("worker")
+	if err != nil {
+		return "", err
+	}
+	a := o.makeSubAgent("worker", prompt, peerID)
+	o.addMainTools(a)
+	return a.ProcessMessage(ctx, task, peerID)
+}
+
+func (o *Orchestrator) runQA(ctx context.Context, task string, peerID int64) (string, error) {
+	prompt, err := o.loadSystemPrompt("qa")
+	if err != nil {
+		return "", err
+	}
+	a := o.makeSubAgent("qa", prompt, peerID)
+	o.addMainTools(a)
+	o.registerSubAgentTool(a, peerID)
+	return a.ProcessMessage(ctx, task, peerID)
+}
+
+func (o *Orchestrator) makeSubAgent(name, systemPrompt string, peerID int64) agent.Agent {
+	cfg := o.makeAgentConfig()
+	cfg.SystemPromptFile = ""
+	cfg.SessionConfig = session.Config{
+		AutoSave:    false,
+		SessionFile: "",
+		MaxHistory:  100,
+	}
+	cfg.EnableLoopAlert = false
+	cfg.EnableContextCompression = false
+	cfg.MaxToolCalls = 10
+	cfg.AgentName = name
+
+	a := agent.NewAgent(cfg)
+	a.SetThinkingCallback(o.makeThinkingCallback(name))
+	a.GetSession(peerID).UpdateSystemPrompt(systemPrompt)
+	return a
+}
+
+func (o *Orchestrator) loadSystemPrompt(name string) (string, error) {
+	if o.config.AgentManager != nil {
+		if info, err := o.config.AgentManager.GetAgent(name); err == nil && info.Prompt != "" {
+			return info.Prompt, nil
+		}
+	}
+	path := filepath.Join(o.systemPromptDir(), name+".txt")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to load prompt for %q: %v", name, err)
+	}
+	return string(data), nil
 }
 
 func (o *Orchestrator) systemPromptDir() string {
