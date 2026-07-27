@@ -81,10 +81,6 @@ func main() {
 			println("Error resolving working directory:", err.Error())
 			os.Exit(1)
 		}
-		if err := os.Chdir(absDir); err != nil {
-			println("Error changing working directory:", err.Error())
-			os.Exit(1)
-		}
 		tools.SetWorkingDir(absDir)
 	}
 

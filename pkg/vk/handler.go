@@ -590,6 +590,7 @@ func (h *BotHandler) runLongPoll(ctx context.Context, server, key string, ts int
 
 				// Обрабатываем сообщение в отдельной goroutine
 				go func(messageText string, peerID int64, targetPeer int64) {
+					tools.SetQuestionPeerID(peerID)
 					response := h.ProcessMessage(messageText, peerID)
 					// Не отправляем пустые сообщения
 					if response == "" {
