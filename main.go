@@ -275,8 +275,8 @@ func main() {
 	}()
 
 	if config.PeerID > 0 {
-		startMsg := fmt.Sprintf("AI Agent started.\nDir: %s\nTools: %d\nDB: %s",
-			tools.WorkingDir, len(toolRegistry.GetAll()), dbPath)
+		startMsg := fmt.Sprintf("AI Agent started.\nDir: %s\nTools: %d",
+			tools.WorkingDir, len(toolRegistry.GetAll()))
 		keyboard := vk.CreateCommandKeyboard()
 		if _, err := vkClient.SendMessageWithKeyboard(config.PeerID, startMsg, keyboard); err != nil {
 			log.WarnLogf("Failed to send startup message: %v", err)
