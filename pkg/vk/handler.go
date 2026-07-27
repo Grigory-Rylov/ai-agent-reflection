@@ -112,6 +112,26 @@ func parseAgentMention(text string) (agentName string, task string) {
 	return "", text
 }
 
+// parseAgentHashMention проверяет, начинается ли текст с #agent_name,
+// и возвращает имя агента и очищенный текст задачи.
+func parseAgentHashMention(text string) (agentName string, task string) {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "#") {
+		return "", text
+	}
+	spaceIdx := strings.Index(text, " ")
+	if spaceIdx < 0 {
+		return text[1:], ""
+	}
+	maybeName := text[1:spaceIdx]
+	for _, name := range agentNames() {
+		if strings.EqualFold(maybeName, name) {
+			return name, strings.TrimSpace(text[spaceIdx+1:])
+		}
+	}
+	return "", text
+}
+
 // ProcessMessage обрабатывает входящее сообщение от пользователя
 func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	h.ensureSession(peerID)
@@ -119,10 +139,19 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	// Извлекаем команду из сообщения (удаляем VK mention если есть)
 	command := extractCommand(message)
 
-	// Проверяем @mention агента (worker, qa, explore, general, agent)
-	if agentName, task := parseAgentMention(command); agentName != "" {
+	// Проверяем #agent_name или @mention агента (worker, qa, explore, general, agent)
+	var agentName string
+	var task string
+	if agentName, task = parseAgentHashMention(command); agentName == "" {
+		agentName, task = parseAgentMention(command)
+	}
+	if agentName != "" {
+		logPrefix := "@"
+		if strings.HasPrefix(strings.TrimSpace(command), "#") {
+			logPrefix = "#"
+		}
 		if h.log != nil {
-			h.log.InfoLogf("Agent @%s invoked by peer %d with task: %s", agentName, peerID, truncateStr(task, 100))
+			h.log.InfoLogf("Agent %s%s invoked by peer %d with task: %s", logPrefix, agentName, peerID, truncateStr(task, 100))
 		}
 
 		// Если нет задачи — запрашиваем
@@ -264,7 +293,11 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 			"/help - Показать эту справку\n" +
 			"/status - Показать статус агента (сообщения, символы, токены)\n" +
 			"/test-llama - Тест соединения с llama-server\n" +
-			"/agent [задача] - Запустить AI Agent для исследования проекта"
+			"/agent [задача] - Запустить AI Agent для исследования проекта\n\n" +
+			"Перенаправление задачи агенту:\n" +
+			"#coordinator создай HTTP сервер — направит задачу координатору\n" +
+			"#worker, #qa, #explore, #general, #agent — доступные роли\n" +
+			"(можно использовать @ вместо #)"
 
 	case "/test-llama":
 		return h.handleTestLlama()

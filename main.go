@@ -303,9 +303,18 @@ func main() {
 	if *initialPrompt != "" && config.PeerID > 0 {
 		prompt := *initialPrompt
 
-		// Проверяем @mention агента — если есть, пускаем через оркестратор
-		if agentName, task := parseAgentMention(prompt); agentName != "" && orchestrator != nil && task != "" {
-			log.InfoLogf("Processing initial prompt via orchestrator (@%s): %s", agentName, truncate(task, 100))
+	// Проверяем #agent_name или @mention агента — если есть, пускаем через оркестратор
+	var agentName string
+	var task string
+	if agentName, task = parseAgentHashMention(prompt); agentName == "" {
+		agentName, task = parseAgentMention(prompt)
+	}
+	logPrefix := "#"
+	if strings.HasPrefix(strings.TrimSpace(prompt), "@") {
+		logPrefix = "@"
+	}
+	if agentName != "" && orchestrator != nil && task != "" {
+			log.InfoLogf("Processing initial prompt via orchestrator (%s%s): %s", logPrefix, agentName, truncate(task, 100))
 
 			promptCtx, promptCancel := context.WithTimeout(ctx, 15*time.Minute)
 			response, err := orchestrator.ExecuteTask(promptCtx, task, config.PeerID)
@@ -496,6 +505,26 @@ func agentNames() []string {
 func parseAgentMention(text string) (agentName string, task string) {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "@") {
+		return "", text
+	}
+	spaceIdx := strings.Index(text, " ")
+	if spaceIdx < 0 {
+		return text[1:], ""
+	}
+	maybeName := text[1:spaceIdx]
+	for _, name := range agentNames() {
+		if strings.EqualFold(maybeName, name) {
+			return name, strings.TrimSpace(text[spaceIdx+1:])
+		}
+	}
+	return "", text
+}
+
+// parseAgentHashMention проверяет, начинается ли текст с #agent_name,
+// и возвращает имя агента и очищенный текст задачи.
+func parseAgentHashMention(text string) (agentName string, task string) {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "#") {
 		return "", text
 	}
 	spaceIdx := strings.Index(text, " ")
