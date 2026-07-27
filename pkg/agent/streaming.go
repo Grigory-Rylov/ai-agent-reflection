@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/opencode/llama-client/pkg/logger"
+	"github.com/opencode/llama-client/pkg/tokenizers"
 )
 
 type Message struct {
@@ -45,7 +46,19 @@ type StreamChunkEvent struct {
 func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig, messages []Message) (<-chan StreamChunkEvent, error) {
 	reqBody := a.buildRequestJSON(config, messages)
 
-	logger.DebugToFile("[LLM REQUEST] Sending request to %s, model=%s, messages=%d", a.config.LlamaServerURL, config.Model, len(messages))
+	charCount := len(reqBody)
+	tokenCount := 0
+	if a.tokenizer != nil {
+		tms := make([]tokenizers.Message, 0, len(messages))
+		for _, m := range messages {
+			tms = append(tms, tokenizers.Message{Role: m.Role, Content: m.Content})
+		}
+		if cnt, err := a.tokenizer.CountMessagesTokens(tms); err == nil {
+			tokenCount = cnt
+		}
+	}
+
+	logger.DebugToFile("[LLM REQUEST] Sending request to %s, model=%s, messages=%d, chars=%d, tokens=%d", a.config.LlamaServerURL, config.Model, len(messages), charCount, tokenCount)
 
 	req, err := a.createStreamingRequest(ctx, reqBody)
 	if err != nil {
