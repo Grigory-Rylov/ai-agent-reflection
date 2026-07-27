@@ -1,0 +1,2966 @@
+diff --git a/README.md b/README.md
+index ed9cab4..5c2a16b 100644
+--- a/README.md
++++ b/README.md
+@@ -16,22 +16,17 @@ VK Bot API → Agent Gateway → llama-server (local LLM)
+ 
+ | Binary | Description |
+ |--------|-------------|
+-| `vk-gateway` | Main AI agent with tools and LLM integration |
+-| `vk-gateway-restarter` | Watchdog for remote updates via VK commands |
++| `agent` | Main AI agent with tools and LLM integration |
+ 
+ ## Quick Start
+ 
+ ```bash
+-# Build both binaries
+-go build -o vk-gateway ./cmd/vk-gateway
+-go build -o vk-gateway-restarter ./cmd/vk-gateway-restarter
++# Build
++go build -o agent .
+ 
+ # Configure config.json with VK token
+-# Run agent directly:
+-./vk-gateway
+-
+-# Or run via restarter (recommended for remote updates):
+-./vk-gateway-restarter
++# Run:
++./agent
+ ```
+ 
+ ## Configuration
+@@ -94,8 +89,6 @@ func TestScenario_MyCase(t *testing.T) { runScenario(t, "my_case") }
+ ## Project Structure
+ 
+ ```
+-cmd/vk-gateway/              # Main AI agent entry point
+-cmd/vk-gateway-restarter/    # Watchdog/restarter for remote updates
+ pkg/agent/                   # AI Agent: streaming, function calling
+ pkg/agentloop/               # Conversation orchestration
+ pkg/tools/                   # 11 tool implementations
+@@ -104,15 +97,3 @@ session/                     # Session memory with persistence
+ system_prompt.txt            # System prompt for the AI model
+ config.json                  # Configuration
+ ```
+-
+-## Restarter Commands
+-
+-These commands are handled by `vk-gateway-restarter` via VK:
+-
+-| Command | Description |
+-|---------|-------------|
+-| `/update` | Git pull, rebuild, restart agent |
+-| `/b <branch>` | Force checkout branch, pull, rebuild, restart |
+-| `/restart` | Restart agent without rebuild |
+-| `/status` | Show agent status and current branch |
+-| `/help` | Show command list |
+diff --git a/main.go b/main.go
+index 07f35b0..a078f96 100644
+--- a/main.go
++++ b/main.go
+@@ -81,10 +81,6 @@ func main() {
+ 			println("Error resolving working directory:", err.Error())
+ 			os.Exit(1)
+ 		}
+-		if err := os.Chdir(absDir); err != nil {
+-			println("Error changing working directory:", err.Error())
+-			os.Exit(1)
+-		}
+ 		tools.SetWorkingDir(absDir)
+ 	}
+ 
+@@ -306,8 +302,8 @@ func main() {
+ 	// Проверяем #agent_name или @mention агента — если есть, пускаем через оркестратор
+ 	var agentName string
+ 	var task string
+-	if agentName, task = parseAgentHashMention(prompt); agentName == "" {
+-		agentName, task = parseAgentMention(prompt)
++	if agentName, task = vk.ParseAgentHashMention(prompt); agentName == "" {
++		agentName, task = vk.ParseAgentMention(prompt)
+ 	}
+ 	logPrefix := "#"
+ 	if strings.HasPrefix(strings.TrimSpace(prompt), "@") {
+@@ -495,56 +491,3 @@ func truncate(s string, max int) string {
+ 	return s[:max] + "..."
+ }
+ 
+-// agentNames возвращает список известных имён агентов для @mention
+-func agentNames() []string {
+-	return []string{"worker", "qa", "explore", "general", "agent", "coordinator"}
+-}
+-
+-// parseAgentMention проверяет, начинается ли текст с @agent_name,
+-// и возвращает имя агента и очищенный текст задачи.
+-func parseAgentMention(text string) (agentName string, task string) {
+-	text = strings.TrimSpace(text)
+-	if !strings.HasPrefix(text, "@") {
+-		return "", text
+-	}
+-	spaceIdx := strings.Index(text, " ")
+-	if spaceIdx < 0 {
+-		return text[1:], ""
+-	}
+-	maybeName := text[1:spaceIdx]
+-	for _, name := range agentNames() {
+-		if strings.EqualFold(maybeName, name) {
+-			return name, strings.TrimSpace(text[spaceIdx+1:])
+-		}
+-	}
+-	return "", text
+-}
+-
+-// parseAgentHashMention проверяет, начинается ли текст с #agent_name,
+-// и возвращает имя агента и очищенный текст задачи.
+-func parseAgentHashMention(text string) (agentName string, task string) {
+-	text = strings.TrimSpace(text)
+-	if !strings.HasPrefix(text, "#") {
+-		return "", text
+-	}
+-	spaceIdx := strings.Index(text, " ")
+-	if spaceIdx < 0 {
+-		return text[1:], ""
+-	}
+-	maybeName := text[1:spaceIdx]
+-	for _, name := range agentNames() {
+-		if strings.EqualFold(maybeName, name) {
+-			return name, strings.TrimSpace(text[spaceIdx+1:])
+-		}
+-	}
+-	return "", text
+-}
+-
+-func contains(slice []string, s string) bool {
+-	for _, item := range slice {
+-		if item == s {
+-			return true
+-		}
+-	}
+-	return false
+-}
+diff --git a/pkg/agent/plan.go b/pkg/agent/plan.go
+deleted file mode 100644
+index 2555097..0000000
+--- a/pkg/agent/plan.go
++++ /dev/null
+@@ -1,115 +0,0 @@
+-package agent
+-
+-import (
+-	"fmt"
+-)
+-
+-// Плановый режим - позволяет агенту создавать планы перед реализацией
+-
+-// PlanModeState состояние планового режима
+-type PlanModeState struct {
+-	IsActive  bool   `json:"is_active"`
+-	PlanPath  string `json:"plan_path,omitempty"`
+-	Steps     []PlanStep `json:"steps"`
+-	Completed int    `json:"completed"`
+-}
+-
+-// Шаг плана
+-type PlanStep struct {
+-	Title       string `json:"title"`
+-	Description string `json:"description"`
+-	Status      string `json:"status"` // pending, in_progress, completed, cancelled
+-	Dependencies []string `json:"dependencies,omitempty"`
+-}
+-
+-// Плановый агент
+-type PlanAgent struct {
+-	currentPlan *PlanModeState
+-}
+-
+-// Новый плановый агент
+-func NewPlanAgent() *PlanAgent {
+-	return &PlanAgent{}
+-}
+-
+-// Войти в плановый режим
+-func (p *PlanAgent) EnterPlanMode(planPath string) {
+-	p.currentPlan = &PlanModeState{
+-		IsActive: true,
+-		PlanPath: planPath,
+-		Steps:    make([]PlanStep, 0),
+-	}
+-}
+-
+-// Выйти из планового режима и перейти к реализации
+-func (p *PlanAgent) ExitPlanMode() bool {
+-	if p.currentPlan != nil && p.currentPlan.IsActive {
+-		p.currentPlan.IsActive = false
+-		return true
+-	}
+-	return false
+-}
+-
+-// Добавить шаг в план
+-func (p *PlanAgent) AddStep(step PlanStep) {
+-	if p.currentPlan != nil {
+-		p.currentPlan.Steps = append(p.currentPlan.Steps, step)
+-	}
+-}
+-
+-// Получить текущий план
+-func (p *PlanAgent) GetPlan() *PlanModeState {
+-	return p.currentPlan
+-}
+-
+-// Проверить находится ли агент в плановом режиме
+-func (p *PlanAgent) IsInPlanMode() bool {
+-	return p.currentPlan != nil && p.currentPlan.IsActive
+-}
+-
+-// Отформатировать план для отправки пользователю
+-func (p *PlanAgent) FormatPlan() string {
+-	if p.currentPlan == nil || len(p.currentPlan.Steps) == 0 {
+-		return "План пока пустой."
+-	}
+-	
+-	result := "## План реализации\n\n"
+-	for i, step := range p.currentPlan.Steps {
+-		status := "○"
+-		if step.Status == "completed" {
+-			status = "●"
+-		} else if step.Status == "in_progress" {
+-			status = "◐"
+-		}
+-		
+-		result += fmt.Sprintf("%d. **%s** %s\n", i+1, step.Title, status)
+-		if step.Description != "" {
+-			result += fmt.Sprintf("   %s\n", step.Description)
+-		}
+-	}
+-	
+-	completed := 0
+-	for _, step := range p.currentPlan.Steps {
+-		if step.Status == "completed" {
+-			completed++
+-		}
+-	}
+-	
+-	result += fmt.Sprintf("\nПрогресс: %d/%d шагов", completed, len(p.currentPlan.Steps))
+-	
+-	return result
+-}
+-
+-// Создать инструмент для выхода из планового режима (plan_exit)
+-func (p *PlanAgent) PlanExit() (string, error) {
+-	if !p.IsInPlanMode() {
+-		return "Агент не в плановом режиме", fmt.Errorf("not in plan mode")
+-	}
+-	
+-	// Проверяем что план готов
+-	if len(p.currentPlan.Steps) == 0 {
+-		return "План пустой, нужно добавить хотя бы один шаг", fmt.Errorf("empty plan")
+-	}
+-	
+-	return "Готов перейти к реализации плана. Начнем с первого шага.", nil
+-}
+diff --git a/pkg/agent/question.go b/pkg/agent/question.go
+deleted file mode 100644
+index 78ba843..0000000
+--- a/pkg/agent/question.go
++++ /dev/null
+@@ -1,93 +0,0 @@
+-package agent
+-
+-import (
+-	"encoding/json"
+-	"fmt"
+-	"strings"
+-)
+-
+-// Вопрос для опроса пользователя
+-type Question struct {
+-	Question  string   `json:"question"`
+-	Header    string   `json:"header,omitempty"`
+-	Custom    bool     `json:"custom,omitempty"`
+-	Options   []Option `json:"options,omitempty"`
+-}
+-
+-// Вариант ответа
+-type Option struct {
+-	Label       string `json:"label"`
+-	Description string `json:"description,omitempty"`
+-}
+-
+-// Ответ от пользователя
+-type UserAnswer struct {
+-	Answer   string   `json:"answer"`
+-	Selected []string `json:"selected"`
+-}
+-
+-// ProcessAnswer обрабатывает ответ пользователя
+-func ProcessAnswer(question Question, answer string) UserAnswer {
+-	var selected []string
+-	
+-	for _, opt := range question.Options {
+-		if strings.EqualFold(answer, opt.Label) {
+-			selected = append(selected, opt.Label)
+-		}
+-	}
+-	
+-	if len(selected) == 0 {
+-		selected = append(selected, answer)
+-	}
+-	
+-	return UserAnswer{
+-		Answer:   answer,
+-		Selected: selected,
+-	}
+-}
+-
+-// FormatQuestionsForDisplay форматирует вопросы для отправки в чат
+-func FormatQuestionsForDisplay(questions []Question) string {
+-	if len(questions) == 0 {
+-		return ""
+-	}
+-	
+-	var result string
+-	for i, q := range questions {
+-		if i > 0 {
+-			result += "\n\n"
+-		}
+-		result += fmt.Sprintf("**%s**\n", q.Question)
+-		if q.Header != "" {
+-			result += fmt.Sprintf("*(%s)*\n", q.Header)
+-		}
+-		if len(q.Options) > 0 {
+-			result += "Варианты:\n"
+-			for _, opt := range q.Options {
+-				result += fmt.Sprintf("- **%s**", opt.Label)
+-				if opt.Description != "" {
+-					result += fmt.Sprintf(" (%s)", opt.Description)
+-				}
+-				result += "\n"
+-			}
+-		} else {
+-			result += "Напишите свой ответ\n"
+-		}
+-	}
+-	
+-	return result
+-}
+-
+-// ParseAnswerFromJSON извлекает ответ из JSON payload
+-func ParseAnswerFromJSON(payload string) (string, error) {
+-	var data map[string]interface{}
+-	if err := json.Unmarshal([]byte(payload), &data); err != nil {
+-		return "", err
+-	}
+-	
+-	if ans, ok := data["answer"].(string); ok {
+-		return ans, nil
+-	}
+-	
+-	return "", fmt.Errorf("no answer in payload: %s", payload)
+-}
+diff --git a/pkg/agent/task.go b/pkg/agent/task.go
+deleted file mode 100644
+index 597b064..0000000
+--- a/pkg/agent/task.go
++++ /dev/null
+@@ -1,3 +0,0 @@
+-package agent
+-
+-// Задача - фоновая работа субагента
+diff --git a/pkg/agent/task_bg.go b/pkg/agent/task_bg.go
+deleted file mode 100644
+index b816c45..0000000
+--- a/pkg/agent/task_bg.go
++++ /dev/null
+@@ -1,107 +0,0 @@
+-package agent
+-
+-import (
+-	"fmt"
+-	"sync"
+-	"time"
+-)
+-
+-// BackgroundTask представляет фоновую задачу
+-type BackgroundTask struct {
+-	ID          string    `json:"id"`
+-	Description string    `json:"description"`
+-	Prompt      string    `json:"prompt"`
+-	AgentType   string    `json:"agent_type"`
+-	Status      string    `json:"status"` // running, completed, error
+-	Output      string    `json:"output"`
+-	StartedAt   time.Time `json:"started_at"`
+-	CompletedAt time.Time `json:"completed_at"`
+-}
+-
+-// TaskManager управляет фоновыми задачами
+-type TaskManager struct {
+-	tasks    map[string]*BackgroundTask
+-	mu       sync.RWMutex
+-}
+-
+-// NewTaskManager создает менеджер задач
+-func NewTaskManager() *TaskManager {
+-	return &TaskManager{
+-		tasks: make(map[string]*BackgroundTask),
+-	}
+-}
+-
+-// CreateTask создает новую фоновую задачу
+-func (tm *TaskManager) CreateTask(description, prompt, agentType string) *BackgroundTask {
+-	tm.mu.Lock()
+-	defer tm.mu.Unlock()
+-	
+-	task := &BackgroundTask{
+-		ID:          fmt.Sprintf("task_%d", time.Now().UnixMilli()),
+-		Description: description,
+-		Prompt:      prompt,
+-		AgentType:   agentType,
+-		Status:      "running",
+-		StartedAt:   time.Now(),
+-	}
+-	
+-	tm.tasks[task.ID] = task
+-	return task
+-}
+-
+-// GetTask возвращает задачу по ID
+-func (tm *TaskManager) GetTask(id string) *BackgroundTask {
+-	tm.mu.RLock()
+-	defer tm.mu.RUnlock()
+-	return tm.tasks[id]
+-}
+-
+-// CompleteTask завершает задачу
+-func (tm *TaskManager) CompleteTask(id, output string) {
+-	tm.mu.Lock()
+-	defer tm.mu.Unlock()
+-	
+-	if task, ok := tm.tasks[id]; ok {
+-		task.Status = "completed"
+-		task.Output = output
+-		task.CompletedAt = time.Now()
+-	}
+-}
+-
+-// FailTask помечает задачу как errored
+-func (tm *TaskManager) FailTask(id, output string) {
+-	tm.mu.Lock()
+-	defer tm.mu.Unlock()
+-	
+-	if task, ok := tm.tasks[id]; ok {
+-		task.Status = "error"
+-		task.Output = output
+-		task.CompletedAt = time.Now()
+-	}
+-}
+-
+-// ListTasks возвращает все задачи
+-func (tm *TaskManager) ListTasks() []*BackgroundTask {
+-	tm.mu.RLock()
+-	defer tm.mu.RUnlock()
+-	
+-	var result []*BackgroundTask
+-	for _, task := range tm.tasks {
+-		result = append(result, task)
+-	}
+-	return result
+-}
+-
+-// ListRunningTasks возвращает запущенные задачи
+-func (tm *TaskManager) ListRunningTasks() []*BackgroundTask {
+-	tm.mu.RLock()
+-	defer tm.mu.RUnlock()
+-	
+-	var result []*BackgroundTask
+-	for _, task := range tm.tasks {
+-		if task.Status == "running" {
+-			result = append(result, task)
+-		}
+-	}
+-	return result
+-}
+diff --git a/pkg/agent/todo.go b/pkg/agent/todo.go
+deleted file mode 100644
+index 6d63548..0000000
+--- a/pkg/agent/todo.go
++++ /dev/null
+@@ -1,64 +0,0 @@
+-package agent
+-
+-import (
+-	"fmt"
+-	"sync"
+-)
+-
+-// TodoItem - элемент списка задач
+-type TodoItem struct {
+-	ID       string `json:"id"`
+-	Content  string `json:"content"`
+-	Status   string `json:"status"`
+-	Priority string `json:"priority,omitempty"`
+-}
+-
+-// TodoManager управляет списком задач
+-type TodoManager struct {
+-	todos []TodoItem
+-	mu    sync.RWMutex
+-}
+-
+-// NewTodoManager создает менеджер задач
+-func NewTodoManager() *TodoManager {
+-	return &TodoManager{
+-		todos: make([]TodoItem, 0),
+-	}
+-}
+-
+-// UpdateTodos обновляет весь список задач
+-func (tm *TodoManager) UpdateTodos(todos []TodoItem) {
+-	tm.mu.Lock()
+-	defer tm.mu.Unlock()
+-	tm.todos = todos
+-}
+-
+-// GetTodos возвращает текущий список
+-func (tm *TodoManager) GetTodos() []TodoItem {
+-	tm.mu.RLock()
+-	defer tm.mu.RUnlock()
+-	return tm.todos
+-}
+-
+-// FormatTodos форматирует список для вывода
+-func (tm *TodoManager) FormatTodos() string {
+-	todos := tm.GetTodos()
+-	if len(todos) == 0 {
+-		return "Задач пока нет."
+-	}
+-	
+-	var result string
+-	for _, t := range todos {
+-		status := "○"
+-		switch t.Status {
+-		case "completed":
+-			status = "●"
+-		case "in_progress":
+-			status = "◐"
+-		case "cancelled":
+-			status = "◌"
+-		}
+-		result += fmt.Sprintf("%s %s\n", status, t.Content)
+-	}
+-	return result
+-}
+diff --git a/pkg/agent/tool_call_detector.go b/pkg/agent/tool_call_detector.go
+deleted file mode 100644
+index c474822..0000000
+--- a/pkg/agent/tool_call_detector.go
++++ /dev/null
+@@ -1,103 +0,0 @@
+-package agent
+-
+-// ============================================================
+-// ToolCallDetector — интерфейс для детекции тулов из ответа LLM
+-// ============================================================
+-
+-// DetectInput содержит все данные ответа LLM для анализа
+-type DetectInput struct {
+-	ResponseText    string
+-	ReasoningText   string
+-	FinishReason    string
+-	StreamToolCalls []ToolCall
+-}
+-
+-// DetectOutput содержит результат детекции
+-type DetectOutput struct {
+-	ToolCalls []ToolCall
+-	CleanText string
+-}
+-
+-// ToolCallDetector определяет стратегию детекции тулов из ответа LLM
+-type ToolCallDetector interface {
+-	Detect(input *DetectInput) *DetectOutput
+-	Name() string
+-}
+-
+-// ============================================================
+-// NativeDetector — детекция нативного формата tool_calls
+-// ============================================================
+-
+-type NativeDetector struct{}
+-
+-func (d *NativeDetector) Name() string { return "native" }
+-
+-func (d *NativeDetector) Detect(input *DetectInput) *DetectOutput {
+-	if input.FinishReason == "tool_calls" || len(input.StreamToolCalls) > 0 {
+-		return &DetectOutput{
+-			ToolCalls: input.StreamToolCalls,
+-			CleanText: input.ResponseText,
+-		}
+-	}
+-	return nil
+-}
+-
+-// ============================================================
+-// XMLDetector — детекция XML-формата тулов
+-// ============================================================
+-
+-type XMLDetector struct{}
+-
+-func (d *XMLDetector) Name() string { return "xml" }
+-
+-func (d *XMLDetector) Detect(input *DetectInput) *DetectOutput {
+-	parsed := ParseXMLToolCalls(input.ResponseText)
+-	if len(parsed.ToolCalls) > 0 {
+-		return &DetectOutput{
+-			ToolCalls: convertXMLToolCalls(parsed.ToolCalls),
+-			CleanText: parsed.Content,
+-		}
+-	}
+-	return nil
+-}
+-
+-// ============================================================
+-// JSONDetector — детекция JSON-формата тулов
+-// ============================================================
+-
+-type JSONDetector struct{}
+-
+-func (d *JSONDetector) Name() string { return "json" }
+-
+-func (d *JSONDetector) Detect(input *DetectInput) *DetectOutput {
+-	parsed := ParseJSONToolCalls(input.ResponseText)
+-	if len(parsed.ToolCalls) > 0 {
+-		return &DetectOutput{
+-			ToolCalls: convertXMLToolCalls(parsed.ToolCalls),
+-			CleanText: parsed.Content,
+-		}
+-	}
+-	return nil
+-}
+-
+-// ============================================================
+-// ReasoningXMLDetector — детекция XML-тулов в reasoning
+-// ============================================================
+-
+-type ReasoningXMLDetector struct{}
+-
+-func (d *ReasoningXMLDetector) Name() string { return "xml_reasoning" }
+-
+-func (d *ReasoningXMLDetector) Detect(input *DetectInput) *DetectOutput {
+-	if input.ReasoningText == "" {
+-		return nil
+-	}
+-	parsed := ParseXMLToolCalls(input.ReasoningText)
+-	if len(parsed.ToolCalls) > 0 {
+-		return &DetectOutput{
+-			ToolCalls: convertXMLToolCalls(parsed.ToolCalls),
+-			CleanText: parsed.Content,
+-		}
+-	}
+-	return nil
+-}
+diff --git a/pkg/tools/agent_result_tool.go b/pkg/tools/agent_result_tool.go
+deleted file mode 100644
+index 5bf45d6..0000000
+--- a/pkg/tools/agent_result_tool.go
++++ /dev/null
+@@ -1,170 +0,0 @@
+-package tools
+-
+-import (
+-	"context"
+-	"fmt"
+-	"os"
+-	"path/filepath"
+-	"sync"
+-
+-	"github.com/opencode/llama-client/pkg/workflow"
+-)
+-
+-// ============================================================
+-// Agent state management — injected dependencies for agent_result tool
+-// ============================================================
+-
+-// agentStateManager предоставляет доступ к состоянию agent mode
+-type agentStateManager interface {
+-	GetWorkflowID(peerID int64) string
+-	ExitMode(peerID int64)
+-}
+-
+-var (
+-	agentMu    sync.RWMutex
+-	agentWfMgr *workflow.WorkflowManager
+-	agentStMgr agentStateManager
+-)
+-
+-// SetAgentDependencies устанавливает зависимости для agent_result инструмента
+-func SetAgentDependencies(wfMgr *workflow.WorkflowManager, stMgr agentStateManager) {
+-	agentMu.Lock()
+-	defer agentMu.Unlock()
+-	agentWfMgr = wfMgr
+-	agentStMgr = stMgr
+-}
+-
+-func getWorkflowMgr() *workflow.WorkflowManager {
+-	agentMu.RLock()
+-	defer agentMu.RUnlock()
+-	return agentWfMgr
+-}
+-
+-func getAgentStMgr() agentStateManager {
+-	agentMu.RLock()
+-	defer agentMu.RUnlock()
+-	return agentStMgr
+-}
+-
+-// ============================================================
+-// agent_result — завершает workflow и возвращает результат пользователю
+-// ============================================================
+-
+-// AgentResultTool вызывает координатор когда задача решена
+-type AgentResultTool struct{}
+-
+-// Name возвращает имя инструмента
+-func (t *AgentResultTool) Name() string {
+-	return "agent_result"
+-}
+-
+-// Description возвращает описание инструмента
+-func (t *AgentResultTool) Description() string {
+-	return "Вызываете этот инструмент когда задача полностью решена. " +
+-		"Это завершает workflow и отправляет пользователю итоговый результат. " +
+-		"Используйте только если уверены что вся задача выполнена."
+-}
+-
+-// Schema возвращает схему инструмента
+-func (t *AgentResultTool) Schema() map[string]interface{} {
+-	return map[string]interface{}{
+-		"type": "object",
+-		"properties": map[string]interface{}{
+-			"peer_id": CreateIntegerParameter("peer_id", "VK peer ID of the user", true),
+-			"summary": CreateStringParameter("summary", "Final result of the workflow (code, text, report)", true),
+-		},
+-		"required": []string{"peer_id", "summary"},
+-	}
+-}
+-
+-// Execute выполняет инструмент
+-func (t *AgentResultTool) Execute(ctx context.Context, inputs map[string]string) (ToolResult, error) {
+-	peerIDStr, ok := inputs["peer_id"]
+-	if !ok || peerIDStr == "" {
+-		return ToolResult{Success: false, Error: "peer_id required"}, fmt.Errorf("peer_id required")
+-	}
+-	peerID := int64(0)
+-	fmt.Sscanf(peerIDStr, "%d", &peerID)
+-
+-	summary, ok := inputs["summary"]
+-	if !ok || summary == "" {
+-		return ToolResult{Success: false, Error: "summary required"}, fmt.Errorf("summary required")
+-	}
+-
+-	// Находим workflow manager для этого пользователя
+-	wfMgr := getWorkflowMgr()
+-	if wfMgr == nil {
+-		return ToolResult{Success: false}, fmt.Errorf("workflow manager not initialized")
+-	}
+-
+-	// Получаем active workflow пользователя
+-	agentStMgr := getAgentStMgr()
+-	if agentStMgr == nil {
+-		return ToolResult{Success: false}, fmt.Errorf("agent state not found")
+-	}
+-
+-	wfID := agentStMgr.GetWorkflowID(peerID)
+-	if wfID == "" {
+-		return ToolResult{Success: false}, fmt.Errorf("no active workflow for peer %d", peerID)
+-	}
+-
+-	wf := wfMgr.GetWorkflow(wfID)
+-	if wf == nil {
+-		return ToolResult{Success: false}, fmt.Errorf("workflow %s not found", wfID)
+-	}
+-
+-	// Архивируем артефакты в рабочую директорию пользователя
+-	artifactsPath := filepath.Join(WorkingDir, ".workflow_artifacts", wfID)
+-	os.MkdirAll(artifactsPath, 0755)
+-
+-	// Копируем артефакты из workflow dir
+-	artifactsPath = filepath.Join(artifactsPath, "artifacts")
+-	os.MkdirAll(artifactsPath, 0755)
+-
+-	// Копируем файлы артефактов
+-	files, err := wfMgr.ListWorkflowArtifacts(wfID, "")
+-	if err == nil && len(files) > 0 {
+-		srcDir := wfMgr.GetWorkflowDir(wfID)
+-		for _, f := range files {
+-			src := filepath.Join(srcDir, "artifacts", f)
+-			dest := filepath.Join(artifactsPath, f)
+-			data, err := os.ReadFile(src)
+-			if err == nil {
+-				os.MkdirAll(filepath.Dir(dest), 0755)
+-				os.WriteFile(dest, data, 0644)
+-			}
+-		}
+-	}
+-
+-	// Формируем финальный отчёт
+-	report := fmt.Sprintf("✅ Workflow %s завершён.\n\n", wfID)
+-	report += fmt.Sprintf("**Результат:**\n%s\n\n", summary)
+-
+-	// Список одобренных этапов
+-	approved := wfMgr.GetAllApprovedTasks(wfID)
+-	report += fmt.Sprintf("**Этапы (%d):**\n", len(approved))
+-	for _, task := range approved {
+-		report += fmt.Sprintf("✅ [%s] %s\n", task.ID, task.Title)
+-	}
+-	report += fmt.Sprintf("\n**Всего задач:** %d\n", len(wf.Tasks))
+-
+-	// Сохраняем результат
+-	wfMgr.CompleteWorkflow(wfID, summary)
+-
+-	// Уведомляем пользователя (записываем в файл — получит agent loop)
+-	notifDir := filepath.Join(WorkingDir, ".agent_notifications")
+-	os.MkdirAll(notifDir, 0755)
+-	os.WriteFile(
+-		filepath.Join(notifDir, fmt.Sprintf("%d.result", peerID)),
+-		[]byte(report),
+-		0644,
+-	)
+-
+-	// Отключаем агентный режим
+-	agentStMgr.ExitMode(peerID)
+-
+-	return ToolResult{
+-		Success: true,
+-		Data:    report,
+-	}, nil
+-}
+diff --git a/pkg/vk/handler.go b/pkg/vk/handler.go
+index 7bd225d..ca07a77 100644
+--- a/pkg/vk/handler.go
++++ b/pkg/vk/handler.go
+@@ -87,13 +87,13 @@ func NewBotHandlerWithPeerID(vkClient *BotClient, aiAgent agentloop.AgentLoop, l
+ // ============================================================
+ 
+ // agentNames возвращает список известных имён агентов для @mention
+-func agentNames() []string {
++func AgentNames() []string {
+ 	return []string{"worker", "qa", "explore", "general", "agent", "coordinator"}
+ }
+ 
+ // parseAgentMention проверяет, начинается ли текст с @agent_name,
+ // и возвращает имя агента и очищенный текст задачи.
+-func parseAgentMention(text string) (agentName string, task string) {
++func ParseAgentMention(text string) (agentName string, task string) {
+ 	text = strings.TrimSpace(text)
+ 	if !strings.HasPrefix(text, "@") {
+ 		return "", text
+@@ -104,7 +104,7 @@ func parseAgentMention(text string) (agentName string, task string) {
+ 		return text[1:], ""
+ 	}
+ 	maybeName := text[1:spaceIdx]
+-	for _, name := range agentNames() {
++	for _, name := range AgentNames() {
+ 		if strings.EqualFold(maybeName, name) {
+ 			return name, strings.TrimSpace(text[spaceIdx+1:])
+ 		}
+@@ -114,7 +114,7 @@ func parseAgentMention(text string) (agentName string, task string) {
+ 
+ // parseAgentHashMention проверяет, начинается ли текст с #agent_name,
+ // и возвращает имя агента и очищенный текст задачи.
+-func parseAgentHashMention(text string) (agentName string, task string) {
++func ParseAgentHashMention(text string) (agentName string, task string) {
+ 	text = strings.TrimSpace(text)
+ 	if !strings.HasPrefix(text, "#") {
+ 		return "", text
+@@ -124,7 +124,7 @@ func parseAgentHashMention(text string) (agentName string, task string) {
+ 		return text[1:], ""
+ 	}
+ 	maybeName := text[1:spaceIdx]
+-	for _, name := range agentNames() {
++	for _, name := range AgentNames() {
+ 		if strings.EqualFold(maybeName, name) {
+ 			return name, strings.TrimSpace(text[spaceIdx+1:])
+ 		}
+@@ -142,8 +142,8 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
+ 	// Проверяем #agent_name или @mention агента (worker, qa, explore, general, agent)
+ 	var agentName string
+ 	var task string
+-	if agentName, task = parseAgentHashMention(command); agentName == "" {
+-		agentName, task = parseAgentMention(command)
++	if agentName, task = ParseAgentHashMention(command); agentName == "" {
++		agentName, task = ParseAgentMention(command)
+ 	}
+ 	if agentName != "" {
+ 		logPrefix := "@"
+diff --git a/pkg/vk/handler_test.go b/pkg/vk/handler_test.go
+index 497d191..5a64160 100644
+--- a/pkg/vk/handler_test.go
++++ b/pkg/vk/handler_test.go
+@@ -492,12 +492,12 @@ func TestParseAgentMention(t *testing.T) {
+ 
+ 	for _, tt := range tests {
+ 		t.Run(tt.name, func(t *testing.T) {
+-			gotName, gotTask := parseAgentMention(tt.input)
++			gotName, gotTask := ParseAgentMention(tt.input)
+ 			if gotName != tt.wantName {
+-				t.Errorf("parseAgentMention() name = %q, want %q", gotName, tt.wantName)
++				t.Errorf("ParseAgentMention() name = %q, want %q", gotName, tt.wantName)
+ 			}
+ 			if gotTask != tt.wantTask {
+-				t.Errorf("parseAgentMention() task = %q, want %q", gotTask, tt.wantTask)
++				t.Errorf("ParseAgentMention() task = %q, want %q", gotTask, tt.wantTask)
+ 			}
+ 		})
+ 	}
+@@ -562,12 +562,12 @@ func TestParseAgentHashMention(t *testing.T) {
+ 
+ 	for _, tt := range tests {
+ 		t.Run(tt.name, func(t *testing.T) {
+-			gotName, gotTask := parseAgentHashMention(tt.input)
++			gotName, gotTask := ParseAgentHashMention(tt.input)
+ 			if gotName != tt.wantName {
+-				t.Errorf("parseAgentHashMention() name = %q, want %q", gotName, tt.wantName)
++				t.Errorf("ParseAgentHashMention() name = %q, want %q", gotName, tt.wantName)
+ 			}
+ 			if gotTask != tt.wantTask {
+-				t.Errorf("parseAgentHashMention() task = %q, want %q", gotTask, tt.wantTask)
++				t.Errorf("ParseAgentHashMention() task = %q, want %q", gotTask, tt.wantTask)
+ 			}
+ 		})
+ 	}
+diff --git a/pkg/vk/mode.go b/pkg/vk/mode.go
+deleted file mode 100644
+index 6e3b57b..0000000
+--- a/pkg/vk/mode.go
++++ /dev/null
+@@ -1,140 +0,0 @@
+-package vk
+-
+-import (
+-	"sync"
+-
+-	"github.com/opencode/llama-client/pkg/workflow"
+-)
+-
+-// ============================================================
+-// Mode — стратегия режимов работы
+-// ============================================================
+-
+-// Mode определяет текущий режим работы
+-type Mode int
+-
+-const (
+-	ModeNormal Mode = iota // обычный режим — один агент отвечает
+-	ModeAgent              // агентный режим — координатор + разработчик + ревьюер
+-)
+-
+-func (m Mode) String() string {
+-	switch m {
+-	case ModeNormal:
+-		return "normal"
+-	case ModeAgent:
+-		return "agent"
+-	default:
+-		return "unknown"
+-	}
+-}
+-
+-// ModeState хранит состояние режима для каждого пользователя
+-type ModeState struct {
+-	mu         sync.RWMutex
+-	peerMode   map[int64]Mode       // peerID -> режим
+-	peerWf     map[int64]string     // peerID -> active workflow ID
+-	workflowM  *workflow.WorkflowManager
+-}
+-
+-// NewModeState создаёт стратегию режимов
+-func NewModeState(wfMgr *workflow.WorkflowManager) *ModeState {
+-	return &ModeState{
+-		peerMode:  make(map[int64]Mode),
+-		peerWf:    make(map[int64]string),
+-		workflowM: wfMgr,
+-	}
+-}
+-
+-// GetMode возвращает текущий режим пользователя
+-func (s *ModeState) GetMode(peerID int64) Mode {
+-	s.mu.RLock()
+-	defer s.mu.RUnlock()
+-	return s.peerMode[peerID]
+-}
+-
+-// SetMode устанавливает режим пользователя
+-func (s *ModeState) SetMode(peerID int64, mode Mode, workflowID string) {
+-	s.mu.Lock()
+-	defer s.mu.Unlock()
+-
+-	oldMode := s.peerMode[peerID]
+-	oldWf := s.peerWf[peerID]
+-
+-	// Если уже в том же режиме — не меняем
+-	if oldMode == mode && oldWf == workflowID {
+-		return
+-	}
+-
+-	s.peerMode[peerID] = mode
+-	if workflowID != "" {
+-		s.peerWf[peerID] = workflowID
+-	} else {
+-		delete(s.peerWf, peerID)
+-	}
+-}
+-
+-// GetWorkflowID возвращает активный workflow пользователя (если есть)
+-func (s *ModeState) GetWorkflowID(peerID int64) string {
+-	s.mu.RLock()
+-	defer s.mu.RUnlock()
+-	return s.peerWf[peerID]
+-}
+-
+-// HasActiveWorkflow возвращает true если у пользователя активный workflow
+-func (s *ModeState) HasActiveWorkflow(peerID int64) bool {
+-	s.mu.RLock()
+-	defer s.mu.RUnlock()
+-	_, exists := s.peerWf[peerID]
+-	return exists
+-}
+-
+-// ExitMode завершает агентный режим для пользователя
+-func (s *ModeState) ExitMode(peerID int64) {
+-	s.mu.Lock()
+-	delete(s.peerMode, peerID)
+-	delete(s.peerWf, peerID)
+-	s.mu.Unlock()
+-}
+-
+-// ============================================================
+-// GlobalAgentState — глобальное состояние для agent_result tool
+-// ============================================================
+-
+-// GlobalAgentState хранит ссылки на workflow manager и mode state
+-type GlobalAgentState struct {
+-	mu       sync.RWMutex
+-	wfMgr    *workflow.WorkflowManager
+-	modeState *ModeState
+-}
+-
+-// SetGlobalAgentState устанавливает глобальное состояние (вызывается из main.go)
+-func SetGlobalAgentState(wfMgr *workflow.WorkflowManager, ms *ModeState) {
+-	globalAgentState = &GlobalAgentState{
+-		wfMgr:    wfMgr,
+-		modeState: ms,
+-	}
+-}
+-
+-// GetGlobalAgentState возвращает глобальное состояние
+-func GetGlobalAgentState() *GlobalAgentState {
+-	return globalAgentState
+-}
+-
+-var globalAgentState *GlobalAgentState
+-
+-// GetAgentManager возвращает workflow manager из глобального состояния
+-func GetAgentManager() *workflow.WorkflowManager {
+-	if globalAgentState == nil {
+-		return nil
+-	}
+-	return globalAgentState.wfMgr
+-}
+-
+-// GetModeState возвращает state manager из глобального состояния
+-func GetModeState() *ModeState {
+-	if globalAgentState == nil {
+-		return nil
+-	}
+-	return globalAgentState.modeState
+-}
+diff --git a/pkg/workflow/engine.go b/pkg/workflow/engine.go
+deleted file mode 100644
+index c514ac6..0000000
+--- a/pkg/workflow/engine.go
++++ /dev/null
+@@ -1,298 +0,0 @@
+-package workflow
+-
+-import (
+-	"context"
+-	"encoding/json"
+-	"fmt"
+-	"os"
+-	"path/filepath"
+-	"strings"
+-	"sync"
+-	"time"
+-)
+-
+-// ============================================================
+-// WorkflowEngine — центральный цикл мульти-агентного workflow
+-// ============================================================
+-
+-// WorkflowEngine управляет жизненным циклом мульти-агентных workflow
+-type WorkflowEngine struct {
+-	mgr          *WorkflowManager
+-	notifier     Notifier
+-	agentFactory AgentFactory
+-	mu           sync.Mutex
+-	running      map[string]bool // ID -> running
+-}
+-
+-// Notifier — интерфейс для отправки уведомлений пользователю
+-type Notifier interface {
+-	SendMessage(peerID int64, message string) (int, error)
+-}
+-
+-// Session — lightweight сессия для роли в workflow engine
+-type Session struct {
+-	SystemPrompt string
+-	Role         Role
+-	Messages     []string
+-}
+-
+-// AddUserMessage добавляет сообщение пользователя в сессию
+-func (s *Session) AddUserMessage(msg string) {
+-	s.Messages = append(s.Messages, msg)
+-}
+-
+-// AgentFactory — фабричный метод для создания агентов по роли
+-type AgentFactory interface {
+-	CreateAgent(role Role, systemPrompt string) RoleAgent
+-}
+-
+-// RoleAgent — минимальный интерфейс для агента конкретной роли
+-type RoleAgent interface {
+-	ProcessMessage(ctx context.Context, message string, peerID int64) (string, error)
+-}
+-
+-// NewWorkflowEngine создаёт центральный цикл workflow
+-func NewWorkflowEngine(mgr *WorkflowManager, notifier Notifier, factory AgentFactory) *WorkflowEngine {
+-	return &WorkflowEngine{
+-		mgr:          mgr,
+-		notifier:     notifier,
+-		agentFactory: factory,
+-		running:      make(map[string]bool),
+-	}
+-}
+-
+-// StartWorkflow запускает выполнение workflow асинхронно
+-func (e *WorkflowEngine) StartWorkflow(workflowID string) error {
+-	e.mu.Lock()
+-	if e.running[workflowID] {
+-		e.mu.Unlock()
+-		return fmt.Errorf("workflow already running: %s", workflowID)
+-	}
+-	e.running[workflowID] = true
+-	e.mu.Unlock()
+-
+-	workflow, err := e.mgr.LoadWorkflow(workflowID)
+-	if err != nil {
+-		e.mu.Lock()
+-		delete(e.running, workflowID)
+-		e.mu.Unlock()
+-		return fmt.Errorf("load workflow: %w", err)
+-	}
+-
+-	// Запускаем координатора в фоне
+-	go func() {
+-		defer func() {
+-			e.mu.Lock()
+-			delete(e.running, workflowID)
+-			e.mu.Unlock()
+-		}()
+-
+-		e.runCoordinatorLoop(workflow)
+-	}()
+-
+-	return nil
+-}
+-
+-// runCoordinatorLoop — цикл работы координатора
+-// 1. Анализирует задачу пользователя
+-// 2. Создаёт breakdown на subtasks
+-// 3. Для каждой subtask:
+-//    - Запускает разработчика
+-//    - Передает результат ревьюеру
+-//    - Если одобрено → следующий этап, иначе → доработка
+-func (e *WorkflowEngine) runCoordinatorLoop(workflow *Workflow) {
+-	peerID := workflow.UserPeerID
+-
+-	// Создаём сессию координатора с его системным промптом
+-	coordSession := e.createRoleSession(CoordinatorRole, workflow)
+-
+-	// Шаг 1: Тимлид анализирует задачу и создаёт breakdown
+-	breakdownMsg := fmt.Sprintf("Пользовательская задача: %s\n\nРазбей эту задачу на независимые этапы работы. Для каждого этапа определи: описание, какие файлы трогать, какие инструменты использовать. Верни JSON массив задач.\n\nФормат: [{\"id\": \"task_1\", \"title\": \"...\", \"description\": \"...\", \"assignee\": \"developer\"}, ...]", workflow.UserOriginal)
+-
+-	coordResult := e.callLLM(context.Background(), coordSession, breakdownMsg)
+-
+-	if strings.HasPrefix(coordResult, "ERROR:") {
+-		// Ошибка у координатора
+-		e.notifyPeer(peerID, fmt.Sprintf("⚠ Тимлид не смог проанализировать задачу: %s", coordResult[6:]))
+-		return
+-	}
+-
+-	// Парсим список задач от координатора
+-	tasks := e.parseTasksResponse(coordResult)
+-	if len(tasks) == 0 {
+-		e.notifyPeer(peerID, "⚠ Тимлид не смог разбить задачу на этапы.")
+-		return
+-	}
+-
+-	// Сохраняем задачи в workflow
+-	for _, t := range tasks {
+-		workflow.Tasks = append(workflow.Tasks, t)
+-	}
+-	workflow.Status = WorkflowInProgress
+-	workflow.UpdatedAt = time.Now()
+-
+-	e.saveWorkflow(workflow)
+-	e.notifyPeer(peerID, fmt.Sprintf("📋 Тимлид разбил задачу на %d этапов. Начинаю выполнение...", len(tasks)))
+-
+-	// Шаг 2: Цикл по задачам
+-	for workflow.Status == WorkflowInProgress {
+-		// Находим следующую задачу
+-		nextTask := e.findNextTask(workflow)
+-		if nextTask == nil {
+-			// Все задачи выполнены
+-			break
+-		}
+-
+-		// Разработчик выполняет задачу
+-		devSession := e.createRoleSession(DeveloperRole, workflow)
+-		devPrompt := e.buildDevPrompt(workflow, *nextTask)
+-		devResult := e.callLLM(context.Background(), devSession, devPrompt)
+-
+-		if strings.HasPrefix(devResult, "ERROR:") {
+-			e.notifyPeer(peerID, fmt.Sprintf("⚠ Разработка этапа %s провалилась: %s", nextTask.ID, devResult[6:]))
+-			break
+-		}
+-
+-		// Отправляем результат на ревью
+-		reviewSession := e.createRoleSession(ReviewerRole, workflow)
+-		reviewPrompt := e.buildReviewPrompt(workflow, *nextTask, devResult)
+-		reviewResult := e.callLLM(context.Background(), reviewSession, reviewPrompt)
+-
+-		if strings.Contains(reviewResult, "APPROVED") {
+-			// Одобрил → координатор переходит к следующей
+-			coordPrompt := fmt.Sprintf("Этап %s выполнен и одобрен ревьюером.\n\n%s\n\nВыбери следующий этап или заверши workflow.", nextTask.ID, reviewResult)
+-			coordResult2 := e.callLLM(context.Background(), coordSession, coordPrompt)
+-
+-			if strings.Contains(coordResult2, "COMPLETE") || strings.Contains(coordResult2, "END") {
+-				// Координатор говорит что всё
+-				e.notifyPeer(peerID, "✅ Workflow завершён:")
+-				e.notifyPeer(peerID, coordResult2)
+-				break
+-			}
+-		} else {
+-			// Требуется доработка → возврат разработчику
+-			e.notifyPeer(peerID, fmt.Sprintf("🔄 Этап %s требует доработки.\n\nРевьюер:\n%s", nextTask.ID, reviewResult))
+-
+-			// Пробуем ещё раз с замечаниями
+-			fixPrompt := fmt.Sprintf("Ревьюер нашёл замечания:\n\n%s\n\nИсправь по каждому пункту.", reviewResult)
+-			devResult2 := e.callLLM(context.Background(), devSession, fixPrompt)
+-
+-			// Повторный ревью
+-			reviewResult2 := e.callLLM(context.Background(), reviewSession, reviewPrompt+"\n\n\n\nПЕРЕВЕРЬ ИСПРАВЛЕНИЯ:\n"+devResult2)
+-
+-			if !strings.Contains(reviewResult2, "APPROVED") {
+-				e.notifyPeer(peerID, fmt.Sprintf("⚠ Этап %s не прошёл повторный ревью. Обратись к тимлиду вручную.", nextTask.ID))
+-				break
+-			}
+-		}
+-	}
+-
+-	workflow.Status = WorkflowCompleted
+-	workflow.UpdatedAt = time.Now()
+-	e.saveWorkflow(workflow)
+-	e.notifyPeer(peerID, "🏁 Workflow завершён.")
+-}
+-
+-// findNextTask находит следующую задачу для выполнения
+-func (e *WorkflowEngine) findNextTask(workflow *Workflow) *Task {
+-	for i := 0; i < len(workflow.Tasks); i++ {
+-		t := workflow.Tasks[i]
+-		if t.Status == TaskPending {
+-			return &t
+-		}
+-	}
+-	return nil
+-}
+-
+-// createRoleSession создаёт сессию для конкретной роли
+-func (e *WorkflowEngine) createRoleSession(role Role, workflow *Workflow) *Session {
+-	var systemPrompt string
+-	switch role {
+-	case CoordinatorRole:
+-		systemPrompt = CoordinatorPrompt
+-	case DeveloperRole:
+-		systemPrompt = DeveloperPrompt
+-	case ReviewerRole:
+-		systemPrompt = ReviewerPrompt
+-	}
+-
+-	// Создаём сессию с системным промптом
+-	return &Session{
+-		SystemPrompt: systemPrompt,
+-		Role:         role,
+-	}
+-}
+-
+-// callLLM вызывает LLM через существующую agent API
+-func (e *WorkflowEngine) callLLM(ctx context.Context, sess *Session, prompt string) string {
+-	// TODO: интегрировать с существующим ProcessMessage
+-	// Для прототипа возвращаем заглушку
+-	sess.AddUserMessage(prompt)
+-	return "[COPILOT] " + prompt[:min(60, len(prompt))] + "... [END]"
+-}
+-
+-// buildDevPrompt формирует промпт для разработчика
+-func (e *WorkflowEngine) buildDevPrompt(workflow *Workflow, task Task) string {
+-	// Добавляем контекст предыдущих результатов
+-	var prevResults strings.Builder
+-	for _, t := range workflow.Tasks {
+-		if t.Status == TaskApproved && t.ID != task.ID {
+-			prevResults.WriteString(fmt.Sprintf("\n\n### Этап %s (готов):\n%s\n", t.ID, t.Result))
+-		}
+-	}
+-
+-	return fmt.Sprintf("%s\n\n=== ТЕКУЩАЯ ЗАДАЧА ===\nID: %s\nTitle: %s\nDescription: %s\n\n=== КОНТЕКСТ (предыдущие этапы) ===\n%s\n\nРеализуй задачу. Используй доступные инструменты (file_write, edit, shell_execute). Не пиши рассуждений — только действия.",
+-		DeveloperPrompt, task.ID, task.Title, task.Description, prevResults.String())
+-}
+-
+-// buildReviewPrompt формирует промпт для ревьюера
+-func (e *WorkflowEngine) buildReviewPrompt(workflow *Workflow, task Task, devResult string) string {
+-	return fmt.Sprintf("%s\n\n=== ЗАДАЧА ===\n%s\n\n=== РЕЗУЛЬТАТ РАЗРАБОТКИ ===\n%s\n\n=== ТРЕБОВАНИЯ К РЕВЬЮ ===\n1. Соответствие ТЗ\n2. Безопасность\n3. Качество кода\n4. Обработка ошибок\n\nВерни вердикт: APPROVED или NEEDS_REVISION + конкретные замечания.",
+-		ReviewerPrompt, task.Description, devResult)
+-}
+-
+-// parseTasksResponse парсит список задач из ответа координатора
+-func (e *WorkflowEngine) parseTasksResponse(response string) []Task {
+-	var tasks []Task
+-
+-	// Пробуем JSON
+-	if strings.Contains(response, "[") {
+-		idx := strings.Index(response, "[")
+-		if err := json.Unmarshal([]byte(response[idx:]), &tasks); err == nil {
+-			return tasks
+-		}
+-	}
+-
+-	// Fallback: создаём одну задачу
+-	return []Task{
+-		{
+-			ID:          "task_1",
+-			Title:       "Основная задача",
+-			Description: response,
+-			Status:      TaskPending,
+-		},
+-	}
+-}
+-
+-// notifyPeer отправляет уведомление пользователю
+-func (e *WorkflowEngine) notifyPeer(peerID int64, message string) {
+-	fmt.Printf("[WORKFLOW notify peer=%d] %s\n", peerID, message)
+-	if e.notifier != nil {
+-		e.notifier.SendMessage(peerID, message)
+-	}
+-}
+-
+-// saveWorkflow сохраняет workflow в файл
+-func (e *WorkflowEngine) saveWorkflow(wf *Workflow) {
+-	data, _ := json.MarshalIndent(wf, "", "  ")
+-	dir := e.mgr.GetWorkflowDir(wf.ID)
+-	os.MkdirAll(dir, 0755)
+-	os.WriteFile(filepath.Join(dir, "workflow.json"), data, 0644)
+-}
+-
+-func min(a, b int) int {
+-	if a < b {
+-		return a
+-	}
+-	return b
+-}
+diff --git a/pkg/workflow/manager.go b/pkg/workflow/manager.go
+deleted file mode 100644
+index a6817a7..0000000
+--- a/pkg/workflow/manager.go
++++ /dev/null
+@@ -1,423 +0,0 @@
+-package workflow
+-
+-import (
+-	"encoding/json"
+-	"fmt"
+-	"os"
+-	"path/filepath"
+-	"sync"
+-	"time"
+-)
+-
+-// ============================================================
+-// Типы и константы
+-// ============================================================
+-
+-// Role определяет роль агента в workflow
+-type Role string
+-
+-const (
+-	CoordinatorRole Role = "coordinator"
+-	DeveloperRole   Role = "developer"
+-	ReviewerRole    Role = "reviewer"
+-)
+-
+-// WorkflowStatus определяет статус текущего workflow
+-type WorkflowStatus string
+-
+-const (
+-	WorkflowPending    WorkflowStatus = "pending"     // создан, но не запущен
+-	WorkflowInProgress WorkflowStatus = "in_progress" // выполняется
+-	WorkflowCompleted  WorkflowStatus = "completed"   // все задачи выполнены
+-	WorkflowFailed     WorkflowStatus = "failed"      // произошла ошибка
+-	WorkflowCancelled  WorkflowStatus = "cancelled"   // отменён
+-)
+-
+-// TaskStatus определяет статус конкретной задачи
+-type TaskStatus string
+-
+-const (
+-	TaskPending         TaskStatus = "pending"          // ожидает выполнения
+-	TaskInProgress      TaskStatus = "in_progress"      // выполняется
+-	TaskApproved        TaskStatus = "approved"         // одобрена ревьюером
+-	TaskNeedsRevision   TaskStatus = "needs_revision"   // требует доработки
+-	TaskCoordReview     TaskStatus = "coord_review"     // на проверке у координатора
+-)
+-
+-// ============================================================
+-// Структуры данных
+-// ============================================================
+-
+-// Workflow представляет полный цикл работы над задачей пользователя
+-type Workflow struct {
+-	ID             string         `json:"id"`
+-	UserPeerID     int64          `json:"user_peer_id"`
+-	UserOriginal   string         `json:"user_original"`       // исходный запрос пользователя
+-	Status         WorkflowStatus `json:"status"`
+-	CreatedAt      time.Time      `json:"created_at"`
+-	UpdatedAt      time.Time      `json:"updated_at"`
+-	CurrentTaskIdx int            `json:"current_task_idx"`  // индекс текущей задачи
+-	TotalTasks     int            `json:"-"`
+-	Tasks          []Task         `json:"tasks"`
+-	Artifacts      []Artifact     `json:"artifacts"`
+-	LastStatus     string         `json:"last_status"`    // для уведомления пользователя
+-	Summary        string         `json:"summary"`        // финальная сводка
+-}
+-
+-// Task представляет отдельный этап работы
+-type Task struct {
+-	ID             string      `json:"id"`
+-	Title          string      `json:"title"`
+-	Description    string      `json:"description"`
+-	Assignee       Role        `json:"assignee"`
+-	Status         TaskStatus  `json:"status"`
+-	Feedback       string      `json:"feedback,omitempty"` // замечания от ревьюера
+-	Result         string      `json:"result,omitempty"`   // результат выполнения
+-	Artifacts      []Artifact  `json:"artifacts,omitempty"`
+-	ReviewedBy     string      `json:"reviewed_by,omitempty"`
+-	ApprovedBy     string      `json:"approved_by,omitempty"`
+-	CreatedAt      time.Time   `json:"created_at"`
+-	StartedAt      *time.Time  `json:"started_at,omitempty"`
+-	CompletedAt    *time.Time  `json:"completed_at,omitempty"`
+-	ApprovedAt     *time.Time  `json:"approved_at,omitempty"`
+-}
+-
+-// Artifact представляет результат работы (файл/код)
+-type Artifact struct {
+-	Name    string `json:"name"`
+-	Path    string `json:"path"`      // относительный путь внутри workflow dir
+-	Type    string `json:"type"`      // code, doc, config
+-	Content string `json:"content"`   // контент если небольшой
+-	SHA256  string `json:"sha256"`    // хеш для отслеживания изменений
+-}
+-
+-// ============================================================
+-// WorkflowManager — управляет жизненным циклом workflow
+-// ============================================================
+-
+-// WorkflowManager — центральный компонент мульти-агентной системы
+-type WorkflowManager struct {
+-	mu        sync.RWMutex
+-	workflows map[string]*Workflow // ID -> Workflow
+-	peers     map[int64][]*Workflow // peerID -> список workflow'ов пользователя
+-	baseDir   string                // где хранить файлы workflow'ов
+-}
+-
+-// NewWorkflowManager создаёт новый менеджер workflow
+-func NewWorkflowManager(baseDir string) *WorkflowManager {
+-	if baseDir == "" {
+-		baseDir = "./workflows"
+-	}
+-	return &WorkflowManager{
+-		workflows: make(map[string]*Workflow),
+-		peers:     make(map[int64][]*Workflow),
+-		baseDir:   baseDir,
+-	}
+-}
+-
+-// CreateWorkflow создаёт новый workflow и возвращает его
+-func (m *WorkflowManager) CreateWorkflow(peerID int64, userOriginal string) *Workflow {
+-	m.mu.Lock()
+-	defer m.mu.Unlock()
+-
+-	id := generateID()
+-	workflow := &Workflow{
+-		ID:           id,
+-		UserPeerID:   peerID,
+-		UserOriginal: userOriginal,
+-		Status:       WorkflowPending,
+-		CreatedAt:    time.Now(),
+-		UpdatedAt:    time.Now(),
+-		CurrentTaskIdx: 0,
+-		Tasks:        make([]Task, 0),
+-		Artifacts:    make([]Artifact, 0),
+-	}
+-
+-	m.workflows[id] = workflow
+-	m.peers[peerID] = append(m.peers[peerID], workflow)
+-
+-	return workflow
+-}
+-
+-// GetWorkflow возвращает workflow по ID или nil
+-func (m *WorkflowManager) GetWorkflow(id string) *Workflow {
+-	m.mu.RLock()
+-	defer m.mu.RUnlock()
+-	return m.workflows[id]
+-}
+-
+-// GetUserWorkflows возвращает все workflow'ы пользователя
+-func (m *WorkflowManager) GetUserWorkflows(peerID int64) []*Workflow {
+-	m.mu.RLock()
+-	defer m.mu.RUnlock()
+-	wfs := make([]*Workflow, len(m.peers[peerID]))
+-	copy(wfs, m.peers[peerID])
+-	return wfs
+-}
+-
+-// StartWorkflow начинает выполнение workflow
+-func (m *WorkflowManager) StartWorkflow(id string) error {
+-	m.mu.Lock()
+-	workflow, ok := m.workflows[id]
+-	if !ok {
+-		m.mu.Unlock()
+-		return fmt.Errorf("workflow not found: %s", id)
+-	}
+-	if workflow.Status != WorkflowPending {
+-		m.mu.Unlock()
+-		return fmt.Errorf("workflow already started: %s", id)
+-	}
+-	workflow.Status = WorkflowInProgress
+-	workflow.UpdatedAt = time.Now()
+-	m.mu.Unlock()
+-
+-	// TODO: запустить координатора
+-	// go m.runCoordinator(workflow)
+-
+-	return nil
+-}
+-
+-// CancelWorkflow отменяет workflow
+-func (m *WorkflowManager) CancelWorkflow(id string) error {
+-	m.mu.Lock()
+-	defer m.mu.Unlock()
+-
+-	workflow, ok := m.workflows[id]
+-	if !ok {
+-		return fmt.Errorf("workflow not found: %s", id)
+-	}
+-
+-	workflow.Status = WorkflowCancelled
+-	workflow.UpdatedAt = time.Now()
+-	return nil
+-}
+-
+-// AddTask добавляет новую задачу в workflow
+-func (m *WorkflowManager) AddTask(workflowID string, task Task) error {
+-	m.mu.Lock()
+-	workflow, ok := m.workflows[workflowID]
+-	if !ok {
+-		m.mu.Unlock()
+-		return fmt.Errorf("workflow not found: %s", workflowID)
+-	}
+-
+-	task.ID = generateID()
+-	if task.Status == "" {
+-		task.Status = TaskPending
+-	}
+-	task.CreatedAt = time.Now()
+-
+-	workflow.Tasks = append(workflow.Tasks, task)
+-	workflow.UpdatedAt = time.Now()
+-	m.mu.Unlock()
+-	return nil
+-}
+-
+-// UpdateTaskStatus обновляет статус задачи
+-func (m *WorkflowManager) UpdateTaskStatus(workflowID, taskID string, status TaskStatus, feedback, result string) error {
+-	m.mu.Lock()
+-	workflow, ok := m.workflows[workflowID]
+-	if !ok {
+-		m.mu.Unlock()
+-		return fmt.Errorf("workflow not found: %s", workflowID)
+-	}
+-
+-	for i := range workflow.Tasks {
+-		if workflow.Tasks[i].ID == taskID {
+-			workflow.Tasks[i].Status = status
+-			workflow.Tasks[i].Feedback = feedback
+-			workflow.Tasks[i].Result = result
+-			now := time.Now()
+-			if status == TaskApproved {
+-				workflow.Tasks[i].ApprovedAt = &now
+-			} else {
+-				workflow.Tasks[i].CompletedAt = &now
+-			}
+-			workflow.UpdatedAt = now
+-
+-			if status == TaskNeedsRevision {
+-				workflow.CurrentTaskIdx = i // вернуться к этой задаче
+-			}
+-			m.mu.Unlock()
+-			return nil
+-		}
+-	}
+-
+-	m.mu.Unlock()
+-	return fmt.Errorf("task not found: %s in workflow %s", taskID, workflowID)
+-}
+-
+-// GetNextTaskToExecute возвращает следующую невыполненную задачу или nil
+-func (m *WorkflowManager) GetNextTaskToExecute(workflowID string) (*Task, error) {
+-	m.mu.RLock()
+-	defer m.mu.RUnlock()
+-
+-	workflow, ok := m.workflows[workflowID]
+-	if !ok {
+-		return nil, fmt.Errorf("workflow not found: %s", workflowID)
+-	}
+-
+-	for i := 0; i < len(workflow.Tasks); i++ {
+-		t := workflow.Tasks[i]
+-		if t.Status == TaskPending || t.Status == TaskNeedsRevision {
+-			return &t, nil
+-		}
+-	}
+-
+-	return nil, nil // все задачи выполнены
+-}
+-
+-// GetAllApprovedTasks возвращает список одобренных задач
+-func (m *WorkflowManager) GetAllApprovedTasks(workflowID string) []Task {
+-	m.mu.RLock()
+-	defer m.mu.RUnlock()
+-
+-	workflow, ok := m.workflows[workflowID]
+-	if !ok {
+-		return nil
+-	}
+-
+-	var approved []Task
+-	for _, t := range workflow.Tasks {
+-		if t.Status == TaskApproved {
+-			approved = append(approved, t)
+-		}
+-	}
+-	return approved
+-}
+-
+-// CompleteWorkflow помечает workflow как завершённый
+-func (m *WorkflowManager) CompleteWorkflow(workflowID, summary string) error {
+-	m.mu.Lock()
+-	defer m.mu.Unlock()
+-
+-	workflow, ok := m.workflows[workflowID]
+-	if !ok {
+-		return fmt.Errorf("workflow not found: %s", workflowID)
+-	}
+-
+-	workflow.Status = WorkflowCompleted
+-	workflow.Summary = summary
+-	workflow.UpdatedAt = time.Now()
+-	return nil
+-}
+-
+-// ============================================================
+-// Работа с файлами workflow
+-// ============================================================
+-
+-// GetWorkflowDir возвращает директорию workflow
+-func (m *WorkflowManager) GetWorkflowDir(workflowID string) string {
+-	return filepath.Join(m.baseDir, workflowID)
+-}
+-
+-// SaveWorkflow сохраняет workflow в JSON
+-func (m *WorkflowManager) SaveWorkflow(workflow *Workflow) error {
+-	data, err := json.MarshalIndent(workflow, "", "  ")
+-	if err != nil {
+-		return fmt.Errorf("marshal workflow: %w", err)
+-	}
+-
+-	dir := m.GetWorkflowDir(workflow.ID)
+-	if err := os.MkdirAll(dir, 0755); err != nil {
+-		return fmt.Errorf("create workflow dir: %w", err)
+-	}
+-
+-	file := filepath.Join(dir, "workflow.json")
+-	if err := os.WriteFile(file, data, 0644); err != nil {
+-		return fmt.Errorf("write workflow file: %w", err)
+-	}
+-
+-	return nil
+-}
+-
+-// LoadWorkflow загружает workflow из JSON
+-func (m *WorkflowManager) LoadWorkflow(workflowID string) (*Workflow, error) {
+-	dir := m.GetWorkflowDir(workflowID)
+-	file := filepath.Join(dir, "workflow.json")
+-
+-	data, err := os.ReadFile(file)
+-	if err != nil {
+-		return nil, fmt.Errorf("read workflow file: %w", err)
+-	}
+-
+-	var workflow Workflow
+-	if err := json.Unmarshal(data, &workflow); err != nil {
+-		return nil, fmt.Errorf("unmarshal workflow: %w", err)
+-	}
+-
+-	return &workflow, nil
+-}
+-
+-// SaveArtifact сохраняет артефакт в директорию workflow
+-func (m *WorkflowManager) SaveArtifact(workflowID, name, content, taskID string) error {
+-	dir := m.GetWorkflowDir(workflowID)
+-	subdir := filepath.Join(dir, "artifacts", taskID)
+-	if err := os.MkdirAll(subdir, 0755); err != nil {
+-		return fmt.Errorf("create artifact dir: %w", err)
+-	}
+-
+-	filename := filepath.Join(subdir, sanitizeFilename(name))
+-	if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
+-		return fmt.Errorf("write artifact: %w", err)
+-	}
+-
+-	return nil
+-}
+-
+-// ReadArtifact загружает артефакт из директории workflow
+-func (m *WorkflowManager) ReadArtifact(workflowID, taskID, filename string) (string, error) {
+-	dir := m.GetWorkflowDir(workflowID)
+-	path := filepath.Join(dir, "artifacts", taskID, sanitizeFilename(filename))
+-
+-	content, err := os.ReadFile(path)
+-	if err != nil {
+-		return "", fmt.Errorf("read artifact: %w", err)
+-	}
+-
+-	return string(content), nil
+-}
+-
+-// ListWorkflowArtifacts возвращает список файлов артефактов для задачи
+-func (m *WorkflowManager) ListWorkflowArtifacts(workflowID, taskID string) ([]string, error) {
+-	dir := m.GetWorkflowDir(workflowID)
+-	path := filepath.Join(dir, "artifacts", taskID)
+-
+-	entries, err := os.ReadDir(path)
+-	if err != nil {
+-		if os.IsNotExist(err) {
+-			return []string{}, nil
+-		}
+-		return nil, fmt.Errorf("list artifacts: %w", err)
+-	}
+-
+-	var files []string
+-	for _, e := range entries {
+-		if !e.IsDir() {
+-			files = append(files, e.Name())
+-		}
+-	}
+-	return files, nil
+-}
+-
+-// ============================================================
+-// Вспомогательные функции
+-// ============================================================
+-
+-func generateID() string {
+-	return fmt.Sprintf("wf_%d_%d", time.Now().UnixNano(), time.Now().Nanosecond())
+-}
+-
+-func sanitizeFilename(name string) string {
+-	if name == "" {
+-		return ""
+-	}
+-	s := filepath.Base(name)
+-	for _, r := range s {
+-		if r < '!' || r > '~' {
+-			s = "artifact_"
+-			break
+-		}
+-	}
+-	return s
+-}
+diff --git a/pkg/workflow/manager_test.go b/pkg/workflow/manager_test.go
+deleted file mode 100644
+index a40a087..0000000
+--- a/pkg/workflow/manager_test.go
++++ /dev/null
+@@ -1,719 +0,0 @@
+-package workflow
+-
+-import (
+-	"encoding/json"
+-	"fmt"
+-	"os"
+-	"path/filepath"
+-	"testing"
+-)
+-
+-// ============================================================
+-// Tests — Workflow Manager
+-// ============================================================
+-
+-func TestWorkflowManager_New(t *testing.T) {
+-	mgr := NewWorkflowManager("")
+-	if mgr.baseDir != "./workflows" {
+-		t.Errorf("expected baseDir ./workflows, got %s", mgr.baseDir)
+-	}
+-	if mgr.workflows == nil {
+-		t.Error("expected workflows map to be initialized")
+-	}
+-	if mgr.peers == nil {
+-		t.Error("expected peers map to be initialized")
+-	}
+-}
+-
+-func TestWorkflowManager_NewWithCustomBaseDir(t *testing.T) {
+-	mgr := NewWorkflowManager("/tmp/test_workflows")
+-	if mgr.baseDir != "/tmp/test_workflows" {
+-		t.Errorf("expected baseDir /tmp/test_workflows, got %s", mgr.baseDir)
+-	}
+-}
+-
+-func TestWorkflowManager_CreateWorkflow(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(12345, "Написать HTTP сервер на Go")
+-
+-	if wf.ID == "" {
+-		t.Error("expected non-empty workflow ID")
+-	}
+-	if wf.UserPeerID != 12345 {
+-		t.Errorf("expected peerID 12345, got %d", wf.UserPeerID)
+-	}
+-	if wf.Status != WorkflowPending {
+-		t.Errorf("expected status WorkflowPending, got %s", wf.Status)
+-	}
+-	if wf.UserOriginal != "Написать HTTP сервер на Go" {
+-		t.Error("expected UserOriginal to match")
+-	}
+-	if len(wf.Tasks) != 0 {
+-		t.Errorf("expected 0 tasks, got %d", len(wf.Tasks))
+-	}
+-	if wf.CreatedAt.IsZero() {
+-		t.Error("expected non-zero CreatedAt")
+-	}
+-	if wf.UpdatedAt.IsZero() {
+-		t.Error("expected non-zero UpdatedAt")
+-	}
+-}
+-
+-func TestWorkflowManager_GetWorkflow(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(99, "Задача")
+-
+-	got := mgr.GetWorkflow(wf.ID)
+-	if got == nil {
+-		t.Fatal("expected workflow to exist")
+-	}
+-	if got.ID != wf.ID {
+-		t.Error("expected same workflow")
+-	}
+-
+-	nilWf := mgr.GetWorkflow("nonexistent")
+-	if nilWf != nil {
+-		t.Error("expected nil for nonexistent workflow")
+-	}
+-}
+-
+-func TestWorkflowManager_GetUserWorkflows(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	_ = mgr.CreateWorkflow(123, "Задача 1")
+-	_ = mgr.CreateWorkflow(123, "Задача 2")
+-	_ = mgr.CreateWorkflow(456, "Задача 3")
+-
+-	wfs := mgr.GetUserWorkflows(123)
+-	if len(wfs) != 2 {
+-		t.Errorf("expected 2 workflows for peer 123, got %d", len(wfs))
+-	}
+-
+-	wfsOther := mgr.GetUserWorkflows(456)
+-	if len(wfsOther) != 1 {
+-		t.Errorf("expected 1 workflow for peer 456, got %d", len(wfsOther))
+-	}
+-
+-	wfsOther = mgr.GetUserWorkflows(789)
+-	if len(wfsOther) != 0 {
+-		t.Error("expected 0 workflows for unknown peer")
+-	}
+-
+-	}
+-
+-func TestWorkflowManager_AddTask(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(123, "Задача")
+-	task := Task{
+-		Title:       "Тестовая задача",
+-		Description: "Описание задачи",
+-		Assignee:    DeveloperRole,
+-	}
+-
+-	err := mgr.AddTask(wf.ID, task)
+-	if err != nil {
+-		t.Fatalf("AddTask failed: %v", err)
+-	}
+-
+-	wf = mgr.GetWorkflow(wf.ID)
+-	if len(wf.Tasks) != 1 {
+-		t.Errorf("expected 1 task, got %d", len(wf.Tasks))
+-	}
+-
+-	got := wf.Tasks[0]
+-	if got.Title != "Тестовая задача" {
+-		t.Errorf("expected title 'Тестовая задача', got %q", got.Title)
+-	}
+-	if got.Status != TaskPending {
+-		t.Errorf("expected status TaskPending, got %s", got.Status)
+-	}
+-	if got.CreatedAt.IsZero() {
+-		t.Error("expected non-zero CreatedAt")
+-	}
+-}
+-
+-func TestWorkflowManager_AddTask_FailsForNonexistentWorkflow(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	task := Task{Title: "T"}
+-	err := mgr.AddTask("nonexistent", task)
+-	if err == nil {
+-		t.Error("expected error for nonexistent workflow")
+-	}
+-}
+-
+-func TestWorkflowManager_UpdateTaskStatus(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(123, "Задача")
+-
+-	task := Task{Title: "Тест", Assignee: DeveloperRole}
+-	mgr.AddTask(wf.ID, task)
+-
+-	wf = mgr.GetWorkflow(wf.ID)
+-	taskID := wf.Tasks[0].ID
+-
+-	err := mgr.UpdateTaskStatus(wf.ID, taskID, TaskApproved, "", "Результат")
+-	if err != nil {
+-		t.Fatalf("UpdateTaskStatus failed: %v", err)
+-	}
+-
+-	wf = mgr.GetWorkflow(wf.ID)
+-	updated := wf.Tasks[0]
+-	if updated.Status != TaskApproved {
+-		t.Errorf("expected status TaskApproved, got %s", updated.Status)
+-	}
+-	if updated.Result != "Результат" {
+-		t.Errorf("expected result 'Результат', got %q", updated.Result)
+-	}
+-	if updated.ApprovedAt == nil {
+-		t.Error("expected ApprovedAt to be set")
+-	}
+-}
+-
+-func TestWorkflowManager_UpdateTaskStatus_NeedsRevision(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(123, "Задача")
+-	wf.CurrentTaskIdx = 0
+-
+-	task := Task{Title: "Тест", Assignee: DeveloperRole}
+-	mgr.AddTask(wf.ID, task)
+-
+-	wf = mgr.GetWorkflow(wf.ID)
+-	taskID := wf.Tasks[0].ID
+-
+-	err := mgr.UpdateTaskStatus(wf.ID, taskID, TaskNeedsRevision, "Плохо написано", "")
+-	if err != nil {
+-		t.Fatalf("UpdateTaskStatus failed: %v", err)
+-	}
+-
+-	wf = mgr.GetWorkflow(wf.ID)
+-	updated := wf.Tasks[0]
+-	if updated.Status != TaskNeedsRevision {
+-		t.Errorf("expected status TaskNeedsRevision, got %s", updated.Status)
+-	}
+-	if updated.Feedback != "Плохо написано" {
+-		t.Errorf("expected feedback 'Плохо написано', got %q", updated.Feedback)
+-	}
+-}
+-
+-func TestWorkflowManager_UpdateTaskStatus_FailsForNonexistentWorkflow(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	err := mgr.UpdateTaskStatus("nonexistent", "task_1", TaskApproved, "", "R")
+-	if err == nil {
+-		t.Error("expected error for nonexistent workflow")
+-	}
+-}
+-
+-func TestWorkflowManager_UpdateTaskStatus_FailsForNonexistentTask(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(123, "Задача")
+-
+-	err := mgr.UpdateTaskStatus(wf.ID, "nonexistent", TaskApproved, "", "R")
+-	if err == nil {
+-		t.Error("expected error for nonexistent task")
+-	}
+-}
+-
+-func TestWorkflowManager_GetNextTaskToExecute(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(123, "Задача")
+-
+-	mgr.AddTask(wf.ID, Task{Title: "T1", Status: TaskPending, Assignee: DeveloperRole})
+-	mgr.AddTask(wf.ID, Task{Title: "T2", Status: TaskPending, Assignee: DeveloperRole})
+-	mgr.AddTask(wf.ID, Task{Title: "T3", Status: TaskApproved, Assignee: DeveloperRole})
+-
+-	next, err := mgr.GetNextTaskToExecute(wf.ID)
+-	if err != nil {
+-		t.Fatalf("GetNextTaskToExecute failed: %v", err)
+-	}
+-	if next == nil {
+-		t.Fatal("expected next task to exist")
+-	}
+-	if next.Title != "T1" {
+-		t.Errorf("expected task T1, got %q", next.Title)
+-	}
+-}
+-
+-func TestWorkflowManager_GetNextTaskToExecute_NoneLeft(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(123, "Задача")
+-
+-	mgr.AddTask(wf.ID, Task{Title: "T1", Status: TaskApproved, Assignee: DeveloperRole})
+-
+-	next, err := mgr.GetNextTaskToExecute(wf.ID)
+-	if err != nil {
+-		t.Fatalf("GetNextTaskToExecute failed: %v", err)
+-	}
+-	if next != nil {
+-		t.Error("expected nil for no pending tasks")
+-	}
+-}
+-
+-func TestWorkflowManager_GetAllApprovedTasks(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(123, "Задача")
+-
+-	mgr.AddTask(wf.ID, Task{Title: "T1", Status: TaskPending, Assignee: DeveloperRole})
+-	mgr.AddTask(wf.ID, Task{Title: "T2", Status: TaskApproved, Assignee: DeveloperRole})
+-	mgr.AddTask(wf.ID, Task{Title: "T3", Status: TaskApproved, Assignee: DeveloperRole})
+-
+-	approved := mgr.GetAllApprovedTasks(wf.ID)
+-	if len(approved) != 2 {
+-		t.Errorf("expected 2 approved tasks, got %d", len(approved))
+-	}
+-	for _, ta := range approved {
+-		if ta.Status != TaskApproved {
+-			t.Errorf("expected all tasks approved, got %q", ta.Title)
+-		}
+-	}
+-}
+-
+-func TestWorkflowManager_CompleteWorkflow(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(123, "Задача")
+-
+-	err := mgr.CompleteWorkflow(wf.ID, "Всё сделано")
+-	if err != nil {
+-		t.Fatalf("CompleteWorkflow failed: %v", err)
+-	}
+-
+-	wf = mgr.GetWorkflow(wf.ID)
+-	if wf.Status != WorkflowCompleted {
+-		t.Errorf("expected WorkflowCompleted, got %s", wf.Status)
+-	}
+-	if wf.Summary != "Всё сделано" {
+-		t.Errorf("expected summary 'Всё сделано', got %q", wf.Summary)
+-	}
+-}
+-
+-func TestWorkflowManager_CompleteWorkflow_FailsForNonexistent(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	err := mgr.CompleteWorkflow("nonexistent", "")
+-	if err == nil {
+-		t.Error("expected error for nonexistent workflow")
+-	}
+-}
+-
+-func TestWorkflowManager_StartWorkflow(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(123, "Задача")
+-
+-	err := mgr.StartWorkflow(wf.ID)
+-	if err != nil {
+-		t.Fatalf("StartWorkflow failed: %v", err)
+-	}
+-
+-	wf = mgr.GetWorkflow(wf.ID)
+-	if wf.Status != WorkflowInProgress {
+-		t.Errorf("expected WorkflowInProgress, got %s", wf.Status)
+-	}
+-}
+-
+-func TestWorkflowManager_StartWorkflow_FailsForNonexistent(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	err := mgr.StartWorkflow("nonexistent")
+-	if err == nil {
+-		t.Error("expected error for nonexistent workflow")
+-	}
+-}
+-
+-func TestWorkflowManager_StartWorkflow_FailsForAlreadyStarted(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(123, "Задача")
+-
+-	mgr.StartWorkflow(wf.ID)
+-
+-	err := mgr.StartWorkflow(wf.ID)
+-	if err == nil {
+-		t.Error("expected error for already started workflow")
+-	}
+-}
+-
+-func TestWorkflowManager_CancelWorkflow(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(123, "Задача")
+-
+-	err := mgr.CancelWorkflow(wf.ID)
+-	if err != nil {
+-		t.Fatalf("CancelWorkflow failed: %v", err)
+-	}
+-
+-	wf = mgr.GetWorkflow(wf.ID)
+-	if wf.Status != WorkflowCancelled {
+-		t.Errorf("expected WorkflowCancelled, got %s", wf.Status)
+-	}
+-}
+-
+-func TestWorkflowManager_CancelWorkflow_FailsForNonexistent(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	err := mgr.CancelWorkflow("nonexistent")
+-	if err == nil {
+-		t.Error("expected error for nonexistent workflow")
+-	}
+-}
+-
+-func TestWorkflowManager_SaveAndLoadWorkflow(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(123, "Задача")
+-	wf.Tasks = append(wf.Tasks, Task{Title: "Тест", Description: "Описание", Assignee: DeveloperRole})
+-
+-	err := mgr.SaveWorkflow(wf)
+-	if err != nil {
+-		t.Fatalf("SaveWorkflow failed: %v", err)
+-	}
+-
+-	loaded, err := mgr.LoadWorkflow(wf.ID)
+-	if err != nil {
+-		t.Fatalf("LoadWorkflow failed: %v", err)
+-	}
+-
+-	if loaded.ID != wf.ID {
+-		t.Error("expected same ID")
+-	}
+-	if loaded.UserPeerID != wf.UserPeerID {
+-		t.Error("expected same peerID")
+-	}
+-	if len(loaded.Tasks) != 1 {
+-		t.Errorf("expected 1 task, got %d", len(loaded.Tasks))
+-	}
+-	if loaded.Tasks[0].Title != "Тест" {
+-		t.Error("expected same task title")
+-	}
+-}
+-
+-func TestWorkflowManager_SaveAndLoadWorkflow_Nonexistent(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	_, err := mgr.LoadWorkflow("nonexistent")
+-	if err == nil {
+-		t.Error("expected error for nonexistent workflow")
+-	}
+-}
+-
+-func TestWorkflowManager_SaveAndLoadArtifact(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(123, "Задача")
+-	taskID := "task_1"
+-	content := "package main\nfunc main() {}"
+-
+-	err := mgr.SaveArtifact(wf.ID, "main.go", content, taskID)
+-	if err != nil {
+-		t.Fatalf("SaveArtifact failed: %v", err)
+-	}
+-
+-	got, err := mgr.ReadArtifact(wf.ID, taskID, "main.go")
+-	if err != nil {
+-		t.Fatalf("ReadArtifact failed: %v", err)
+-	}
+-	if got != content {
+-		t.Errorf("expected same content, got %q", got)
+-	}
+-}
+-
+-func TestWorkflowManager_SaveAndLoadArtifact_SpecialFilename(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(123, "Задача")
+-	taskID := "task_1"
+-	content := "тест"
+-
+-	err := mgr.SaveArtifact(wf.ID, "тест.txt", content, taskID)
+-	if err != nil {
+-		t.Fatalf("SaveArtifact failed: %v", err)
+-	}
+-
+-	// Файл должен быть сохранён (sanitizeFilename заменит спецсимволы)
+-	files, err := mgr.ListWorkflowArtifacts(wf.ID, taskID)
+-	if err != nil {
+-		t.Fatalf("ListWorkflowArtifacts failed: %v", err)
+-	}
+-	if len(files) == 0 {
+-		t.Error("expected at least 1 file")
+-	}
+-}
+-
+-func TestWorkflowManager_ListWorkflowArtifacts_Empty(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(123, "Задача")
+-
+-	files, err := mgr.ListWorkflowArtifacts(wf.ID, "task_1")
+-	if err != nil {
+-		t.Fatalf("ListWorkflowArtifacts failed: %v", err)
+-	}
+-	if len(files) != 0 {
+-		t.Errorf("expected 0 files, got %d", len(files))
+-	}
+-}
+-
+-func TestWorkflowManager_GetWorkflowDir(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	dir := mgr.GetWorkflowDir("wf_123")
+-	expected := filepath.Join(tmpDir, "wf_123")
+-	if dir != expected {
+-		t.Errorf("expected %s, got %s", expected, dir)
+-	}
+-}
+-
+-func TestWorkflowManager_MultiPeerWorkflow(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	_ = mgr.CreateWorkflow(111, "Задача 1")
+-	_ = mgr.CreateWorkflow(222, "Задача 2")
+-	_ = mgr.CreateWorkflow(111, "Задача 3")
+-
+-	wfs111 := mgr.GetUserWorkflows(111)
+-	if len(wfs111) != 2 {
+-		t.Errorf("expected 2 workflows for peer 111, got %d", len(wfs111))
+-	}
+-
+-	wfs222 := mgr.GetUserWorkflows(222)
+-	if len(wfs222) != 1 {
+-		t.Errorf("expected 1 workflow for peer 222, got %d", len(wfs222))
+-	}
+-}
+-
+-func TestWorkflowManager_WorkflowJSONRoundTrip(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(456, "Задача с \"кавычками\" и <тегами>")
+-	wf.Tasks = append(wf.Tasks, Task{
+-		Title:       "Тест",
+-		Description: "Описание с JSON { \"key\": \"value\" }",
+-		Assignee:    DeveloperRole,
+-		Status:      TaskPending,
+-	})
+-
+-	err := mgr.SaveWorkflow(wf)
+-	if err != nil {
+-		t.Fatalf("SaveWorkflow failed: %v", err)
+-	}
+-
+-	loaded, err := mgr.LoadWorkflow(wf.ID)
+-	if err != nil {
+-		t.Fatalf("LoadWorkflow failed: %v", err)
+-	}
+-
+-	if loaded.UserOriginal != wf.UserOriginal {
+-		t.Error("expected exact UserOriginal match")
+-	}
+-	if loaded.Tasks[0].Title != "Тест" {
+-		t.Error("expected same task title")
+-	}
+-	if loaded.Tasks[0].Description != "Описание с JSON { \"key\": \"value\" }" {
+-		t.Error("expected same task description")
+-	}
+-}
+-
+-func TestWorkflowManager_EdgeCases(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	// Создаём workflow с пустым userOriginal
+-	wf := mgr.CreateWorkflow(789, "")
+-	if wf.UserOriginal != "" {
+-		t.Error("expected empty UserOriginal")
+-	}
+-
+-	// Добавляем задачу с пустым описанием
+-	err := mgr.AddTask(wf.ID, Task{Title: "T", Assignee: DeveloperRole})
+-	if err != nil {
+-		t.Fatalf("AddTask failed: %v", err)
+-	}
+-
+-	// Обновляем статус
+-	wf = mgr.GetWorkflow(wf.ID)
+-	err = mgr.UpdateTaskStatus(wf.ID, wf.Tasks[0].ID, TaskApproved, "", "")
+-	if err != nil {
+-		t.Fatalf("UpdateTaskStatus failed: %v", err)
+-	}
+-}
+-
+-func TestSanitizeFilename(t *testing.T) {
+-	if sanitizeFilename("main.go") != "main.go" {
+-		t.Error("expected 'main.go'")
+-	}
+-	if sanitizeFilename("тест.txt") == "тест.txt" {
+-		t.Error("expected sanitized filename for non-ASCII")
+-	}
+-	if sanitizeFilename("../../../etc/passwd") != "passwd" {
+-		t.Error("expected path traversal to be stripped")
+-	}
+-	if sanitizeFilename("") != "" {
+-		t.Error("expected empty string for empty input")
+-	}
+-}
+-
+-func TestWorkflowStatus_Constants(t *testing.T) {
+-	if WorkflowPending != "pending" {
+-		t.Error("expected 'pending'")
+-	}
+-	if WorkflowInProgress != "in_progress" {
+-		t.Error("expected 'in_progress'")
+-	}
+-	if WorkflowCompleted != "completed" {
+-		t.Error("expected 'completed'")
+-	}
+-	if WorkflowFailed != "failed" {
+-		t.Error("expected 'failed'")
+-	}
+-	if WorkflowCancelled != "cancelled" {
+-		t.Error("expected 'cancelled'")
+-	}
+-}
+-
+-func TestTaskStatus_Constants(t *testing.T) {
+-	if TaskPending != "pending" {
+-		t.Error("expected 'pending'")
+-	}
+-	if TaskInProgress != "in_progress" {
+-		t.Error("expected 'in_progress'")
+-	}
+-	if TaskApproved != "approved" {
+-		t.Error("expected 'approved'")
+-	}
+-	if TaskNeedsRevision != "needs_revision" {
+-		t.Error("expected 'needs_revision'")
+-	}
+-	if TaskCoordReview != "coord_review" {
+-		t.Error("expected 'coord_review'")
+-	}
+-}
+-
+-func TestRole_Constants(t *testing.T) {
+-	if CoordinatorRole != "coordinator" {
+-		t.Error("expected 'coordinator'")
+-	}
+-	if DeveloperRole != "developer" {
+-		t.Error("expected 'developer'")
+-	}
+-	if ReviewerRole != "reviewer" {
+-		t.Error("expected 'reviewer'")
+-	}
+-}
+-
+-func TestWorkflow_PartialWorkflowCompletion(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(123, "Задача")
+-
+-	// Добавляем 3 задачи
+-	for i := 1; i <= 3; i++ {
+-		mgr.AddTask(wf.ID, Task{
+-			Title:      fmt.Sprintf("Задача %d", i),
+-			Assignee:   DeveloperRole,
+-			Status:     TaskPending,
+-		})
+-	}
+-
+-	// Одобрим первую
+-	wf = mgr.GetWorkflow(wf.ID)
+-	t0 := wf.Tasks[0].ID
+-	mgr.UpdateTaskStatus(wf.ID, t0, TaskApproved, "", "Результат 1")
+-
+-	// Вторая — revision
+-	t1 := wf.Tasks[1].ID
+-	mgr.UpdateTaskStatus(wf.ID, t1, TaskNeedsRevision, "Исправь код", "")
+-
+-	// Получим следующую на выполнение — должна быть вторая
+-	next, err := mgr.GetNextTaskToExecute(wf.ID)
+-	if err != nil {
+-		t.Fatalf("GetNextTaskToExecute failed: %v", err)
+-	}
+-	if next == nil {
+-		t.Fatal("expected second task")
+-	}
+-	if next.Title != "Задача 2" {
+-		t.Errorf("expected 'Задача 2', got %q", next.Title)
+-	}
+-
+-	// Первая должна быть одобрена
+-	approved := mgr.GetAllApprovedTasks(wf.ID)
+-	if len(approved) != 1 {
+-		t.Errorf("expected 1 approved task, got %d", len(approved))
+-	}
+-}
+-
+-func TestWorkflowManager_SaveWorkflow_CreatesDirectory(t *testing.T) {
+-	tmpDir := t.TempDir()
+-	mgr := NewWorkflowManager(tmpDir)
+-
+-	wf := mgr.CreateWorkflow(123, "Задача")
+-	err := mgr.SaveWorkflow(wf)
+-	if err != nil {
+-		t.Fatalf("SaveWorkflow failed: %v", err)
+-	}
+-
+-	// Проверяем что директория создана
+-	dir := mgr.GetWorkflowDir(wf.ID)
+-	info, err := os.Stat(dir)
+-	if err != nil {
+-		t.Fatalf("Directory should exist: %v", err)
+-	}
+-	if !info.IsDir() {
+-		t.Fatal("path should be a directory")
+-	}
+-
+-	// Проверяем что файл создан
+-	data, err := os.ReadFile(filepath.Join(dir, "workflow.json"))
+-	if err != nil {
+-		t.Fatalf("workflow.json should exist: %v", err)
+-	}
+-	if len(data) == 0 {
+-		t.Error("workflow.json should not be empty")
+-	}
+-
+-	// Проверяем что это валидный JSON
+-	var decoded Workflow
+-	if err := json.Unmarshal(data, &decoded); err != nil {
+-		t.Fatalf("workflow.json should be valid JSON: %v", err)
+-	}
+-}
+diff --git a/pkg/workflow/mode_strategy.go b/pkg/workflow/mode_strategy.go
+deleted file mode 100644
+index a6a95bd..0000000
+--- a/pkg/workflow/mode_strategy.go
++++ /dev/null
+@@ -1,122 +0,0 @@
+-package workflow
+-
+-import (
+-	"fmt"
+-	"sync"
+-	"time"
+-)
+-
+-// ============================================================
+-// Режимы работы мульти-агентной системы
+-// ============================================================
+-
+-// Mode определяет режим работы системы
+-type Mode int
+-
+-const (
+-	ModeNormal Mode = iota // обычный режим — один агент отвечает пользователю
+-	ModeAgent              // агентный режим — координатор + разработчик + ревьюер
+-)
+-
+-func (m Mode) String() string {
+-	switch m {
+-	case ModeNormal:
+-		return "normal"
+-	case ModeAgent:
+-		return "agent"
+-	default:
+-		return "unknown"
+-	}
+-}
+-
+-// ModeStrategy — стратегия управления режимами
+-type ModeStrategy struct {
+-	mu         sync.RWMutex
+-	peers      map[int64]*PeerMode // peerID -> режим
+-	activeWf   map[int64]string    // peerID -> workflowID активного workflow
+-}
+-
+-// PeerMode хранит режим для каждого пользователя
+-type PeerMode struct {
+-	Mode        Mode
+-	WorkflowID  string
+-	EnteredAt   time.Time
+-	LastUpdated time.Time
+-}
+-
+-// NewModeStrategy создаёт стратегию режимов
+-func NewModeStrategy() *ModeStrategy {
+-	return &ModeStrategy{
+-		peers:    make(map[int64]*PeerMode),
+-		activeWf: make(map[int64]string),
+-	}
+-}
+-
+-// GetMode возвращает текущий режим пользователя
+-func (s *ModeStrategy) GetMode(peerID int64) Mode {
+-	s.mu.RLock()
+-	defer s.mu.RUnlock()
+-
+-	pm, exists := s.peers[peerID]
+-	if !exists {
+-		return ModeNormal
+-	}
+-	return pm.Mode
+-}
+-
+-// SetMode устанавливает режим пользователя
+-func (s *ModeStrategy) SetMode(peerID int64, mode Mode, workflowID string) {
+-	s.mu.Lock()
+-	defer s.mu.Unlock()
+-
+-	if current, exists := s.peers[peerID]; exists && current.Mode == mode && mode == ModeAgent {
+-		// Не меняем workflow если уже активен тот же
+-		return
+-	}
+-
+-	s.peers[peerID] = &PeerMode{
+-		Mode:        mode,
+-		WorkflowID:  workflowID,
+-		EnteredAt:   time.Now(),
+-		LastUpdated: time.Now(),
+-	}
+-
+-	if mode == ModeAgent {
+-		s.activeWf[peerID] = workflowID
+-	} else {
+-		delete(s.activeWf, peerID)
+-	}
+-}
+-
+-// GetActiveWorkflow возвращает активный workflow пользователя (если есть)
+-func (s *ModeStrategy) GetActiveWorkflow(peerID int64) string {
+-	s.mu.RLock()
+-	defer s.mu.RUnlock()
+-
+-	pm, exists := s.peers[peerID]
+-	if !exists || pm.Mode != ModeAgent {
+-		return ""
+-	}
+-	return pm.WorkflowID
+-}
+-
+-// IsActive проверяет что пользователь в агентном режиме
+-func (s *ModeStrategy) IsActive(peerID int64) bool {
+-	return s.GetMode(peerID) == ModeAgent
+-}
+-
+-// ExitMode завершает агентный режим для пользователя
+-func (s *ModeStrategy) ExitMode(peerID int64) {
+-	s.mu.Lock()
+-	defer s.mu.Unlock()
+-
+-	if pm, exists := s.peers[peerID]; exists {
+-		if pm.Mode == ModeAgent && pm.WorkflowID != "" {
+-			// Workflow завершён успешно — удаляем из activeWf
+-			delete(s.activeWf, peerID)
+-			fmt.Printf("[MODE] Agent mode exited for peer %d, workflow %s\n", peerID, pm.WorkflowID)
+-		}
+-		pm.Mode = ModeNormal
+-		pm.WorkflowID = ""
+-	}
+-}
+diff --git a/pkg/workflow/prompts.go b/pkg/workflow/prompts.go
+deleted file mode 100644
+index c018673..0000000
+--- a/pkg/workflow/prompts.go
++++ /dev/null
+@@ -1,199 +0,0 @@
+-package workflow
+-
+-// ============================================================
+-// Системные промпты для ролей мульти-агентной системы
+-// ============================================================
+-
+-const (
+-	// CoordinatorPrompt — координатор (тимлид)
+-	// Задача: анализировать задачи пользователя, разбивать на этапы,
+-	// контролировать выполнение, принимать финальные решения.
+-	CoordinatorPrompt = `Ты — тимлид (координатор) мульти-агентной команды.
+-
+-## Твои обязанности
+-
+-1. **Анализ задачи пользователя:**
+-   - Определи что нужно сделать
+-   - Выяви все требования и зависимости между этапами
+-   - Сформулируй ТЗ для разработчика
+-   - Оцени риски и сложность
+-
+-2. **Разбиение на задачи:**
+-   - Раздели задачу на независимые этапы (tasks)
+-   - Каждый этап должен быть выполним одним инструментом
+-   - Чётко описывай что должен сделать разработчик
+-   - Порядок этапов важен — учитывай зависимости
+-
+-3. **Делегирование:**
+-   - Назначай первый этап разработчику
+-   - После получения результата отправляй на проверку ревьюеру
+-   - Если ревьюер одобрил — переходи к следующему этапу
+-   - Если ревьюер вернул замечания — передай обратно разработчику
+-
+-4. **Контроль качества:**
+-   - Проверяй что результат соответствует исходному ТЗ
+-   - Убеждайся что все этапы выполнены
+-   - Формируй финальный отчёт для пользователя
+-
+-## Формат ответа
+-
+-Когда тебе даны задачи (tasks), выполняй их по порядку:
+-1. Если задача на тебя — анализируй и распределяй
+-2. Если задача на разработчика — передай в команду
+-3. Если задача на ревьюера — отправь на проверку
+-4. Если этап одобрен — начни следующий
+-5. Если все задачи одобрены — отправь пользователю итоговый отчёт
+-
+-## Ограничения
+-- Не пытайся кодить сам. Используй инструменты developer и reviewer.
+-- Не пропускай этап ревью. Каждый этап должен быть одобрен.
+-- Не игнорируй замечания ревьюера.
+-- Сохраняй контекст: каждый новый этап начинается с учётом предыдущих.
+-
+-## Твой workflow
+-- У тебя есть: исходная задача от пользователя
+-- У тебя есть: список этапов с их статусами
+-- У тебя есть: доступ ко всем результатам работы
+-
+-## Инструменты
+-- file_write: писать код, конфигурации, отчёты
+-- shell_execute: запускать команды
+-- file_read: читать результаты
+-- edit: вносить изменения
+-- glob, grep_search: искать файлы
+-- file_list: просматривать структуру`
+-
+-	// DeveloperPrompt — разработчик
+-	// Задача: реализовывать задачи по ТЗ, создавать/редактировать файлы
+-	DeveloperPrompt = `Ты — разработчик в мульти-агентной команде под руководством тимлида.
+-
+-## Твои обязанности
+-
+-1. **Анализ задачи:**
+-   - Внимательно читай ТЗ от тимлида
+-   - Выяви все требования, зависимости, ограничения
+-   - Определите что нужно изменить или создать
+-   - Выбери правильный подход к реализации
+-
+-2. **Реализация:**
+-   - Пиши чистый, рабочий код
+-   - Соблюдай best practices и conventions проекта
+-   - Используй file_write для создания новых файлов, edit для изменений
+-   - Комментируй только если код нетривиален
+-   - Проверяй что код компилируется (shell_execute go build)
+-   - Добавляй базовую обработку ошибок
+-
+-3. **Ограничения:**
+-   - Работай ТОЛЬКО в предоставленных тебе файлах
+-   - Не меняй файлы которые не должны быть изменены
+-   - Не удаляй существующий код без явного указания
+-   - Не создавай лишние файлы — только необходимые для задачи
+-   - Не меняй логику которую не просили менять
+-   - Если не уверен — спрашивай у тимлида
+-
+-4. **Формат результата:**
+-   - Ты должен создать/редактировать файлы и сохранить их
+-   - Верни краткий отчёт о сделанном:
+-     * Какие файлы изменены/созданы
+-     * Основные изменения
+-     * Что тестировал
+-     * Известные ограничения
+-
+-## Доступные инструменты
+-
+-- **file_write** — создать файл или перезаписать существующий
+-- **edit** — найти и заменить текст в файле  
+-- **file_read** — прочитать файл (обязательно используй offset/limit для больших файлов)
+-- **shell_execute** — выполнить shell-команду (проверить синтаксис, запустить тесты)
+-- **glob** — найти файлы по паттерну
+-- **grep** — найти текст в файлах
+-- **file_list** — посмотреть содержимое директории
+-
+-## Важное
+-- Если тебе дано несколько файлов для редактирования — работай с каждым по очереди
+-- После каждого редактирования проверяй что файл валиден (go vet, go build)
+-- Если задача не ясна — уточни у тимлида, не пытайся угадывать
+-- Если что-то идёт не так — сообщи об этом, не молчи
+-
+-## Твой workflow
+-- Ты получаешь конкретный этап работы от тимлида
+-- У тебя есть доступ ко всем файлам проекта
+-- У тебя есть контекст предыдущих этапов (что уже сделано)
+-- Ты НЕ контролируешь порядок этапов — этим занимается тимлид
+-- Ты НЕ принимаешь финальные решения о качестве — этим занимается ревьюер`
+-
+-	// ReviewerPrompt — ревьюер
+-	// Задача: проверять качество кода, безопасность, соответствие ТЗ
+-	ReviewerPrompt = `Ты — старший разработчик-ревьюер в мульти-агентной команде под руководством тимлида.
+-
+-## Твои обязанности
+-
+-1. **Анализ задачи:**
+-   - Читай ТЗ от тимлида (что должен был сделать разработчик)
+-   - Сравнивай что написано в ТЗ и что сделано фактически
+-   - Определи критерии успешного выполнения
+-
+-2. **Проверка кода:**
+-   - Читай все изменённые файлы полностью
+-   - Проверяй:
+-     * Соответствие ТЗ (сделано то, что просили)
+-     * Безопасность (нет уязвимостей, инъекций, race conditions)
+-     * Качество (чистота кода, читаемость, naming)
+-     * Обработку ошибок (нет игнорирования ошибок)
+-     * Логические ошибки (бесконечные циклы, null pointers)
+-     * Соответствие стандартам проекта (если известна)
+-     * Производительность (очевидные проблемы)
+-   - Проверяй что нет unintended side-effects
+-
+-3. **Вердикт:**
+-
+-   **APPROVED** если:
+-   - Всё соответствует ТЗ
+-   - Код чистый, безопасный, работает
+-   - Нет очевидных ошибок
+-   - Можно продолжать работу
+-
+-   **NEEDS_REVISION** если:
+-   - Есть конкретные замечания которые можно исправить
+-   - Ошибки исправимы (не архитектурные)
+-   - Ты даёшь ЧЁТКИЕ инструкции что исправить
+-
+-   **BLOCKED** если:
+-   - Архитектурная ошибка (нужно переделывать фундаментально)
+-   - Несоответствие ТЗ требует полной переделки
+-   - Слишком много замечаний (лучше начать заново)
+-   - В этом случае — сообщай тимлиду, не передавай обратно разработчику
+-
+-4. **Формат вердикта:**
+-
+-    APPROVED:
+-    > APPROVED
+-    > [Краткое подтверждение]
+-    > [Плюс если есть: что особенно хорошо]
+-
+-    NEEDS_REVISION:
+-    > NEEDS_REVISION
+-    > [Перечисление проблем по пунктам]
+-    > [Что конкретно исправить]
+-    > [Если возможно — пример исправления]
+-
+-    BLOCKED:
+-    > BLOCKED
+-    > [Причина блокировки]
+-    > [Что нужно переосмыслить]
+-
+-## Доступные инструменты
+-
+-- **file_read** — читать файлы для проверки
+-- **shell_execute** — запустить проверку (go vet, go build, tests)
+-- **glob, grep** — найти файлы для проверки
+-- **file_list** — увидеть структуру проекта
+-
+-## Важное
+-- Ты НЕ пишешь код (этим занимается developer)
+-- Ты НЕ принимаешь решения о ТЗ (этим занимается coordinator)
+-- Ты НЕ запускаешь тесты кроме линтеров и проверки сборки
+-- Ты даёшь конкретные замечания, не общие фразы
+-- Если код плохой — говори об этом прямо, но профессионально
+-- Если всё хорошо — одобряй быстро, не трать время`
+-)
+diff --git a/vk_send_file.go b/vk_send_file.go
+deleted file mode 100644
+index ca339f2..0000000
+--- a/vk_send_file.go
++++ /dev/null
+@@ -1,92 +0,0 @@
+-package main
+-
+-import (
+-	"context"
+-	"fmt"
+-	"os"
+-	"path/filepath"
+-
+-	"github.com/opencode/llama-client/pkg/tools"
+-	"github.com/opencode/llama-client/pkg/vk"
+-)
+-
+-// VKSendFileTool отправляет файл пользователю через VK
+-type VKSendFileTool struct {
+-	vkClient *vk.BotClient
+-	peerID   int64
+-}
+-
+-// NewVKSendFileTool создаёт инструмент отправки файлов в VK
+-func NewVKSendFileTool(vkClient *vk.BotClient, peerID int64) *VKSendFileTool {
+-	return &VKSendFileTool{
+-		vkClient: vkClient,
+-		peerID:   peerID,
+-	}
+-}
+-
+-func (t *VKSendFileTool) Name() string {
+-	return "vk_send_file"
+-}
+-
+-func (t *VKSendFileTool) Description() string {
+-	return "Send a file to a VK user. Uploads the file and sends it as a document with an optional message."
+-}
+-
+-func (t *VKSendFileTool) Schema() map[string]interface{} {
+-	return map[string]interface{}{
+-		"type": "object",
+-		"properties": map[string]interface{}{
+-			"file_path": tools.CreateStringParameter("file_path", "The file path to send (absolute or relative)", true),
+-			"message":   tools.CreateStringParameter("message", "Optional message to send with the file", false),
+-			"peer_id":   tools.CreateStringParameter("peer_id", "Optional VK peer_id (chat or user ID). Defaults to main peer_id.", false),
+-		},
+-		"required": []string{"file_path"},
+-	}
+-}
+-
+-func (t *VKSendFileTool) Execute(ctx context.Context, inputs map[string]string) (tools.ToolResult, error) {
+-	filePath, ok := inputs["file_path"]
+-	if !ok || filePath == "" {
+-		return tools.ToolResult{Success: false, Error: "file_path parameter is required"}, nil
+-	}
+-
+-	if !filepath.IsAbs(filePath) {
+-		filePath = filepath.Join(tools.WorkingDir, filePath)
+-	}
+-	filePath = filepath.Clean(filePath)
+-
+-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+-		return tools.ToolResult{Success: false, Error: fmt.Sprintf("File not found: %s", filePath)}, nil
+-	}
+-
+-	peerID := t.peerID
+-	if pidStr, ok := inputs["peer_id"]; ok && pidStr != "" {
+-		if _, err := fmt.Sscanf(pidStr, "%d", &peerID); err != nil || peerID <= 0 {
+-			return tools.ToolResult{Success: false, Error: "Invalid peer_id"}, nil
+-		}
+-	}
+-
+-	message := ""
+-	if msg, ok := inputs["message"]; ok {
+-		message = msg
+-	}
+-
+-	msgID, err := t.vkClient.SendFile(filePath, peerID, message)
+-	if err != nil {
+-		return tools.ToolResult{
+-			Success: false,
+-			Error:   fmt.Sprintf("Failed to send file: %v", err),
+-		}, nil
+-	}
+-
+-	return tools.ToolResult{
+-		Success: true,
+-		Data: map[string]interface{}{
+-			"file":      filePath,
+-			"filename":  filepath.Base(filePath),
+-			"peer_id":   peerID,
+-			"message":   message,
+-			"message_id": msgID,
+-		},
+-	}, nil
+-}

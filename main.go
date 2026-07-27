@@ -251,6 +251,7 @@ func main() {
 		ThinkingPeerID:  config.ThinkingPeerID,
 		VKClient:        vkClient,
 		SystemPromptDir: sysPromptDir,
+		AgentManager:    agentManager,
 	})
 
 	botHandler := vk.NewBotHandlerWithPeerID(vkClient, agentLoop, log,

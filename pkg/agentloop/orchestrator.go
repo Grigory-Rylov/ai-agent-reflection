@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/opencode/llama-client/pkg/agent"
+	"github.com/opencode/llama-client/pkg/agentpolicy"
 	"github.com/opencode/llama-client/pkg/tools"
 	"github.com/opencode/llama-client/session"
 )
@@ -22,6 +23,7 @@ type OrchestratorConfig struct {
 	ThinkingPeerID  int64
 	VKClient        VKClient
 	SystemPromptDir string // path to system_prompt/ directory (default: "system_prompt")
+	AgentManager    *agentpolicy.AgentManager
 }
 
 type Orchestrator struct {
@@ -125,6 +127,7 @@ func (o *Orchestrator) registerSubAgentTool(a agent.Agent, peerID int64) {
 		AgentConfig:     o.makeAgentConfig(),
 		MainTools:       o.config.ToolRegistry,
 		SystemPromptDir: o.systemPromptDir(),
+		AgentManager:    o.config.AgentManager,
 		CurrentDepth:    0,
 		MaxDepth:        2,
 		PeerID:          peerID,
