@@ -119,6 +119,13 @@ func (a *agentImpl) handleNativeToolCalls(ctx context.Context, messages []Messag
 
 	toolCalls := streamToolCalls
 	logger.DebugToFile(prefix+"[FLOW] Entering tool_calls branch: finishReason=%q, len(streamToolCalls)=%d", finishReason, len(streamToolCalls))
+
+	// Предупреждение: finish="" с tool_calls — возможна обрезка стрима
+	if finishReason == "" && len(toolCalls) > 0 {
+		fmt.Printf(prefix+"[TOOL] WARNING: finish_reason is empty, tool calls may be truncated/incomplete\n")
+		logger.DebugToFile(prefix+"[TOOL] WARNING: finish_reason is empty (stream may be truncated)")
+	}
+
 	if len(toolCalls) == 0 {
 		fmt.Printf("[WARN] LLM returned tool_calls but none collected from stream, trying non-streaming\n")
 		logger.DebugToFile(prefix+"[FLOW] Trying non-streaming fallback")
@@ -200,6 +207,76 @@ func (a *agentImpl) handleXMLInReasoning(ctx context.Context, messages []Message
 	return &FunctionCallResult{Success: true, Response: finalResponse}
 }
 
+// hasPartialToolCall проверяет, содержит ли текст фрагменты tool call XML
+// без валидной структуры (напр. </tool_call> без открывающего, <parameter=...> вне контекста)
+// Возвращает false для полностью валидных <tool_call><function=...>...</function></tool_call>
+func hasPartialToolCall(text string) bool {
+	if text == "" {
+		return false
+	}
+	// Закрывающий тег без открывающего — partial
+	if strings.Contains(text, "</tool_call>") && !strings.Contains(text, "<tool_call>") {
+		return true
+	}
+	if strings.Contains(text, "</function>") && !strings.Contains(text, "<function") {
+		return true
+	}
+	// Незакрытый <tool_call (без >) — partial
+	if strings.Contains(text, "<tool_call") && !strings.Contains(text, "<tool_call>") {
+		return true
+	}
+	// <parameter=...> или <parameter ...> вне контекста tool_call — partial
+	if (strings.Contains(text, "<parameter=") || strings.Contains(text, "<parameter ")) && !strings.Contains(text, "<tool_call>") {
+		return true
+	}
+	// <function=...> без полного tool_call контекста
+	if strings.Contains(text, "<function=") && !strings.Contains(text, "<tool_call>") {
+		return true
+	}
+	return false
+}
+
+// stripPartialToolCall удаляет только фрагменты tool call XML тегов из текста,
+// не затрагивая окружающий текст. Работает на тексте, уже очищенном ParseXMLToolCalls.
+// Удаляет: </tool_call>, </function>, </parameter>, <parameter=...>, <function=...>
+func stripPartialToolCall(text string) string {
+	result := text
+	// Удаляем закрывающие теги
+	for _, tag := range []string{"</tool_call>", "</function>", "</parameter>"} {
+		result = strings.ReplaceAll(result, tag, "")
+	}
+	// Удаляем <parameter=...> целиком (до >)
+	for {
+		start := strings.Index(result, "<parameter=")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(result[start:], ">")
+		if end < 0 {
+			result = result[:start]
+			break
+		}
+		result = result[:start] + result[start+end+1:]
+	}
+	// Удаляем <function=...> целиком (до >)
+	for {
+		start := strings.Index(result, "<function=")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(result[start:], ">")
+		if end < 0 {
+			result = result[:start]
+			break
+		}
+		result = result[:start] + result[start+end+1:]
+	}
+	// Удаляем пустые строки от удалённых строк
+	result = strings.ReplaceAll(result, "\n\n", "\n")
+	result = strings.ReplaceAll(result, "\n\n", "\n")
+	return strings.TrimSpace(result)
+}
+
 // sendThinkingIfNeeded отправляет очищенный reasoning в thinking чат
 func (a *agentImpl) sendThinkingIfNeeded(session *sess.Session, reasoningText string) {
 	if a.thinkingCallback == nil {
@@ -209,6 +286,15 @@ func (a *agentImpl) sendThinkingIfNeeded(session *sess.Session, reasoningText st
 	cleanedReasoning := parsed.Content
 	if cleanedReasoning == "" {
 		return
+	}
+
+	// Дополнительно очищаем от partial tool call фрагментов
+	if hasPartialToolCall(cleanedReasoning) {
+		logger.DebugToFile("%s[THINKING] Stripping partial tool call fragments from reasoning", a.agentPrefix())
+		cleanedReasoning = stripPartialToolCall(cleanedReasoning)
+		if cleanedReasoning == "" {
+			return
+		}
 	}
 
 	logger.DebugToFile("%s[THINKING] Sending %d chars of reasoning to thinking chat", a.agentPrefix(), len(cleanedReasoning))
@@ -267,6 +353,31 @@ func (a *agentImpl) handleInvalidOrTextResponse(ctx context.Context, messages []
 		result, err := a.handleInvalidXMLToolCall(ctx, messages, session, executedToolCalls)
 		if err != nil {
 			return nil, fmt.Errorf("handle invalid xml: %w", err)
+		}
+		return &result, nil
+	}
+
+	// Проверяем reasoning на partial/fragmented tool call XML (</tool_call>, <parameter=...> и т.п.)
+	if responseText == "" && reasoningText != "" && hasPartialToolCall(reasoningText) && !strings.Contains(reasoningText, "<tool_call>") {
+		prefix := a.agentPrefix()
+		snippet := truncateStr(reasoningText, 200)
+		fmt.Printf(prefix+"[TOOL] Partial/malformed tool call fragments in reasoning: %s\n", snippet)
+		logger.DebugToFile(prefix+"[TOOL] Partial tool call fragments in reasoning: %s", snippet)
+		a.debugLog.Error("[TOOL] Partial/malformed tool call fragments in reasoning")
+		a.sendThinking(session.GetPeerID(), "[TOOL] Error: partial/incomplete tool call in reasoning, sending corrective feedback")
+
+		// Очищаем reasoning от фрагментов и отправляем как thinking
+		cleanedReasoning := stripPartialToolCall(reasoningText)
+		if cleanedReasoning != "" {
+			logger.DebugToFile(prefix+"[THINKING] Sending cleaned reasoning (stripped partial fragments)")
+			if err := a.thinkingCallback(session.GetPeerID(), cleanedReasoning); err != nil {
+				fmt.Printf(prefix+"[WARN] Failed to send thinking: %v\n", err)
+			}
+		}
+
+		result, err := a.handleInvalidXMLToolCall(ctx, messages, session, executedToolCalls)
+		if err != nil {
+			return nil, fmt.Errorf("handle partial tool call: %w", err)
 		}
 		return &result, nil
 	}
