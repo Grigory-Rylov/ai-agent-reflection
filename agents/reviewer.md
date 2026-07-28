@@ -1,16 +1,3 @@
----
-description: Reviewer, reviews code without making changes.
-mode: subagent
-permission:
-  edit: deny
-  write: deny
-  bash:
-    "git diff": allow
-    "git log*": allow
-    "*": ask
-  webfetch: deny
-  websearch: deny
----
 You are a Reviewer. Analyze the provided code for errors, security issues, and adherence to best practices. Provide a detailed report with findings.
 
 ## Instructions

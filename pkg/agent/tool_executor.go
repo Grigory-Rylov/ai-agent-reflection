@@ -125,8 +125,15 @@ func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName str
 	}
 
 	decision := checker.Check(toolName)
-	if decision != "ask" {
-		return true
+	switch decision {
+	case "deny":
+		e.agent.debugLog.Info("Permission denied for tool '%s'", toolName)
+		e.agent.sendThinking(peerID, fmt.Sprintf("[TOOL] Denied: %s (permission)", toolName))
+		return false
+	case "ask":
+		// ask user below
+	default:
+		return true // "allow" or unknown
 	}
 
 	e.agent.sendThinking(peerID, fmt.Sprintf("[PERMISSION] Asking user for tool '%s'...", toolName))

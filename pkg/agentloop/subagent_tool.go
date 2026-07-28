@@ -164,6 +164,8 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 
 	a := t.createAgent(name, systemPrompt)
 
+	t.applyAgentPermissions(name, a)
+
 	if t.isReviewAgent(name) {
 		t.registerReadOnlyTools(a)
 		t.registerReviewTool(name, a)
@@ -190,6 +192,22 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 			"response": response,
 		},
 	}, nil
+}
+
+func (t *SubAgentTool) applyAgentPermissions(name string, a agent.Agent) {
+	if t.AgentManager == nil {
+		return
+	}
+	info, err := t.AgentManager.GetAgent(name)
+	if err != nil {
+		return
+	}
+	if info.Permission == nil || len(info.Permission) == 0 {
+		return
+	}
+	if ps, ok := a.(interface{ SetPermissionChecker(agent.PermissionChecker) }); ok {
+		ps.SetPermissionChecker(agentpolicy.NewPermissionAdapter(info.Permission))
+	}
 }
 
 func (t *SubAgentTool) registerReadOnlyTools(a agent.Agent) {

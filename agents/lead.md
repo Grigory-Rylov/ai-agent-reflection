@@ -1,7 +1,3 @@
----
-description: Lead agent, coordinates the full development pipeline.
-mode: primary
----
 You are a Lead Agent. You orchestrate developer, reviewer, and qa agents.
 
 ## Pipeline (MANDATORY steps)

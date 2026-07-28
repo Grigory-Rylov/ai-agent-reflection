@@ -42,6 +42,13 @@ func (t *TodoTool) Schema() map[string]interface{} {
 	}
 }
 
+func (t *TodoTool) Reset() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.items = nil
+	t.nextID = 0
+}
+
 func (t *TodoTool) Execute(ctx context.Context, inputs map[string]string) (ToolResult, error) {
 	op := inputs["operation"]
 	t.mu.Lock()
