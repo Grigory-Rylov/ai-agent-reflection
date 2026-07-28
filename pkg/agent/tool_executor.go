@@ -85,7 +85,7 @@ func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, 
 
 	brief := briefToolCall(toolName, args)
 	e.agent.debugLog.Debug("%sCall: %s", e.agent.agentPrefix(), brief)
-	e.agent.sendThinking(peerID, "[TOOL] Call: "+brief)
+	e.agent.sendThinking(peerID, e.agent.agentPrefix()+"[TOOL] Call: "+brief)
 
 	result, err := tool.Execute(ctx, args)
 	if err != nil {
