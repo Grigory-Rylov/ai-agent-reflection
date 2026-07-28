@@ -50,7 +50,7 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 		contentChars += len(m.Content)
 	}
 
-	logger.DebugToFile("[LLM REQUEST] Sending request to %s, model=%s, messages=%d, chars=%d, tokens=%d", a.config.LlamaServerURL, config.Model, len(messages), len(reqBody), contentChars/3)
+	logger.DebugToFile(a.agentPrefix()+"[LLM REQUEST] Sending request to %s, model=%s, messages=%d, chars=%d, tokens=%d", a.config.LlamaServerURL, config.Model, len(messages), len(reqBody), contentChars/3)
 
 	req, err := a.createStreamingRequest(ctx, reqBody)
 	if err != nil {
@@ -59,7 +59,7 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		logger.DebugToFile("[LLM REQUEST] Failed to send: %v", err)
+		logger.DebugToFile(a.agentPrefix()+"[LLM REQUEST] Failed to send: %v", err)
 		return nil, fmt.Errorf("send request: %w", err)
 	}
 
@@ -68,11 +68,11 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		a.debugLog.Error("API ERROR: Status %d, response: %s", resp.StatusCode, string(body))
-		logger.DebugToFile("[LLM REQUEST] API error: status %d", resp.StatusCode)
+		logger.DebugToFile(a.agentPrefix()+"[LLM REQUEST] API error: status %d", resp.StatusCode)
 		return nil, fmt.Errorf("API error: status %d, body: %s", resp.StatusCode, string(body))
 	}
 
-	logger.DebugToFile("[LLM REQUEST] Request successful, reading stream...")
+	logger.DebugToFile(a.agentPrefix()+"[LLM REQUEST] Request successful, reading stream...")
 	chunkChan := make(chan StreamChunkEvent, 100)
 	go a.readStreamResponse(ctx, resp, chunkChan)
 	return chunkChan, nil

@@ -27,6 +27,13 @@ import (
 
 var Version = "dev"
 
+type AgentRoleCfg struct {
+	Prompt string `json:"prompt"`
+	Leaf   bool   `json:"leaf"`
+	Review bool   `json:"review"`
+	Coordinator bool   `json:"coordinator"`
+}
+
 type Config struct {
 	LlamaServerURL string                         `json:"llama_server_url"`
 	Model          string                         `json:"model"`
@@ -39,7 +46,8 @@ type Config struct {
 	AllowedDirs    []string                       `json:"allowed_dirs"`
 	DBPath         string                         `json:"db_path"`
 	PromptsDir     string                         `json:"prompts_dir"`
-	Agents         map[string]agentpolicy.AgentCfg `json:"agents"`
+	MaxReviewIterations int                   `json:"max_review_iterations"`
+	AgentRoles     map[string]AgentRoleCfg        `json:"agent"`
 }
 
 // resolvePrompt resolves a prompt value: if it's "{file:./path}", reads from file.
@@ -189,28 +197,41 @@ func main() {
 		return handleQuestion(vkClient, peerID, q)
 	})
 
-	// Инициализируем AgentManager из конфига
+	// Инициализируем AgentManager из конфига — загружаем .md файлы ролей
 	agentManager := agentpolicy.NewAgentManager()
-	if config.Agents != nil {
-		agentManager.LoadFromConfig(config.Agents)
-	}
-	// Resolve {file:...} prompts in config-loaded agents
-	for _, name := range agentManager.ListAgentNames() {
-		info, err := agentManager.GetAgent(name)
-		if err != nil || !strings.HasPrefix(info.Prompt, "{file:") {
-			continue
+	if config.AgentRoles != nil {
+		for name, role := range config.AgentRoles {
+			if role.Prompt == "" {
+				continue
+			}
+			promptPath := role.Prompt
+			if !filepath.IsAbs(promptPath) {
+				promptPath = filepath.Join(agentDir, promptPath)
+			}
+			prompt, err := agentpolicy.LoadMDPrompt(promptPath)
+			if err != nil {
+				log.WarnLogf("Failed to load prompt for agent %s from %s: %v", name, promptPath, err)
+				// fallback: пробуем как обычный текстовый файл
+				data, rErr := os.ReadFile(promptPath)
+				if rErr != nil {
+					continue
+				}
+				prompt = string(data)
+			}
+			agentManager.RegisterAgent(agentpolicy.AgentInfo{
+				Name:   name,
+				Mode:   agentpolicy.ModeAll,
+				Leaf:   role.Leaf,
+				Review: role.Review,
+				Coordinator: role.Coordinator,
+				Prompt: prompt,
+			})
 		}
-		resolved, rErr := resolvePrompt(info.Prompt, agentDir)
-		if rErr != nil {
-			log.WarnLogf("Failed to resolve prompt for agent %s: %v", name, rErr)
-		} else {
-			info.Prompt = resolved
-			agentManager.RegisterAgent(info)
-		}
 	}
+	log.InfoLogf("AgentManager: %d agents registered", len(agentManager.ListAgentNames()))
 
 	// Регистрируем subagent tool как обычный тул (как task в opencode)
-	sysPromptDir := filepath.Join(agentDir, "system_prompt")
+	sysPromptDir := filepath.Join(agentDir, "agents")
 	subAgentCfg := agent.Config{
 		LlamaServerURL: llamaURL,
 		Model:          config.Model,
@@ -252,6 +273,7 @@ func main() {
 		VKClient:        vkClient,
 		SystemPromptDir: sysPromptDir,
 		AgentManager:    agentManager,
+		MaxReviewIterations: config.MaxReviewIterations,
 	})
 
 	botHandler := vk.NewBotHandlerWithPeerID(vkClient, agentLoop, log,
@@ -300,13 +322,17 @@ func main() {
 	if *initialPrompt != "" && config.PeerID > 0 {
 		prompt := *initialPrompt
 
-	// Проверяем #agent_name — если есть, пускаем через оркестратор
-	agentName, task := vk.ParseAgentHashMention(prompt)
-	if agentName != "" && orchestrator != nil && task != "" {
-			log.InfoLogf("Processing initial prompt via orchestrator (#%s): %s", agentName, truncate(task, 100))
+		// Проверяем #agent_name — если есть, пускаем через RunAgent
+		knownNames := agentManager.ListAgentNames()
+		if len(knownNames) == 0 {
+			knownNames = []string{"worker", "qa", "explore", "general", "agent", "coordinator"}
+		}
+		agentName, task := vk.ParseAgentHashMention(prompt, knownNames)
+		if agentName != "" && orchestrator != nil && task != "" {
+			log.InfoLogf("Processing initial prompt via RunAgent (#%s): %s", agentName, truncate(task, 100))
 
 			promptCtx, promptCancel := context.WithTimeout(ctx, 15*time.Minute)
-			response, err := orchestrator.ExecuteTask(promptCtx, task, config.PeerID)
+			response, err := orchestrator.RunAgent(promptCtx, agentName, task, config.PeerID)
 			promptCancel()
 
 			if err != nil {
@@ -442,6 +468,7 @@ func registerTools(r *tools.Registry) {
 	r.Register(&tools.EditTool{})
 	r.Register(&tools.ApplyPatchTool{})
 	r.Register(&tools.QuestionTool{})
+	r.Register(tools.GlobalTodo)
 }
 
 func loadConfig(path string) (Config, error) {

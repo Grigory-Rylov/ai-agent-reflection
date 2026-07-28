@@ -29,14 +29,14 @@ func newAgentToolExecutor(a *agentImpl) *agentToolExecutor {
 }
 
 func (e *agentToolExecutor) ExecuteAll(ctx context.Context, toolCalls []ToolCall, peerID int64) FunctionCallResult {
-	logger.DebugToFile("[executeAllTools] Starting with %d tool calls", len(toolCalls))
+	logger.DebugToFile(e.agent.agentPrefix()+"[executeAllTools] Starting with %d tool calls", len(toolCalls))
 	result := FunctionCallResult{
 		Success:   true,
 		ToolCalls: make([]ToolCallResult, 0),
 	}
 
 	for i, tc := range toolCalls {
-		logger.DebugToFile("[executeAllTools] Executing tool %d/%d: %s", i+1, len(toolCalls), ToolCallName(tc))
+		logger.DebugToFile(e.agent.agentPrefix()+"[executeAllTools] Executing tool %d/%d: %s", i+1, len(toolCalls), ToolCallName(tc))
 		toolResult, execErr := e.executeTool(ctx, tc, peerID)
 		if execErr != nil {
 			result.ToolCalls = append(result.ToolCalls, ToolCallResult{
@@ -84,7 +84,7 @@ func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, 
 	}
 
 	brief := briefToolCall(toolName, args)
-	e.agent.debugLog.Debug("Call: %s", brief)
+	e.agent.debugLog.Debug("%sCall: %s", e.agent.agentPrefix(), brief)
 	e.agent.sendThinking(peerID, "[TOOL] Call: "+brief)
 
 	result, err := tool.Execute(ctx, args)
@@ -97,7 +97,7 @@ func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, 
 
 	content := tools.MarshalToolResult(result)
 	if result.Success {
-		e.agent.debugLog.Debug("Result: %s success", toolName)
+		e.agent.debugLog.Debug(e.agent.agentPrefix()+"Result: %s success", toolName)
 		e.agent.sendThinking(peerID, "[TOOL] Result: "+toolName+" success")
 	} else {
 		resultMsg := fmt.Sprintf("[TOOL] Result: %s failed - %s", toolName, truncateStr(content, 200))

@@ -10,13 +10,13 @@ import (
 )
 
 func (a *agentImpl) collectStreamResponse(chunkChan <-chan StreamChunkEvent) (string, string, error) {
-	logger.DebugToFile("[LLM RESPONSE] Starting to collect stream response...")
+	logger.DebugToFile(a.agentPrefix()+"[LLM RESPONSE] Starting to collect stream response...")
 	var fullResponse strings.Builder
 	var fullReasoning strings.Builder
 
 	for event := range chunkChan {
 		if event.IsError {
-			logger.DebugToFile("[LLM RESPONSE] Stream error: %s", event.Content)
+			logger.DebugToFile(a.agentPrefix()+"[LLM RESPONSE] Stream error: %s", event.Content)
 			return "", "", fmt.Errorf("API error: %s (code: %s)", event.Content, event.ErrorCode)
 		}
 		if event.IsDone {
@@ -32,7 +32,7 @@ func (a *agentImpl) collectStreamResponse(chunkChan <-chan StreamChunkEvent) (st
 
 	response := fullResponse.String()
 	reasoning := fullReasoning.String()
-	logger.DebugToFile("[LLM RESPONSE] Collected: content=%d chars, reasoning=%d chars", len(response), len(reasoning))
+	logger.DebugToFile(a.agentPrefix()+"[LLM RESPONSE] Collected: content=%d chars, reasoning=%d chars", len(response), len(reasoning))
 	return response, reasoning, nil
 }
 

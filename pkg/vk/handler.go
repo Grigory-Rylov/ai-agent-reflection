@@ -36,6 +36,8 @@ func expandTilde(path string) string {
 // AgentOrchestrator определяет контракт для выполнения многоагентных задач
 type AgentOrchestrator interface {
 	ExecuteTask(ctx context.Context, task string, peerID int64) (string, error)
+	RunAgent(ctx context.Context, agentName, task string, peerID int64) (string, error)
+	ListAgentNames() []string
 	GetCurrentAgent() string
 }
 
@@ -87,13 +89,19 @@ func NewBotHandlerWithPeerID(vkClient *BotClient, aiAgent agentloop.AgentLoop, l
 // ============================================================
 
 // agentNames возвращает список известных имён агентов для #mention
-func agentNames() []string {
+func (h *BotHandler) agentNames() []string {
+	if h.orchestrator != nil {
+		names := h.orchestrator.ListAgentNames()
+		if len(names) > 0 {
+			return names
+		}
+	}
 	return []string{"worker", "qa", "explore", "general", "agent", "coordinator"}
 }
 
 // ParseAgentHashMention проверяет, начинается ли текст с #agent_name,
 // и возвращает имя агента и очищенный текст задачи.
-func ParseAgentHashMention(text string) (agentName string, task string) {
+func ParseAgentHashMention(text string, knownNames []string) (agentName string, task string) {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "#") {
 		return "", text
@@ -103,7 +111,7 @@ func ParseAgentHashMention(text string) (agentName string, task string) {
 		return text[1:], ""
 	}
 	maybeName := text[1:spaceIdx]
-	for _, name := range agentNames() {
+	for _, name := range knownNames {
 		if strings.EqualFold(maybeName, name) {
 			return name, strings.TrimSpace(text[spaceIdx+1:])
 		}
@@ -118,8 +126,8 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	// Извлекаем команду из сообщения (удаляем VK mention если есть)
 	command := extractCommand(message)
 
-	// Проверяем #agent_name (worker, qa, explore, general, agent, coordinator)
-	agentName, task := ParseAgentHashMention(command)
+	// Проверяем #agent_name (worker, qa, explore, general, agent, coordinator, lead, ...)
+	agentName, task := ParseAgentHashMention(command, h.agentNames())
 	if agentName != "" {
 		if h.log != nil {
 			h.log.InfoLogf("Agent #%s invoked by peer %d with task: %s", agentName, peerID, truncateStr(task, 100))
@@ -133,7 +141,7 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 		// Если есть оркестратор — используем его
 		if h.orchestrator != nil {
 			ctx := context.Background()
-			response, err := h.orchestrator.ExecuteTask(ctx, task, peerID)
+			response, err := h.orchestrator.RunAgent(ctx, agentName, task, peerID)
 			if err != nil {
 				if h.log != nil {
 					h.log.ErrorLogf("Orchestrator error for #%s: %v", agentName, err)
@@ -258,16 +266,21 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 		return h.handleNewSession(input, peerID)
 
 	case "/help":
-		return "Доступные команды:\n" +
+		knownNames := h.agentNames()
+		helpStr := "Доступные команды:\n" +
 			"/reset - Очистить историю диалога\n" +
 			"/newsession [path] (/n) - Сбросить сессию и сменить рабочую директорию\n" +
 			"/help - Показать эту справку\n" +
 			"/status - Показать статус агента (сообщения, символы, токены)\n" +
 			"/test-llama - Тест соединения с llama-server\n" +
 			"/agent [задача] - Запустить AI Agent для исследования проекта\n\n" +
-			"Перенаправление задачи агенту через #:\n" +
-			"#coordinator создай HTTP сервер — направит задачу координатору\n" +
-			"#worker, #qa, #explore, #general, #agent — доступные роли"
+			"Перенаправление задачи агенту через #:\n"
+		for _, name := range knownNames {
+			helpStr += fmt.Sprintf("#%s, ", name)
+		}
+		helpStr = strings.TrimSuffix(helpStr, ", ")
+		helpStr += " — доступные роли"
+		return helpStr
 
 	case "/test-llama":
 		return h.handleTestLlama()

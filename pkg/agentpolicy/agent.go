@@ -20,6 +20,7 @@ type AgentInfo struct {
 	Hidden      bool                     `json:"hidden"`
 	Leaf        bool                     `json:"leaf"`
 	Review      bool                     `json:"review"`
+	Coordinator bool                   `json:"coordinator"`
 	Prompt      string                   `json:"prompt"`
 	Model       string                   `json:"model"`
 	Temperature *float64                 `json:"temperature"`
@@ -257,4 +258,5 @@ type AgentCfg struct {
 	Hidden      bool   `json:"hidden"`
 	Leaf        bool   `json:"leaf"`
 	Review      bool   `json:"review"`
+	Coordinator bool                   `json:"coordinator"`
 }
