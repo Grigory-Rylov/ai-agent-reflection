@@ -38,7 +38,7 @@ These commands are handled by `vk-gateway-restarter` via VK:
 
 ```
 
-Config is loaded from `~/.config/ai-agent/config.json` (priority) or `./config.json` (fallback).
+Config is loaded from `./config.json` (priority), with fallback to `~/.config/ai-agent/config.json`.
 
 ```json
 {
@@ -49,6 +49,115 @@ Config is loaded from `~/.config/ai-agent/config.json` (priority) or `./config.j
     "max_tokens": 4096,
     "temperature": 0.7
 }
+```
+
+## Multi-Agent Mode
+
+The agent system supports multiple AI agent roles with individual prompts and tool permissions.
+
+### Configuration
+
+Register agents in the `"agents"` block of `config.json`:
+
+```json
+{
+    "agents": {
+        "lead": {
+            "description": "Lead agent, coordinates the pipeline",
+            "mode": "primary",
+            "prompt": "agents/lead.md"
+        },
+        "developer": {
+            "description": "Developer, writes and implements code",
+            "mode": "subagent",
+            "prompt": "agents/developer.md"
+        },
+        "reviewer": {
+            "description": "Code reviewer",
+            "mode": "subagent",
+            "leaf": true,
+            "review": true,
+            "prompt": "agents/reviewer.md",
+            "permission": {
+                "file_write": "deny",
+                "edit": "deny",
+                "apply_patch": "deny"
+            }
+        },
+        "qa": {
+            "description": "QA engineer, writes and runs tests",
+            "mode": "subagent",
+            "leaf": true,
+            "prompt": "agents/qa.md"
+        }
+    }
+}
+```
+
+### Agent config fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `description` | string | Human-readable description (shown in available agents list) |
+| `mode` | string | `"primary"` (user-facing) or `"subagent"` (invoked via `#name`) |
+| `prompt` | string | Path to `.md` file with the agent's system prompt |
+| `leaf` | bool | If `true`, agent cannot delegate to sub-agents |
+| `review` | bool | If `true`, agent gets read-only tools + approve/reject |
+| `hidden` | bool | If `true`, hidden from available agents list |
+| `permission` | object | Tool permissions: `"allow"`, `"deny"`, or `"ask"` per tool |
+
+### Permission rules
+
+Each permission entry maps a tool name to an action:
+
+| Tool name | Description |
+|-----------|-------------|
+| `file_read` | Read files |
+| `file_write` | Create/overwrite files |
+| `edit` | Search-and-replace edit |
+| `apply_patch` | Apply patches |
+| `shell_execute` | Run shell commands |
+| `glob` | Find files by pattern |
+| `search_code` | Grep file contents |
+| `web_fetch` | Fetch URLs |
+| `web_search` | Search web |
+| `*` | Wildcard — applies to all tools |
+
+Example — deny all editing, allow reading and searching:
+
+```json
+"permission": {
+    "file_write": "deny",
+    "edit": "deny",
+    "apply_patch": "deny"
+}
+```
+
+Unspecified tools default to `"allow"`.
+
+### Usage
+
+Send a message with `#agent_name` prefix to route to a specific agent:
+
+```
+#developer напиши тесты для модуля
+#reviewer проверь код на安全问题
+#qa запусти тесты и отчитайся
+```
+
+The lead agent (`#lead`) orchestrates the full pipeline: delegate to developer → reviewer → qa.
+
+### Prompt files
+
+Agent prompt files (`.md`) contain **only the system prompt** — no frontmatter. All configuration (description, mode, permissions) lives in `config.json`. Example `agents/developer.md`:
+
+```markdown
+You are a Developer. Implement the task using available tools.
+
+## Instructions
+1. Implement the task completely.
+2. Verify your code: run the build command.
+3. Return the complete result.
 ```
 
 ## Bot Commands
