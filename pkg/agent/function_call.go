@@ -214,16 +214,22 @@ func hasPartialToolCall(text string) bool {
 	if text == "" {
 		return false
 	}
-	// Закрывающий тег без открывающего — partial
 	if strings.Contains(text, "</tool_call>") && !strings.Contains(text, "<tool_call>") {
 		return true
 	}
 	if strings.Contains(text, "</function>") && !strings.Contains(text, "<function") {
 		return true
 	}
-	// Незакрытый <tool_call (без >) — partial
 	if strings.Contains(text, "<tool_call") && !strings.Contains(text, "<tool_call>") {
 		return true
+	}
+	// <tool_call> без </tool_call> или больше открывающих чем закрывающих — unclosed, partial
+	if strings.Contains(text, "<tool_call>") {
+		openCount := strings.Count(text, "<tool_call>")
+		closeCount := strings.Count(text, "</tool_call>")
+		if openCount > closeCount {
+			return true
+		}
 	}
 	// <parameter=...> или <parameter ...> вне контекста tool_call — partial
 	if (strings.Contains(text, "<parameter=") || strings.Contains(text, "<parameter ")) && !strings.Contains(text, "<tool_call>") {
@@ -290,7 +296,9 @@ func (a *agentImpl) sendThinkingIfNeeded(session *sess.Session, reasoningText st
 
 	// Дополнительно очищаем от partial tool call фрагментов
 	if hasPartialToolCall(cleanedReasoning) {
-		logger.DebugToFile("%s[THINKING] Stripping partial tool call fragments from reasoning", a.agentPrefix())
+		prefix := a.agentPrefix()
+		fmt.Print(prefix + "[TOOL] Stripped partial/malformed tool call fragments from reasoning\n")
+		logger.DebugToFile(prefix+"[THINKING] Stripping partial tool call fragments from reasoning")
 		cleanedReasoning = stripPartialToolCall(cleanedReasoning)
 		if cleanedReasoning == "" {
 			return
@@ -346,7 +354,7 @@ func (a *agentImpl) handleJSONFallback(ctx context.Context, responseText string,
 
 // handleInvalidOrTextResponse обрабатывает финальный текстовый ответ или ошибки формата
 func (a *agentImpl) handleInvalidOrTextResponse(ctx context.Context, messages []Message, responseText, reasoningText, finishReason string, session *sess.Session, executedToolCalls map[string]bool) (*FunctionCallResult, error) {
-	if responseText == "" && reasoningText != "" && strings.Contains(reasoningText, "<tool_call>") {
+	if responseText == "" && reasoningText != "" && strings.Contains(reasoningText, "<tool_call>") && finishReason != "" {
 		reasoningSnippet := truncateStr(reasoningText, 300)
 		a.debugLog.Error("[TOOL] Invalid XML tool call in reasoning: %s", reasoningSnippet)
 		a.sendThinking(session.GetPeerID(), "[TOOL] Error: malformed XML tool call in reasoning, sending corrective feedback")
@@ -358,7 +366,7 @@ func (a *agentImpl) handleInvalidOrTextResponse(ctx context.Context, messages []
 	}
 
 	// Проверяем reasoning на partial/fragmented tool call XML (</tool_call>, <parameter=...> и т.п.)
-	if responseText == "" && reasoningText != "" && hasPartialToolCall(reasoningText) && !strings.Contains(reasoningText, "<tool_call>") {
+	if responseText == "" && reasoningText != "" && hasPartialToolCall(reasoningText) && !strings.Contains(reasoningText, "<tool_call>") && finishReason != "" {
 		prefix := a.agentPrefix()
 		snippet := truncateStr(reasoningText, 200)
 		fmt.Printf(prefix+"[TOOL] Partial/malformed tool call fragments in reasoning: %s\n", snippet)

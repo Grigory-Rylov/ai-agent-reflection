@@ -8,6 +8,11 @@ import (
 	sess "github.com/opencode/llama-client/session"
 )
 
+type contextKey string
+
+const toolCallDepthKey contextKey = "tool_call_depth"
+const maxToolCallRecursion = 25
+
 // ============================================================
 // ToolResultProcessor — обработка результатов инструментов
 // ============================================================
@@ -38,6 +43,14 @@ func (p *agentToolResultProcessor) ProcessResults(ctx context.Context, originalM
 // Поддерживает как NATIVE (OpenAI format), так и XML/JSON tool calls в ответе
 // executed — карта сигнатур уже выполненных инструментов (для дедупликации между рекурсиями)
 func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []Message, assistantContent string, toolCalls []ToolCall, toolResults []ToolCallResult, session *sess.Session, executed map[string]bool) (string, error) {
+	depth, _ := ctx.Value(toolCallDepthKey).(int)
+	if depth >= maxToolCallRecursion {
+		prefix := a.agentPrefix()
+		fmt.Printf(prefix+"[WARN] Tool call recursion limit (%d) reached, stopping recursion\n", maxToolCallRecursion)
+		logger.DebugToFile(prefix+"[FLOW] Tool call recursion limit reached at depth %d", depth)
+		return "", nil
+	}
+
 	if a.config.LlamaServerURL == "" {
 		return "", nil
 	}
@@ -127,7 +140,8 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		}
 		result := a.executeAllTools(ctx, streamToolCalls, session.GetPeerID())
 		if len(result.ToolCalls) > 0 {
-			return a.processToolResults(ctx, messages, "", streamToolCalls, result.ToolCalls, session, executed)
+			recursiveCtx := context.WithValue(ctx, toolCallDepthKey, depth+1)
+			return a.processToolResults(recursiveCtx, messages, "", streamToolCalls, result.ToolCalls, session, executed)
 		}
 	}
 
@@ -168,7 +182,8 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		if len(uniqueCalls) > 0 {
 			result := a.executeAllTools(ctx, uniqueCalls, session.GetPeerID())
 			if len(result.ToolCalls) > 0 {
-				return a.processToolResults(ctx, messages, parsed.Content, uniqueCalls, result.ToolCalls, session, executed)
+				recursiveCtx := context.WithValue(ctx, toolCallDepthKey, depth+1)
+				return a.processToolResults(recursiveCtx, messages, parsed.Content, uniqueCalls, result.ToolCalls, session, executed)
 			}
 		}
 	}
@@ -193,7 +208,8 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		if len(uniqueCalls) > 0 {
 			result := a.executeAllTools(ctx, uniqueCalls, session.GetPeerID())
 			if len(result.ToolCalls) > 0 {
-				return a.processToolResults(ctx, messages, jsonParsed.Content, uniqueCalls, result.ToolCalls, session, executed)
+				recursiveCtx := context.WithValue(ctx, toolCallDepthKey, depth+1)
+				return a.processToolResults(recursiveCtx, messages, jsonParsed.Content, uniqueCalls, result.ToolCalls, session, executed)
 			}
 		}
 	}

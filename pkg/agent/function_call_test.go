@@ -133,3 +133,21 @@ func TestHasPartialToolCall_FunctionParamOutsideContext(t *testing.T) {
 		t.Error("expected true for <parameter=...> outside tool_call context")
 	}
 }
+
+func TestHasPartialToolCall_UnclosedToolCall(t *testing.T) {
+	// <tool_call> without </tool_call> — unclosed, partial
+	input := "some thinking\n<tool_call>\n<function=write_file>\n<parameter=path>/tmp/test.txt</parameter>"
+	if !hasPartialToolCall(input) {
+		t.Error("expected true for <tool_call> without </tool_call>")
+	}
+}
+
+func TestHasPartialToolCall_ValidWithUnclosed(t *testing.T) {
+	// valid <tool_call>...</tool_call> plus a second unclosed — partial
+	input := "<tool_call>\n<function=read_file>\n<parameter=path>/tmp/x</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=write_file>"
+	if !hasPartialToolCall(input) {
+		t.Error("expected true for valid + unclosed <tool_call>")
+	}
+}
+
+
