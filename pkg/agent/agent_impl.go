@@ -212,13 +212,20 @@ func (a *agentImpl) RegisterTools(registry *tools.Registry) {
 			a.toolsRegistry.Register(tool)
 		}
 	}
-	// Также передаём схемы для OpenAI function calling
 	schema := registry.ToOpenAISchema()
 	if len(schema) > 0 {
 		a.toolSchemas = schema
 	}
 }
 
+// ReplaceTools replaces the entire tools registry and schemas
+func (a *agentImpl) ReplaceTools(registry *tools.Registry) {
+	if registry == nil {
+		return
+	}
+	a.toolsRegistry = registry
+	a.toolSchemas = registry.ToOpenAISchema()
+}
 // ============================================================
 // Методы Agent Interface
 // ============================================================

@@ -1058,4 +1058,97 @@ func TestProcessWithTools_XMLInResponseText_LongerReasoning(t *testing.T) {
 	t.Logf("Final response: %s, LLM calls: %d", response, callCount)
 }
 
+// TestTruncatedStream_NoCorrectiveFeedback проверяет что при finish_reason=""
+// (обрыв стрима) с частичным <tool_call> в reasoning corrective feedback НЕ отправляется.
+// Раньше код видел <tool_call> в reasoning и вызывал handleInvalidXMLToolCall,
+// что приводило к бесконечному циклу corrective feedback → обрыв → corrective feedback.
+func TestTruncatedStream_NoCorrectiveFeedback(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "text/event-stream")
+
+		reasoningWithPartial := "Let me write.\\n\\n<tool_call>\\n<function=file_write>\\n<parameter=path>/tmp/test.txt</parameter>"
+		w.Write([]byte(`data: {"choices":[{"delta":{"reasoning_content":"` + reasoningWithPartial + `"}}]}` + "\n\n"))
+		w.Write([]byte("[DONE]\n"))
+	}))
+	defer server.Close()
+
+	config := Config{
+		LlamaServerURL: server.URL,
+		Model:          "test-model",
+		MaxTokens:      100,
+		Temperature:    0.7,
+		SessionConfig:  session.DefaultConfig(),
+	}
+	config.SessionConfig.PeerID = 99980
+	config.SessionConfig.MaxHistory = 100
+
+	a, _ := newTestAgentWithStub(t, config)
+
+	ctx := context.Background()
+	response, err := a.ProcessMessage(ctx, "do something", 99980)
+	if err != nil {
+		t.Fatalf("ProcessMessage failed: %v", err)
+	}
+
+	if callCount != 1 {
+		t.Errorf("expected exactly 1 LLM call (no corrective feedback for truncated stream), got %d", callCount)
+	}
+
+	if response != "" {
+		t.Errorf("expected empty response for truncated stream, got %q", response)
+	}
+}
+
+// TestMalformedXMLInReasoning_WithFinishStop проверяет что при finish_reason="stop"
+// со сломанным XML в reasoning corrective feedback ВСЁ ЕЩЁ отправляется
+// (эта логика не должна сломаться после фикса truncation).
+func TestMalformedXMLInReasoning_WithFinishStop(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "text/event-stream")
+
+		if callCount == 1 {
+			reasoningWithPartial := "Let me write.\\n\\n<tool_call>\\n<function=file_write>\\n<parameter=path>/tmp/test.txt</parameter>"
+			w.Write([]byte(`data: {"choices":[{"delta":{"reasoning_content":"` + reasoningWithPartial + `"}}]}` + "\n\n"))
+			w.Write([]byte(`data: {"choices":[{"delta":{},"finish_reason":"stop"}]}` + "\n\n"))
+		} else {
+			w.Write([]byte(`data: {"choices":[{"delta":{"content":"OK done."}}]}` + "\n\n"))
+			w.Write([]byte(`data: {"choices":[{"delta":{},"finish_reason":"stop"}]}` + "\n\n"))
+		}
+		w.Write([]byte("[DONE]\n"))
+	}))
+	defer server.Close()
+
+	config := Config{
+		LlamaServerURL: server.URL,
+		Model:          "test-model",
+		MaxTokens:      100,
+		Temperature:    0.7,
+		SessionConfig:  session.DefaultConfig(),
+	}
+	config.SessionConfig.PeerID = 99990
+	config.SessionConfig.MaxHistory = 100
+
+	a, _ := newTestAgentWithStub(t, config)
+
+	ctx := context.Background()
+	response, err := a.ProcessMessage(ctx, "do something", 99990)
+	if err != nil {
+		t.Fatalf("ProcessMessage failed: %v", err)
+	}
+
+	if callCount < 2 {
+		t.Errorf("expected at least 2 LLM calls (corrective feedback sent), got %d", callCount)
+	}
+
+	if response == "" {
+		t.Error("expected non-empty response after corrective feedback")
+	}
+
+	t.Logf("Final response: %s, LLM calls: %d", response, callCount)
+}
+
 

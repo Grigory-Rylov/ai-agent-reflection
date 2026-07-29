@@ -39,6 +39,7 @@ type Config struct {
 	AllowedDirs    []string                       `json:"allowed_dirs"`
 	DBPath         string                         `json:"db_path"`
 	PromptsDir     string                         `json:"prompts_dir"`
+	MaxReviewIterations int                       `json:"max_review_iterations"`
 	Agents         map[string]agentpolicy.AgentCfg `json:"agents"`
 }
 
@@ -105,6 +106,7 @@ func main() {
 	}
 	if *reset {
 		os.Remove(dbPath)
+		tools.GlobalTodo.Reset()
 	}
 
 	var dbStore store.Store
@@ -115,6 +117,8 @@ func main() {
 	} else {
 		log.InfoLog("SQLite store initialized: %s", dbPath)
 	}
+
+	tools.GlobalTodo.Reset()
 
 	vkClient := vk.NewBotClient(config.TokenVK)
 
@@ -189,28 +193,10 @@ func main() {
 		return handleQuestion(vkClient, peerID, q)
 	})
 
-	// Инициализируем AgentManager из конфига
-	agentManager := agentpolicy.NewAgentManager()
-	if config.Agents != nil {
-		agentManager.LoadFromConfig(config.Agents)
-	}
-	// Resolve {file:...} prompts in config-loaded agents
-	for _, name := range agentManager.ListAgentNames() {
-		info, err := agentManager.GetAgent(name)
-		if err != nil || !strings.HasPrefix(info.Prompt, "{file:") {
-			continue
-		}
-		resolved, rErr := resolvePrompt(info.Prompt, agentDir)
-		if rErr != nil {
-			log.WarnLogf("Failed to resolve prompt for agent %s: %v", name, rErr)
-		} else {
-			info.Prompt = resolved
-			agentManager.RegisterAgent(info)
-		}
-	}
+	agentManager := initAgentManager(config.Agents, agentDir, log)
 
 	// Регистрируем subagent tool как обычный тул (как task в opencode)
-	sysPromptDir := filepath.Join(agentDir, "system_prompt")
+	sysPromptDir := filepath.Join(agentDir, "agents")
 	subAgentCfg := agent.Config{
 		LlamaServerURL: llamaURL,
 		Model:          config.Model,
@@ -252,6 +238,7 @@ func main() {
 		VKClient:        vkClient,
 		SystemPromptDir: sysPromptDir,
 		AgentManager:    agentManager,
+		MaxReviewIterations: config.MaxReviewIterations,
 	})
 
 	botHandler := vk.NewBotHandlerWithPeerID(vkClient, agentLoop, log,
@@ -300,13 +287,17 @@ func main() {
 	if *initialPrompt != "" && config.PeerID > 0 {
 		prompt := *initialPrompt
 
-	// Проверяем #agent_name — если есть, пускаем через оркестратор
-	agentName, task := vk.ParseAgentHashMention(prompt)
-	if agentName != "" && orchestrator != nil && task != "" {
-			log.InfoLogf("Processing initial prompt via orchestrator (#%s): %s", agentName, truncate(task, 100))
+		// Проверяем #agent_name — если есть, пускаем через RunAgent
+		knownNames := agentManager.ListAgentNames()
+		if len(knownNames) == 0 {
+			knownNames = []string{"worker", "qa", "explore", "general", "agent", "coordinator"}
+		}
+		agentName, task := vk.ParseAgentHashMention(prompt, knownNames)
+		if agentName != "" && orchestrator != nil && task != "" {
+			log.InfoLogf("Processing initial prompt via RunAgent (#%s): %s", agentName, truncate(task, 100))
 
 			promptCtx, promptCancel := context.WithTimeout(ctx, 15*time.Minute)
-			response, err := orchestrator.ExecuteTask(promptCtx, task, config.PeerID)
+			response, err := orchestrator.RunAgent(promptCtx, agentName, task, config.PeerID)
 			promptCancel()
 
 			if err != nil {
@@ -442,22 +433,21 @@ func registerTools(r *tools.Registry) {
 	r.Register(&tools.EditTool{})
 	r.Register(&tools.ApplyPatchTool{})
 	r.Register(&tools.QuestionTool{})
+	r.Register(tools.GlobalTodo)
 }
 
 func loadConfig(path string) (Config, error) {
 	var config Config
 
-	homeDir, _ := os.UserHomeDir()
-	globalPath := filepath.Join(homeDir, ".config", "ai-agent", "config.json")
-
-	loadPath := path
-	if _, err := os.Stat(globalPath); err == nil {
-		loadPath = globalPath
-	}
-
-	data, err := os.ReadFile(loadPath)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return config, fmt.Errorf("config not found at '%s' or '%s': %w", path, globalPath, err)
+		// Fallback to global config
+		homeDir, _ := os.UserHomeDir()
+		globalPath := filepath.Join(homeDir, ".config", "ai-agent", "config.json")
+		data, err = os.ReadFile(globalPath)
+		if err != nil {
+			return config, fmt.Errorf("config not found at '%s' or '%s': %w", path, globalPath, err)
+		}
 	}
 	if err := json.Unmarshal(data, &config); err != nil {
 		return config, err
@@ -475,6 +465,40 @@ func loadMCPConfig(path string) (*mcp.Config, error) {
 		return nil, err
 	}
 	return &config, nil
+}
+
+// initAgentManager creates AgentManager from config agents map,
+// resolving prompt file paths and loading .md prompts.
+func initAgentManager(agents map[string]agentpolicy.AgentCfg, agentDir string, log interface{ InfoLogf(string, ...interface{}) }) *agentpolicy.AgentManager {
+	am := agentpolicy.NewAgentManager()
+	if agents == nil {
+		log.InfoLogf("AgentManager: %d agents registered (defaults only)", len(am.ListAgentNames()))
+		return am
+	}
+	resolved := make(map[string]agentpolicy.AgentCfg)
+	for name, ac := range agents {
+		if ac.Prompt != "" {
+			promptPath := ac.Prompt
+			if !filepath.IsAbs(promptPath) {
+				promptPath = filepath.Join(agentDir, promptPath)
+			}
+			prompt, err := agentpolicy.LoadMDPrompt(promptPath)
+			if err != nil {
+				log.InfoLogf("Failed to load prompt for agent %s from %s: %v", name, promptPath, err)
+				data, rErr := os.ReadFile(promptPath)
+				if rErr != nil {
+					log.InfoLogf("Skipping agent %s: cannot read prompt from %s", name, promptPath)
+					continue
+				}
+				prompt = string(data)
+			}
+			ac.Prompt = prompt
+		}
+		resolved[name] = ac
+	}
+	am.LoadFromConfig(resolved)
+	log.InfoLogf("AgentManager: %d agents registered", len(am.ListAgentNames()))
+	return am
 }
 
 func truncate(s string, max int) string {

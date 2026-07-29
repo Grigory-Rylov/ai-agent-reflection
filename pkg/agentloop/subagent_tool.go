@@ -163,9 +163,18 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 	}
 
 	a := t.createAgent(name, systemPrompt)
-	t.registerMainTools(a)
-	t.registerSubAgentTool(name, a)
-	t.registerReviewTool(name, a)
+
+	t.applyAgentPermissions(name, a)
+
+	if t.isReviewAgent(name) {
+		t.registerReadOnlyTools(a)
+		t.registerReviewTool(name, a)
+	} else {
+		t.registerMainTools(a)
+		t.registerSubAgentTool(name, a)
+		t.registerReviewTool(name, a)
+	}
+
 	a.SetThinkingCallback(t.makeThinkingCallback(name))
 
 	if t.SetActiveAgent != nil {
@@ -183,6 +192,43 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 			"response": response,
 		},
 	}, nil
+}
+
+func (t *SubAgentTool) applyAgentPermissions(name string, a agent.Agent) {
+	if t.AgentManager == nil {
+		return
+	}
+	info, err := t.AgentManager.GetAgent(name)
+	if err != nil {
+		return
+	}
+	if info.Permission == nil || len(info.Permission) == 0 {
+		return
+	}
+	if ps, ok := a.(interface{ SetPermissionChecker(agent.PermissionChecker) }); ok {
+		ps.SetPermissionChecker(agentpolicy.NewPermissionAdapter(info.Permission))
+	}
+}
+
+func (t *SubAgentTool) registerReadOnlyTools(a agent.Agent) {
+	roReg := tools.NewRegistry()
+	roReg.Register(&tools.FileReadTool{})
+	roReg.Register(&tools.TimeGetTool{})
+	roReg.Register(&tools.DirListTool{})
+	roReg.Register(&tools.WebFetchTool{})
+	roReg.Register(&tools.WebSearchTool{})
+	roReg.Register(&tools.GlobTool{})
+	roReg.Register(&tools.GrepTool{})
+	roReg.Register(&tools.CalcTool{})
+	roReg.Register(&tools.ShellExecuteTool{})
+	if inserter, ok := a.(toolInserter); ok {
+		inserter.ReplaceTools(roReg)
+	} else {
+		schemas := roReg.ToOpenAISchema()
+		if len(schemas) > 0 {
+			a.SetTools(schemas)
+		}
+	}
 }
 
 func (t *SubAgentTool) resolveAgentName(raw string) (string, error) {
@@ -249,7 +295,7 @@ func (t *SubAgentTool) createAgent(name, systemPrompt string) agent.Agent {
 		MaxHistory:  100,
 	}
 	cfg.EnableLoopAlert = false
-	cfg.EnableContextCompression = false
+	cfg.EnableContextCompression = true
 	cfg.MaxToolCalls = 10
 	cfg.AgentName = name
 
@@ -278,8 +324,7 @@ func (t *SubAgentTool) isLeafAgent(name string) bool {
 			return info.Leaf
 		}
 	}
-	// Fallback: naming convention
-	return strings.Contains(name, "worker") || strings.Contains(name, "developer") || strings.Contains(name, "coder")
+	return false
 }
 
 func (t *SubAgentTool) isReviewAgent(name string) bool {
@@ -288,8 +333,7 @@ func (t *SubAgentTool) isReviewAgent(name string) bool {
 			return info.Review
 		}
 	}
-	// Fallback: naming convention
-	return strings.Contains(name, "qa") || strings.Contains(name, "review") || strings.Contains(name, "tester")
+	return false
 }
 
 func (t *SubAgentTool) registerSubAgentTool(name string, a agent.Agent) {

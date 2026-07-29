@@ -20,6 +20,7 @@ type AgentInfo struct {
 	Hidden      bool                     `json:"hidden"`
 	Leaf        bool                     `json:"leaf"`
 	Review      bool                     `json:"review"`
+	Coordinator bool                   `json:"coordinator"`
 	Prompt      string                   `json:"prompt"`
 	Model       string                   `json:"model"`
 	Temperature *float64                 `json:"temperature"`
@@ -237,6 +238,10 @@ func (am *AgentManager) LoadFromConfig(cfg map[string]AgentCfg) {
 		if mode == "" {
 			mode = ModeSubagent
 		}
+		perm := ac.Permission
+		if perm == nil || len(perm) == 0 {
+			perm = DefaultPermission()
+		}
 		am.RegisterAgent(AgentInfo{
 			Name:        name,
 			Description: ac.Description,
@@ -244,17 +249,21 @@ func (am *AgentManager) LoadFromConfig(cfg map[string]AgentCfg) {
 			Hidden:      ac.Hidden,
 			Leaf:        ac.Leaf,
 			Review:      ac.Review,
+			Coordinator: ac.Coordinator,
 			Prompt:      ac.Prompt,
+			Permission:  perm,
 		})
 	}
 }
 
 // AgentCfg — упрощённая конфигурация агента из JSON-конфига
 type AgentCfg struct {
-	Mode        string `json:"mode"`
-	Description string `json:"description"`
-	Prompt      string `json:"prompt"`
-	Hidden      bool   `json:"hidden"`
-	Leaf        bool   `json:"leaf"`
-	Review      bool   `json:"review"`
+	Mode        string     `json:"mode"`
+	Description string     `json:"description"`
+	Prompt      string     `json:"prompt"`
+	Hidden      bool       `json:"hidden"`
+	Leaf        bool       `json:"leaf"`
+	Review      bool       `json:"review"`
+	Coordinator bool       `json:"coordinator"`
+	Permission  Permission `json:"permission"`
 }

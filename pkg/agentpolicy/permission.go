@@ -66,6 +66,25 @@ func MergePermissions(base Permission, override Permission) Permission {
 	return merged
 }
 
+// PermissionAdapter адаптирует Permission к интерфейсу проверки разрешений.
+// Реализует contract: Check(toolName string) string, возвращая "allow", "deny", "ask".
+// Используется для интеграции с agent.PermissionChecker без импорта пакета agent.
+type PermissionAdapter struct {
+	P Permission
+}
+
+func (a *PermissionAdapter) Check(toolName string) string {
+	if a == nil || a.P == nil {
+		return "allow"
+	}
+	return a.P.GetAction(toolName)
+}
+
+// NewPermissionAdapter создаёт адаптер из Permission
+func NewPermissionAdapter(p Permission) *PermissionAdapter {
+	return &PermissionAdapter{P: p}
+}
+
 // matchGlob — простой glob-матчер для паттернов
 func matchGlob(pattern, name string) bool {
 	// Поддерживаем простые паттерны: "file_*", "*.go", "edit:*/..."

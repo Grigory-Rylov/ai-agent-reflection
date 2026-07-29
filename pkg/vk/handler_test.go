@@ -117,6 +117,19 @@ func (m *mockOrchestrator) ExecuteTask(_ context.Context, task string, peerID in
 	return m.fixedResponse, m.fixedErr
 }
 
+func (m *mockOrchestrator) RunAgent(_ context.Context, agentName, task string, peerID int64) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastTask = task
+	m.lastPeerID = peerID
+	m.callCount++
+	return m.fixedResponse, m.fixedErr
+}
+
+func (m *mockOrchestrator) ListAgentNames() []string {
+	return []string{"worker", "qa", "explore", "general", "agent", "coordinator"}
+}
+
 func (m *mockOrchestrator) GetCurrentAgent() string {
 	return "mock-agent"
 }
@@ -480,7 +493,7 @@ func TestParseAgentHashMention(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotName, gotTask := ParseAgentHashMention(tt.input)
+			gotName, gotTask := ParseAgentHashMention(tt.input, []string{"worker", "qa", "explore", "general", "agent", "coordinator"})
 			if gotName != tt.wantName {
 				t.Errorf("ParseAgentHashMention() name = %q, want %q", gotName, tt.wantName)
 			}
