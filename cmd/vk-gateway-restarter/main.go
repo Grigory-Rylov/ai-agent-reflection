@@ -27,8 +27,9 @@ type Config struct {
 }
 
 type agentProc struct {
-	mu  sync.Mutex
-	cmd *exec.Cmd
+	mu         sync.Mutex
+	cmd        *exec.Cmd
+	restarting bool
 }
 
 func (ap *agentProc) start(agentPath string, args []string) error {
@@ -81,6 +82,12 @@ func (ap *agentProc) isRunning() bool {
 	ap.mu.Lock()
 	defer ap.mu.Unlock()
 	return ap.cmd != nil && ap.cmd.Process != nil && ap.cmd.ProcessState == nil
+}
+
+func (ap *agentProc) setRestarting(v bool) {
+	ap.mu.Lock()
+	defer ap.mu.Unlock()
+	ap.restarting = v
 }
 
 func (ap *agentProc) pid() int {
@@ -160,6 +167,13 @@ func monitorAgent(ap *agentProc, agentPath string, agentArgs []string) {
 		if ap.isRunning() {
 			continue
 		}
+		ap.mu.Lock()
+		if ap.restarting {
+			ap.mu.Unlock()
+			continue
+		}
+		ap.mu.Unlock()
+
 		fmt.Println("[restarter] Agent died, restarting...")
 		if err := ap.start(agentPath, agentArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "[restarter] Restart failed: %v\n", err)
@@ -218,27 +232,32 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 				switch {
 				case cmd == "/restart":
 					vkClient.SendMessage(replyPeerID, "Перезапуск агента...")
+					ap.setRestarting(true)
 					ap.stop()
 					if err := ap.start(agentPath, agentArgs); err != nil {
 						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ Ошибка перезапуска: %v", err))
 					} else {
 						vkClient.SendMessage(replyPeerID, "✅ Агент перезапущен")
 					}
+					ap.setRestarting(false)
 
 				case cmd == "/update":
 					vkClient.SendMessage(replyPeerID, "Обновление агента: git pull, build, restart...")
+					ap.setRestarting(true)
 					ap.stop()
 
 					output, err := exec.Command("git", "pull").CombinedOutput()
 					if err != nil {
 						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ git pull failed:\n%s", truncate(string(output), 500)))
 						ap.start(agentPath, agentArgs)
+						ap.setRestarting(false)
 						break
 					}
 
 					if err := buildAgent(agentPath); err != nil {
 						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ Build failed: %v", err))
 						ap.start(agentPath, agentArgs)
+						ap.setRestarting(false)
 						break
 					}
 
@@ -247,6 +266,7 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 					} else {
 						vkClient.SendMessage(replyPeerID, "✅ Агент обновлён и перезапущен")
 					}
+					ap.setRestarting(false)
 
 				case strings.HasPrefix(cmd, "/b "):
 					branch := strings.TrimSpace(strings.TrimPrefix(cmd, "/b "))
@@ -255,12 +275,14 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 						break
 					}
 					vkClient.SendMessage(replyPeerID, fmt.Sprintf("Переключение на ветку %s...", branch))
+					ap.setRestarting(true)
 					ap.stop()
 
 					output, err := exec.Command("git", "fetch", "--all").CombinedOutput()
 					if err != nil {
 						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ git fetch failed:\n%s", truncate(string(output), 500)))
 						ap.start(agentPath, agentArgs)
+						ap.setRestarting(false)
 						break
 					}
 
@@ -268,6 +290,7 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 					if err != nil {
 						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ git checkout %s failed:\n%s", branch, truncate(string(output), 500)))
 						ap.start(agentPath, agentArgs)
+						ap.setRestarting(false)
 						break
 					}
 
@@ -279,6 +302,7 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 					if err := buildAgent(agentPath); err != nil {
 						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ Build failed: %v", err))
 						ap.start(agentPath, agentArgs)
+						ap.setRestarting(false)
 						break
 					}
 
@@ -287,6 +311,7 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 					} else {
 						vkClient.SendMessage(replyPeerID, fmt.Sprintf("✅ Переключено на %s, агент перезапущен", branch))
 					}
+					ap.setRestarting(false)
 
 				case cmd == "/status":
 					status := fmt.Sprintf("Restarter v%s\n", Version)
