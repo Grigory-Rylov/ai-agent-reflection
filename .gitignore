@@ -1,6 +1,6 @@
 # Binaries
 vk-gateway
-restarter
+agent-restarter
 /vk-gateway-restarter
 !cmd/v-gateway-restarter/
 /agent

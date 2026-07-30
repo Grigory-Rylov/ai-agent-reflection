@@ -100,6 +100,117 @@ func FileToolPaths(toolName string, args map[string]string) []string {
 	return nil
 }
 
+// fileCommands содержит команды, оперирующие файлами/директориями.
+// Для этих команд ExtractShellPaths извлекает пути из аргументов.
+var fileCommands = map[string]bool{
+	"cat": true, "less": true, "more": true, "head": true, "tail": true,
+	"ls": true, "find": true,
+	"cp": true, "mv": true, "rm": true,
+	"mkdir": true, "touch": true, "chmod": true, "chown": true,
+	"grep": true, "sed": true, "awk": true,
+	"diff": true, "patch": true,
+	"git": true,
+}
+
+// isAbsolutePath возвращает true, если строка выглядит как абсолютный Unix-путь.
+func isAbsolutePath(s string) bool {
+	return len(s) > 0 && s[0] == '/'
+}
+
+// looksLikePath проверяет, похож ли токен на путь к файлу.
+// Исключает флаги, IP-адреса, URL, хосты, цитируемые строки и опции.
+func looksLikePath(token string) bool {
+	if strings.HasPrefix(token, "-") {
+		return false
+	}
+	if len(token) > 0 && (token[0] == '\'' || token[0] == '"' || token[0] == '`') {
+		return false
+	}
+	if isAbsolutePath(token) {
+		return true
+	}
+	if strings.HasPrefix(token, "http://") || strings.HasPrefix(token, "https://") {
+		return false
+	}
+	if strings.HasPrefix(token, "~") {
+		return true
+	}
+	if strings.Contains(token, ".") && !strings.Contains(token, "@") {
+		parts := strings.Split(token, ".")
+		allNumeric := true
+		for _, p := range parts {
+			isNum := true
+			for _, c := range p {
+				if c < '0' || c > '9' {
+					isNum = false
+					break
+				}
+			}
+			if isNum {
+				continue
+			}
+			allNumeric = false
+		}
+		if allNumeric {
+			return false
+		}
+		return true
+	}
+	if strings.Contains(token, "@") {
+		return false
+	}
+	return false
+}
+
+// ExtractShellPaths извлекает пути к файлам из shell-команды.
+// Возвращает пустой слайс, если команда не оперирует файлами.
+func ExtractShellPaths(command string) []string {
+	if command == "" {
+		return nil
+	}
+
+	parts := strings.Fields(command)
+	if len(parts) == 0 {
+		return nil
+	}
+
+	cmd := parts[0]
+	if slashIdx := strings.LastIndex(cmd, "/"); slashIdx >= 0 {
+		cmd = cmd[slashIdx+1:]
+	}
+	if !fileCommands[cmd] {
+		return nil
+	}
+
+	var paths []string
+	for _, token := range parts[1:] {
+		if looksLikePath(token) {
+			paths = append(paths, token)
+		}
+	}
+	return paths
+}
+
+// ShellPathsAllAllowed проверяет, что все указанные пути находятся
+// в разрешённых директориях access controller'а.
+// Возвращает true если контроллера нет, путей нет, или все пути разрешены.
+func ShellPathsAllAllowed(paths []string) bool {
+	ctrl := GetAccessController()
+	if ctrl == nil {
+		return true
+	}
+	for _, p := range paths {
+		resolved, err := resolvePath(p)
+		if err != nil {
+			return false
+		}
+		if err := CheckPathAllowed(resolved); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
 // CheckToolArgs проверяет все пути в аргументах инструмента на доступ.
 func CheckToolArgs(toolName string, args map[string]string) error {
 	paths := FileToolPaths(toolName, args)
