@@ -457,7 +457,7 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 
 func (al *agentLoop) buildAgentConfig() agent.Config {
 	_, modelName, llamaURL := al.config.ModelHolder.GetCurrent()
-	return agent.Config{
+	cfg := agent.Config{
 		LlamaServerURL:                llamaURL,
 		Model:                         modelName,
 		MaxTokens:                     al.config.MaxTokens,
@@ -471,6 +471,22 @@ func (al *agentLoop) buildAgentConfig() agent.Config {
 		CompressionPercentageThreshold: al.config.CompressionPercentageThreshold,
 		Debug:                         al.config.Debug,
 	}
+
+	// Передаём список инструментов из реестра (включая MCP) в системный промпт
+	if al.registry != nil {
+		schemas := al.registry.ToOpenAISchema()
+		if len(schemas) > 0 {
+			names := make([]string, 0, len(schemas))
+			for _, s := range schemas {
+				if n, ok := s["name"].(string); ok {
+					names = append(names, n)
+				}
+			}
+			cfg.ToolsList = names
+		}
+	}
+
+	return cfg
 }
 
 func (al *agentLoop) registerToolsToAgent(a agent.Agent, reg ToolRegistry) {
