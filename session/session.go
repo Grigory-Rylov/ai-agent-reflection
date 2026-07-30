@@ -723,6 +723,8 @@ func (s *Session) SetWorkingDir(dir string) {
 	if idx >= 0 {
 		s.messages[idx].Content = s.buildSystemMessage()
 	}
+
+	s.saveNow()
 }
 
 // ============================================================
