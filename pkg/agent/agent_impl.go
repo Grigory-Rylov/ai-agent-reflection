@@ -344,6 +344,11 @@ func (a *agentImpl) getSession(peerID int64) *session.Session {
 			config.SystemPrompt = a.systemPrompt
 			s = session.NewSession(config)
 			a.sessions[peerID] = s
+
+			// Восстанавливаем workingDir из стора в глобальную переменную
+			if wd := s.GetWorkingDir(); wd != "" {
+				tools.SetWorkingDir(wd)
+			}
 		}
 		a.mu.Unlock()
 	}

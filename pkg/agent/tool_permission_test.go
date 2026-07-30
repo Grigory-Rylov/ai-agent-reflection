@@ -233,46 +233,99 @@ func TestShellExecutePermissionNoPaths(t *testing.T) {
 		},
 	}
 
-	t.Run("shell ping requires ask (no file paths)", func(t *testing.T) {
+	t.Run("shell ping should NOT ask (no file paths)", func(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(askChecker)
 		e := newAgentToolExecutor(a)
 
-		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
-			"command": "ping -c 2 192.168.1.192",
-		}, 12345)
-
-		// With no question callback, askUserPermission returns true
-		if !result {
-			t.Error("expected allow (ask with no callback returns true)")
-		}
-	})
-
-	t.Run("shell ssh requires ask (no file paths)", func(t *testing.T) {
-		a := NewAgent(config)
-		a.SetPermissionChecker(askChecker)
-		e := newAgentToolExecutor(a)
+		asked := false
+		tools.SetQuestionCallback(func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+			asked = true
+			return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
+		})
+		defer tools.SetQuestionCallback(nil)
 
 		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
-			"command": "ssh grishberg@192.168.1.192 hostname",
+			"command": "ping -c 3 -W 2 192.168.1.192",
 		}, 12345)
 
 		if !result {
-			t.Error("expected allow (ask with no callback returns true)")
+			t.Error("expected allow for ping (no file paths)")
+		}
+		if asked {
+			t.Error("expected NO permission ask for ping (no file paths)")
 		}
 	})
 
-	t.Run("shell whoami requires ask (no file paths)", func(t *testing.T) {
+	t.Run("shell echo should NOT ask (no file paths)", func(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(askChecker)
 		e := newAgentToolExecutor(a)
+
+		asked := false
+		tools.SetQuestionCallback(func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+			asked = true
+			return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
+		})
+		defer tools.SetQuestionCallback(nil)
+
+		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+			"command": "echo hello world",
+		}, 12345)
+
+		if !result {
+			t.Error("expected allow for echo (no file paths)")
+		}
+		if asked {
+			t.Error("expected NO permission ask for echo (no file paths)")
+		}
+	})
+
+	t.Run("shell whoami should NOT ask (no file paths)", func(t *testing.T) {
+		a := NewAgent(config)
+		a.SetPermissionChecker(askChecker)
+		e := newAgentToolExecutor(a)
+
+		asked := false
+		tools.SetQuestionCallback(func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+			asked = true
+			return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
+		})
+		defer tools.SetQuestionCallback(nil)
 
 		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
 			"command": "whoami",
 		}, 12345)
 
 		if !result {
-			t.Error("expected allow (ask with no callback returns true)")
+			t.Error("expected allow for whoami (no file paths)")
+		}
+		if asked {
+			t.Error("expected NO permission ask for whoami (no file paths)")
+		}
+	})
+
+	t.Run("shell curl should NOT ask (no file paths)", func(t *testing.T) {
+		a := NewAgent(config)
+		a.SetPermissionChecker(askChecker)
+		e := newAgentToolExecutor(a)
+
+		asked := false
+		tools.SetQuestionCallback(func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+			asked = true
+			return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
+		})
+		defer tools.SetQuestionCallback(nil)
+
+		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+			"command": "curl https://example.com",
+		}, 12345)
+
+		if !result {
+			t.Error("expected allow for curl (no file paths)")
+		}
+		if asked {
+			t.Error("expected NO permission ask for curl (no file paths)")
 		}
 	})
 }
@@ -297,46 +350,75 @@ func TestShellExecutePathOutsideAllowed(t *testing.T) {
 		},
 	}
 
-	t.Run("shell cat outside allowed dir triggers ask", func(t *testing.T) {
+	t.Run("shell cat outside allowed dir MUST ask", func(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(askChecker)
 		e := newAgentToolExecutor(a)
+
+		asked := false
+		tools.SetQuestionCallback(func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+			asked = true
+			return map[string]interface{}{"selected": []interface{}{"❌ Deny"}}, nil
+		})
+		defer tools.SetQuestionCallback(nil)
 
 		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
 			"command": "cat /etc/passwd",
 		}, 12345)
 
-		// /etc/passwd is outside allowed dir → goes to ask → no callback → returns true
-		if !result {
-			t.Error("expected allow (ask with no callback returns true)")
+		if result {
+			t.Error("expected deny for cat /etc/passwd (path outside allowed dir)")
+		}
+		if !asked {
+			t.Error("expected permission ask for cat /etc/passwd (path outside allowed dir)")
 		}
 	})
 
-	t.Run("shell rm outside allowed dir triggers ask", func(t *testing.T) {
+	t.Run("shell rm outside allowed dir MUST ask", func(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(askChecker)
 		e := newAgentToolExecutor(a)
+
+		asked := false
+		tools.SetQuestionCallback(func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+			asked = true
+			return map[string]interface{}{"selected": []interface{}{"❌ Deny"}}, nil
+		})
+		defer tools.SetQuestionCallback(nil)
 
 		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
 			"command": "rm -rf /important/data",
 		}, 12345)
 
-		if !result {
-			t.Error("expected allow (ask with no callback returns true)")
+		if result {
+			t.Error("expected deny for rm /important/data (path outside allowed dir)")
+		}
+		if !asked {
+			t.Error("expected permission ask for rm /important/data (path outside allowed dir)")
 		}
 	})
 
-	t.Run("shell cp one path outside allowed dir triggers ask", func(t *testing.T) {
+	t.Run("shell cp one path outside allowed dir MUST ask", func(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(askChecker)
 		e := newAgentToolExecutor(a)
+
+		asked := false
+		tools.SetQuestionCallback(func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+			asked = true
+			return map[string]interface{}{"selected": []interface{}{"❌ Deny"}}, nil
+		})
+		defer tools.SetQuestionCallback(nil)
 
 		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
 			"command": "cp /etc/shadow " + filepath.Join(allowedDir, "stolen.txt"),
 		}, 12345)
 
-		if !result {
-			t.Error("expected allow (ask with no callback returns true)")
+		if result {
+			t.Error("expected deny for cp with path outside allowed dir")
+		}
+		if !asked {
+			t.Error("expected permission ask for cp with path outside allowed dir")
 		}
 	})
 }

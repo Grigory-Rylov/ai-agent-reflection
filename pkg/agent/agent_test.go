@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/opencode/llama-client/pkg/store"
+	"github.com/opencode/llama-client/pkg/tools"
 	"github.com/opencode/llama-client/session"
 )
 
@@ -327,5 +329,140 @@ func TestAgentMaxHistoryLimit(t *testing.T) {
 	s := agent.GetSession(12345)
 	if s.HistoryLength() > 5 {
 		t.Errorf("expected max 5 messages, got %d", s.HistoryLength())
+	}
+}
+
+// mockStoreWorkingDir — мок стора, возвращающий сессию с заданным workingDir
+type mockStoreWorkingDir struct {
+	sessionData *store.SessionData
+}
+
+func (m *mockStoreWorkingDir) GetSession(peerID int64) (*store.SessionData, error) {
+	return m.sessionData, nil
+}
+
+func (m *mockStoreWorkingDir) SaveSession(s *store.SessionData) error {
+	return nil
+}
+
+func (m *mockStoreWorkingDir) ClearSession(peerID int64) error {
+	return nil
+}
+
+func (m *mockStoreWorkingDir) AddMessage(peerID int64, msg store.MessageData) error {
+	return nil
+}
+
+func (m *mockStoreWorkingDir) GetMessages(peerID int64) ([]store.MessageData, error) {
+	return nil, nil
+}
+
+func (m *mockStoreWorkingDir) ClearMessages(peerID int64) error {
+	return nil
+}
+
+func (m *mockStoreWorkingDir) GetTodos(sessionID string) ([]store.TodoItem, error) {
+	return nil, nil
+}
+
+func (m *mockStoreWorkingDir) UpdateTodos(sessionID string, todos []store.TodoItem) error {
+	return nil
+}
+
+func (m *mockStoreWorkingDir) GetPermission(sessionID, toolName, resource string) (*store.PermissionRecord, error) {
+	return nil, nil
+}
+
+func (m *mockStoreWorkingDir) GetPermissions(sessionID string) ([]store.PermissionRecord, error) {
+	return nil, nil
+}
+
+func (m *mockStoreWorkingDir) GetDistinctGrantSessions() ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockStoreWorkingDir) SavePermission(sessionID, toolName, resource, decision string) error {
+	return nil
+}
+
+func (m *mockStoreWorkingDir) ClearPermissions(sessionID string) error {
+	return nil
+}
+
+func (m *mockStoreWorkingDir) Close() error {
+	return nil
+}
+
+func TestWorkingDirRestoredFromStore(t *testing.T) {
+	savedDir, err := os.MkdirTemp("", "wd_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(savedDir)
+
+	fakeDefaultDir, err := os.MkdirTemp("", "wd_default_*")
+	if err != nil {
+		t.Fatalf("failed to create default dir: %v", err)
+	}
+	defer os.RemoveAll(fakeDefaultDir)
+
+	mockSt := &mockStoreWorkingDir{
+		sessionData: &store.SessionData{
+			PeerID:     12345,
+			WorkingDir: savedDir,
+		},
+	}
+
+	config := DefaultConfig()
+	config.LlamaServerURL = "127.0.0.1:8080"
+	config.Model = "test-model"
+	config.SessionConfig.Store = mockSt
+
+	agent := NewAgent(config)
+
+	// Симулируем рестарт: WorkingDir сброшен к директории бинарника
+	prevDir := tools.WorkingDir
+	tools.SetWorkingDir(fakeDefaultDir)
+	defer tools.SetWorkingDir(prevDir)
+
+	// Получаем сессию — должна восстановить workingDir из стора
+	_ = agent.GetSession(12345)
+
+	if tools.WorkingDir != savedDir {
+		t.Errorf("expected tools.WorkingDir = %q, got %q (not restored from store)", savedDir, tools.WorkingDir)
+	}
+}
+
+func TestWorkingDirNotOverwrittenWhenEmpty(t *testing.T) {
+	fakeDefaultDir, err := os.MkdirTemp("", "wd_default_*")
+	if err != nil {
+		t.Fatalf("failed to create default dir: %v", err)
+	}
+	defer os.RemoveAll(fakeDefaultDir)
+
+	mockSt := &mockStoreWorkingDir{
+		sessionData: &store.SessionData{
+			PeerID:     12346,
+			WorkingDir: "", // сессия без сохранённой workingDir
+		},
+	}
+
+	config := DefaultConfig()
+	config.LlamaServerURL = "127.0.0.1:8080"
+	config.Model = "test-model"
+	config.SessionConfig.Store = mockSt
+
+	agent := NewAgent(config)
+
+	// Устанавливаем дефолтную директорию
+	prevDir := tools.WorkingDir
+	tools.SetWorkingDir(fakeDefaultDir)
+	defer tools.SetWorkingDir(prevDir)
+
+	// Получаем сессию — не должна сбросить workingDir
+	_ = agent.GetSession(12346)
+
+	if tools.WorkingDir != fakeDefaultDir {
+		t.Errorf("expected tools.WorkingDir unchanged %q, got %q", fakeDefaultDir, tools.WorkingDir)
 	}
 }
