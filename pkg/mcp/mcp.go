@@ -64,9 +64,14 @@ func (t *MCPTool) Name() string {
 	return t.serverName + "_" + t.tool.Name
 }
 
-// Description returns the tool description
+// Description returns the tool description with server info
 func (t *MCPTool) Description() string {
-	return t.tool.Description
+	desc := t.tool.Description
+	if desc == "" {
+		desc = fmt.Sprintf("Tool from MCP server '%s'", t.serverName)
+		return desc
+	}
+	return fmt.Sprintf("%s [via MCP server: %s]", desc, t.serverName)
 }
 
 // Schema returns the tool's input schema
@@ -74,11 +79,17 @@ func (t *MCPTool) Schema() map[string]interface{} {
 	// InputSchema is a ToolInputSchema type
 	data, err := t.tool.InputSchema.MarshalJSON()
 	if err != nil {
-		return map[string]interface{}{"type": "object"}
+		return map[string]interface{}{"type": "object", "additionalProperties": false}
 	}
 	var schema map[string]interface{}
 	if err := json.Unmarshal(data, &schema); err != nil {
-		return map[string]interface{}{"type": "object"}
+		return map[string]interface{}{"type": "object", "additionalProperties": false}
+	}
+
+	schema["type"] = "object"
+	schema["additionalProperties"] = false
+	if _, ok := schema["properties"]; !ok {
+		schema["properties"] = map[string]interface{}{}
 	}
 	return schema
 }
