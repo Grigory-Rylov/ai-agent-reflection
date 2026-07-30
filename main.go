@@ -157,6 +157,17 @@ func main() {
 				}
 			}
 		}
+
+		// Восстанавливаем workingDir из стора для основного peer
+		if config.PeerID > 0 {
+			sd, err := dbStore.GetSession(config.PeerID)
+			if err != nil {
+				log.WarnLogf("Failed to restore working dir from store: %v", err)
+			} else if sd != nil && sd.WorkingDir != "" {
+				tools.SetWorkingDir(sd.WorkingDir)
+				log.InfoLogf("Restored working dir from store: %s", sd.WorkingDir)
+			}
+		}
 	}
 
 	tools.GlobalTodo.Reset()
