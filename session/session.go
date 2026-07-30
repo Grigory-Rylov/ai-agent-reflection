@@ -296,7 +296,11 @@ func (s *Session) GetHistory() []Message {
 func (s *Session) GetLastAssistantMessage() *Message {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.getLastAssistantMessageLocked()
+}
 
+// getLastAssistantMessageLocked — версия без блокировки для вызова из locked-контекста
+func (s *Session) getLastAssistantMessageLocked() *Message {
 	for i := len(s.messages) - 1; i >= 0; i-- {
 		if s.messages[i].Role == AssistantRole {
 			msg := s.messages[i]

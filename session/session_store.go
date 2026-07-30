@@ -62,7 +62,7 @@ func (s *Session) saveToStore(st store.Store) error {
 	}
 
 	if s.isLooped {
-		if last := s.GetLastAssistantMessage(); last != nil {
+		if last := s.getLastAssistantMessageLocked(); last != nil {
 			sd.LastLooped = last.Content
 		}
 	}
