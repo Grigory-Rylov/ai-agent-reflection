@@ -73,7 +73,7 @@ func NewAgent(config Config) *agentImpl {
 		sessions:     make(map[int64]*session.Session),
 		toolsRegistry: tools.NewRegistry(),
 		client: &http.Client{
-			Timeout: 5 * time.Minute,
+			Timeout: 2 * time.Hour,
 			Transport: &http.Transport{
 				DisableKeepAlives: true,
 			},
