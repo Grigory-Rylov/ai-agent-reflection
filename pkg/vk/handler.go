@@ -11,11 +11,11 @@ import (
 
 	"github.com/opencode/llama-client/pkg/agentloop"
 	"github.com/opencode/llama-client/pkg/logger"
+	"github.com/opencode/llama-client/pkg/modelsconfig"
 	"github.com/opencode/llama-client/pkg/tools"
 	"github.com/opencode/llama-client/session"
 )
 
-// expandTilde заменяет ~ в начале пути на домашнюю директорию пользователя
 func expandTilde(path string) string {
 	if strings.HasPrefix(path, "~") {
 		home, err := os.UserHomeDir()
@@ -29,11 +29,6 @@ func expandTilde(path string) string {
 	return path
 }
 
-// ============================================================
-// AgentOrchestrator — интерфейс для многоагентного пайплайна
-// ============================================================
-
-// AgentOrchestrator определяет контракт для выполнения многоагентных задач
 type AgentOrchestrator interface {
 	ExecuteTask(ctx context.Context, task string, peerID int64) (string, error)
 	RunAgent(ctx context.Context, agentName, task string, peerID int64) (string, error)
@@ -41,27 +36,18 @@ type AgentOrchestrator interface {
 	GetCurrentAgent() string
 }
 
-// ============================================================
-// VK Bot Handler — связующее звено между VK Bot API и AI Agent
-// ============================================================
-
-// BotHandler управляет взаимодействием с пользователями через VK Bot
 type BotHandler struct {
-	vkClient      *BotClient
-	aiAgent       agentloop.AgentLoop
-	orchestrator  AgentOrchestrator
-	log           *logger.Logger
-	sessions      map[int64]*session.Session
-	sessionMu     sync.RWMutex
-	mainPeerID    int64   // Основной чат для отправки ответов
-	thinkingPeerID int64  // Чат для thinking сообщений (используется через AI Agent)
+	vkClient       *BotClient
+	aiAgent        agentloop.AgentLoop
+	orchestrator   AgentOrchestrator
+	log            *logger.Logger
+	sessions       map[int64]*session.Session
+	sessionMu      sync.RWMutex
+	mainPeerID     int64
+	thinkingPeerID int64
+	modelHolder    *modelsconfig.Holder
 }
 
-// ============================================================
-// Инициализация
-// ============================================================
-
-// NewBotHandler создаёт новый обработчик VK Bot
 func NewBotHandler(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger.Logger) *BotHandler {
 	return &BotHandler{
 		vkClient: vkClient,
@@ -71,8 +57,7 @@ func NewBotHandler(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger
 	}
 }
 
-// NewBotHandlerWithPeerID создаёт новый обработчик VK Bot с mainPeerID
-func NewBotHandlerWithPeerID(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger.Logger, mainPeerID, thinkingPeerID int64, orchestrator AgentOrchestrator) *BotHandler {
+func NewBotHandlerWithPeerID(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger.Logger, mainPeerID, thinkingPeerID int64, orchestrator AgentOrchestrator, modelHolder *modelsconfig.Holder) *BotHandler {
 	return &BotHandler{
 		vkClient:      vkClient,
 		aiAgent:       aiAgent,
@@ -81,14 +66,10 @@ func NewBotHandlerWithPeerID(vkClient *BotClient, aiAgent agentloop.AgentLoop, l
 		sessions:      make(map[int64]*session.Session),
 		mainPeerID:    mainPeerID,
 		thinkingPeerID: thinkingPeerID,
+		modelHolder:   modelHolder,
 	}
 }
 
-// ============================================================
-// Обработка сообщений
-// ============================================================
-
-// agentNames возвращает список известных имён агентов для #mention
 func (h *BotHandler) agentNames() []string {
 	if h.orchestrator != nil {
 		names := h.orchestrator.ListAgentNames()
@@ -99,8 +80,6 @@ func (h *BotHandler) agentNames() []string {
 	return []string{"worker", "qa", "explore", "general", "agent", "coordinator"}
 }
 
-// ParseAgentHashMention проверяет, начинается ли текст с #agent_name,
-// и возвращает имя агента и очищенный текст задачи.
 func ParseAgentHashMention(text string, knownNames []string) (agentName string, task string) {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "#") {
@@ -119,14 +98,11 @@ func ParseAgentHashMention(text string, knownNames []string) (agentName string, 
 	return "", text
 }
 
-// ProcessMessage обрабатывает входящее сообщение от пользователя
 func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	h.ensureSession(peerID)
 
-	// Извлекаем команду из сообщения (удаляем VK mention если есть)
 	command := extractCommand(message)
 
-	// Если есть ожидающий вопрос для этого peerID — направляем ответ туда
 	if tools.HasPendingQuestion(peerID) {
 		logger.DebugToFile("[ProcessMessage] HasPendingQuestion=true for peer %d, command=%s", peerID, truncateStr(command, 100))
 		if tools.ResolvePendingQuestion(peerID, command) {
@@ -139,19 +115,16 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 		logger.DebugToFile("[ProcessMessage] HasPendingQuestion=false for peer %d, command=%s", peerID, truncateStr(command, 100))
 	}
 
-	// Проверяем #agent_name (worker, qa, explore, general, agent, coordinator, lead, ...)
 	agentName, task := ParseAgentHashMention(command, h.agentNames())
 	if agentName != "" {
 		if h.log != nil {
 			h.log.InfoLogf("Agent #%s invoked by peer %d with task: %s", agentName, peerID, truncateStr(task, 100))
 		}
 
-		// Если нет задачи — запрашиваем
 		if task == "" {
 			return fmt.Sprintf("Укажите задачу для #%s. Например: #%s создай простой HTTP сервер", agentName, agentName)
 		}
 
-		// Если есть оркестратор — используем его
 		if h.orchestrator != nil {
 			ctx := context.Background()
 			response, err := h.orchestrator.RunAgent(ctx, agentName, task, peerID)
@@ -164,15 +137,16 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 			return response
 		}
 
-		// Fallback: передаём в обычный AI Agent с пометкой
 		message = fmt.Sprintf("[Задача для #%s]\n\n%s", agentName, task)
 	}
 
-	// Команды бота не передаются модели
 	if strings.HasPrefix(command, "/") {
 		result := h.handleCommand(command, peerID)
 		if result != "" {
 			return result
+		}
+		if restarterCommands[extractBaseCommand(command)] {
+			return ""
 		}
 		return fmt.Sprintf("Неизвестная команда: %s. Напишите /help для списка команд.", command)
 	}
@@ -197,17 +171,12 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	return response
 }
 
-// extractCommand извлекает команду из сообщения, удаляя mention группы если есть
-// Формат mention: [clubXXXXXXXX|@clubXXXXXXXX] или [publicXXXXXXXX|@publicXXXXXXXX]
 func extractCommand(message string) string {
 	message = strings.TrimSpace(message)
 
-	// Проверяем наличие mention в начале: [xxx|@xxx]
 	if len(message) > 0 && message[0] == '[' {
-		// Ищем закрывающую скобку
 		closeIdx := strings.Index(message, "]")
 		if closeIdx > 0 && closeIdx < len(message)-1 {
-			// Извлекаем текст после mention
 			rest := strings.TrimSpace(message[closeIdx+1:])
 			return rest
 		}
@@ -216,20 +185,21 @@ func extractCommand(message string) string {
 	return message
 }
 
-// ProcessMessageWithTimeout обрабатывает сообщение с таймаутом
 func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, timeout time.Duration) string {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	h.ensureSession(peerID)
 
-	// Извлекаем команду из сообщения (удаляем mention если есть)
 	command := extractCommand(message)
 
 	if strings.HasPrefix(command, "/") {
 		result := h.handleCommand(command, peerID)
 		if result != "" {
 			return result
+		}
+		if restarterCommands[extractBaseCommand(command)] {
+			return ""
 		}
 		return fmt.Sprintf("Неизвестная команда: %s. Напишите /help для списка команд.", command)
 	}
@@ -253,13 +223,13 @@ func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, tim
 	return response
 }
 
-// ============================================================
-// Команды
-// ============================================================
+var restarterCommands = map[string]bool{
+	"/update":  true,
+	"/b":       true,
+	"/restart": true,
+}
 
-// handleCommand обрабатывает системные команды
 func (h *BotHandler) handleCommand(input string, peerID int64) string {
-	// Извлекаем базовую команду (первое слово) для поддержки команд с аргументами
 	parts := strings.Fields(input)
 	if len(parts) == 0 {
 		return ""
@@ -287,6 +257,8 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 			"/help - Показать эту справку\n" +
 			"/status - Показать статус агента (сообщения, символы, токены)\n" +
 			"/test-llama - Тест соединения с llama-server\n" +
+			"/m, /models - Список доступных моделей\n" +
+			"/r [alias] - Переключить текущую модель\n" +
 			"/agent [задача] - Запустить AI Agent для исследования проекта\n\n" +
 			"Перенаправление задачи агенту через #:\n"
 		for _, name := range knownNames {
@@ -313,6 +285,11 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 			status += "\nСимволов в контексте: " + fmt.Sprintf("%d", chars) +
 				"\nТокенов в контексте: " + fmt.Sprintf("%d", tokens)
 		}
+		if h.modelHolder != nil {
+			alias, modelName, host := h.modelHolder.GetCurrent()
+			status += "\nМодель: " + alias + " (" + modelName + ")"
+			status += "\nСервер: " + host
+		}
 		if h.orchestrator != nil {
 			agentName := h.orchestrator.GetCurrentAgent()
 			if agentName != "" {
@@ -328,12 +305,60 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 	case "/agent":
 		return h.handleAgentCommand(input, peerID)
 
+	case "/m", "/models":
+		return h.handleModelsList()
+
+	case "/r":
+		return h.handleModelSwitch(input)
+
 	default:
 		return ""
 	}
 }
 
-// handleAgentCommand обрабатывает /agent [задача] — запускает многоагентный пайплайн
+func (h *BotHandler) handleModelsList() string {
+	if h.modelHolder == nil {
+		return "Модели не настроены (models.json не загружен)"
+	}
+
+	models := h.modelHolder.List()
+	currentAlias := h.modelHolder.GetDefaultAlias()
+
+	var b strings.Builder
+	b.WriteString("Доступные модели:\n")
+	for alias, entry := range models {
+		mark := " "
+		if alias == currentAlias {
+			mark = "✓"
+		}
+		b.WriteString(fmt.Sprintf("  %s %s → %s (%s)\n", mark, alias, entry.Name, entry.Host))
+	}
+	b.WriteString(fmt.Sprintf("\nТекущая: %s\n", currentAlias))
+	b.WriteString("Используйте /r [alias] для переключения.")
+
+	return b.String()
+}
+
+func (h *BotHandler) handleModelSwitch(input string) string {
+	if h.modelHolder == nil {
+		return "Модели не настроены (models.json не загружен)"
+	}
+
+	parts := strings.SplitN(input, " ", 2)
+	if len(parts) < 2 || strings.TrimSpace(parts[1]) == "" {
+		return "Укажите алиас модели. Пример: /r gemma-4\n" +
+			"Список моделей: /m"
+	}
+
+	alias := strings.TrimSpace(parts[1])
+	if err := h.modelHolder.Switch(alias); err != nil {
+		return fmt.Sprintf("Ошибка: %v", err)
+	}
+
+	alias2, modelName, host := h.modelHolder.GetCurrent()
+	return fmt.Sprintf("✓ Модель переключена на: %s\n  %s (%s)", alias2, modelName, host)
+}
+
 func (h *BotHandler) handleAgentCommand(input string, peerID int64) string {
 	parts := strings.SplitN(input, " ", 2)
 	instruction := "изучи текущий проект и создай документацию с рекомендациями по доработке"
@@ -353,14 +378,12 @@ func (h *BotHandler) handleAgentCommand(input string, peerID int64) string {
 			}
 			return "Произошла ошибка при выполнении команды /agent. Попробуйте позже."
 		}
-		// Сохраняем команду и результат в сессию, чтобы последующие сообщения видели контекст
 		s := h.aiAgent.EnsureSession(peerID)
 		s.AddUserMessage(input)
 		s.AddAssistantMessage(response)
 		return response
 	}
 
-	// Fallback: используем обычный AI Agent
 	ctx := context.Background()
 	response, err := h.aiAgent.ProcessMessage(ctx, instruction, peerID)
 	if err != nil {
@@ -380,7 +403,14 @@ func truncateStr(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
-// handleNewSession обрабатывает /newsession [path]
+func extractBaseCommand(input string) string {
+	parts := strings.Fields(input)
+	if len(parts) == 0 {
+		return ""
+	}
+	return parts[0]
+}
+
 func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 	newPath := ""
 	parts := strings.SplitN(input, " ", 2)
@@ -408,19 +438,15 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 		return fmt.Sprintf("Ошибка: не удалось получить абсолютный путь: %v", err)
 	}
 
-	// Сбрасываем сессию и гранты в agentloop
 	h.aiAgent.ResetSession(peerID)
 	tools.ClearGrants(peerID)
 
-	// Устанавливаем рабочую директорию в сессии agentloop
 	if s := h.aiAgent.GetSession(peerID); s != nil {
 		s.SetWorkingDir(absPath)
 	}
 
-	// Синхронизируем с tools.WorkingDir для файловых операций
 	tools.SetWorkingDir(absPath)
 
-	// Добавляем новую директорию в список разрешённых для файловых операций
 	if ctrl := tools.GetAccessController(); ctrl != nil {
 		ctrl.AddAllowedDir(absPath)
 		if h.log != nil {
@@ -428,7 +454,6 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 		}
 	}
 
-	// Очищаем локальную сессию хендлера
 	h.clearHandlerSession(peerID)
 
 	if h.log != nil {
@@ -438,7 +463,6 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 	return fmt.Sprintf("Сессия сброшена.\nРабочая директория: %s", absPath)
 }
 
-// handleTestLlama тестирует соединение с llama-server
 func (h *BotHandler) handleTestLlama() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
@@ -460,22 +484,13 @@ func (h *BotHandler) handleTestLlama() string {
 	return result
 }
 
-// clearHandlerSession удаляет локальную сессию хендлера
 func (h *BotHandler) clearHandlerSession(peerID int64) {
 	h.sessionMu.Lock()
 	defer h.sessionMu.Unlock()
 	delete(h.sessions, peerID)
 }
 
-// ============================================================
-// Управление сессиями
-// ============================================================
-
-// ensureSession гарантирует существование сессии для пользователя
-// Делегирует создание сессии в AgentLoop
 func (h *BotHandler) ensureSession(peerID int64) {
-	// Сессия создаётся в AgentLoop при обработке сообщений
-	// Здесь только проверяем, что AgentLoop инициализирован
 	if h.aiAgent == nil {
 		if h.log != nil {
 			h.log.WarnLogf("AgentLoop is nil, cannot ensure session for peer %d", peerID)
@@ -483,7 +498,6 @@ func (h *BotHandler) ensureSession(peerID int64) {
 	}
 }
 
-// getSession возвращает сессию пользователя из AgentLoop
 func (h *BotHandler) getSession(peerID int64) *session.Session {
 	if h.aiAgent != nil {
 		return h.aiAgent.GetSession(peerID)
@@ -491,11 +505,6 @@ func (h *BotHandler) getSession(peerID int64) *session.Session {
 	return nil
 }
 
-// ============================================================
-// Запуск обработчика
-// ============================================================
-
-// Start запускает цикл обработки сообщений через VK Long Poll API
 func (h *BotHandler) Start(ctx context.Context) error {
 	if h.log != nil {
 		h.log.InfoLog("Starting VK Long Poll bot...")
@@ -509,7 +518,6 @@ func (h *BotHandler) Start(ctx context.Context) error {
 			}
 			return nil
 		default:
-			// Получаем параметры long polling сервера
 			server, key, ts, err := h.vkClient.GetLongPollServer()
 			if err != nil {
 				if h.log != nil {
@@ -523,29 +531,24 @@ func (h *BotHandler) Start(ctx context.Context) error {
 				h.log.InfoLog("Connected to VK Long Poll server")
 			}
 
-			// Основной цикл опроса
 			if err := h.runLongPoll(ctx, server, key, ts); err != nil {
 				if h.log != nil {
 					h.log.WarnLogf("Long poll disconnected: %v", err)
 				}
-				// Пауза перед переподключением
 				time.Sleep(3 * time.Second)
 			}
 		}
 	}
 }
 
-// runLongPoll выполняет цикл опроса long poll сервера
 func (h *BotHandler) runLongPoll(ctx context.Context, server, key string, ts int64) error {
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		default:
-			// Получаем обновления (ждём до 25 секунд на сервере)
 			messages, newTs, err := h.vkClient.CheckUpdates(ctx, server, key, ts)
 			if err != nil {
-				// Проверяем отмену контекста (Ctrl+C)
 				if ctx.Err() != nil {
 					return nil
 				}
@@ -553,17 +556,13 @@ func (h *BotHandler) runLongPoll(ctx context.Context, server, key string, ts int
 				if strings.Contains(errStr, "long poll failed") {
 					return err
 				}
-				// Другие ошибки — короткая пауза и повтор
 				time.Sleep(1 * time.Second)
 				continue
 			}
 
-			// Обновляем ts
 			ts = newTs
 
-			// Обрабатываем каждое сообщение
 			for _, msg := range messages {
-				// Игнорируем сообщения из thinking_peer_id
 				if h.thinkingPeerID > 0 && msg.PeerID == h.thinkingPeerID {
 					if h.log != nil {
 						h.log.DebugLogf("Ignoring message from thinking_peer_id %d", msg.PeerID)
@@ -572,7 +571,6 @@ func (h *BotHandler) runLongPoll(ctx context.Context, server, key string, ts int
 				}
 
 				if h.log != nil {
-					// Показываем текст сообщения (до 100 символов)
 					textPreview := msg.Text
 					if len(textPreview) > 100 {
 						textPreview = textPreview[:100] + "..."
@@ -580,19 +578,16 @@ func (h *BotHandler) runLongPoll(ctx context.Context, server, key string, ts int
 					h.log.InfoLogf("Received message from peer %d: %s", msg.PeerID, textPreview)
 				}
 
-				// Определяем куда отправлять ответ
 				replyPeerID := msg.PeerID
 				if h.mainPeerID > 0 {
 					replyPeerID = h.mainPeerID
 				}
 
-				// Обрабатываем сообщение в отдельной goroutine
 				go func(messageText string, peerID int64, targetPeer int64) {
 					tools.SetQuestionPeerID(peerID)
 					logger.DebugToFile("[handler] goroutine: peerID=%d, targetPeer=%d, text=%s", peerID, targetPeer, truncateStr(messageText, 100))
 					response := h.ProcessMessage(messageText, peerID)
 					logger.DebugToFile("[handler] goroutine: ProcessMessage returned response=%q (len=%d)", response, len(response))
-					// Не отправляем пустые сообщения
 					if response == "" {
 						return
 					}

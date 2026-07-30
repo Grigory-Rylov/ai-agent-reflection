@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/opencode/llama-client/pkg/logger"
+	"github.com/opencode/llama-client/pkg/modelsconfig"
 	"github.com/opencode/llama-client/session"
 )
 
@@ -78,6 +79,10 @@ func (m *mockAgentLoop) GetContextStats(peerID int64) (int, int, error) {
 
 func (m *mockAgentLoop) TestLlamaServer(ctx context.Context) (string, time.Duration, float64, error) {
 	return "mock-model", 10 * time.Millisecond, 100.0, nil
+}
+
+func (m *mockAgentLoop) GetModelHolder() *modelsconfig.Holder {
+return nil
 }
 
 func (m *mockAgentLoop) getOrCreateSession(peerID int64) *session.Session {
@@ -154,6 +159,9 @@ func TestCommandsDoNotReachModel(t *testing.T) {
 		{"newsession command", "/newsession /tmp"},
 		{"n alias command", "/n /tmp"},
 		{"unknown command", "/unknownxyz"},
+		{"restart command", "/restart"},
+		{"update command", "/update"},
+		{"b command", "/b main"},
 	}
 
 	for _, tt := range tests {
@@ -180,6 +188,26 @@ func TestNormalMessagesReachModel(t *testing.T) {
 	}
 	if response != "processed: Hello, how are you?" {
 		t.Errorf("Expected 'processed: Hello, how are you?', got %q", response)
+	}
+}
+
+func TestRestarterCommandsReturnEmpty(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+	handler := NewBotHandler(nil, mock, log)
+
+	restarterCmds := []string{"/restart", "/update", "/b main"}
+	for _, cmd := range restarterCmds {
+		t.Run(cmd, func(t *testing.T) {
+			mock.lastMessage = ""
+			response := handler.ProcessMessage(cmd, 12345)
+			if mock.lastMessage != "" {
+				t.Errorf("Restarter command %q was sent to AI model: lastMessage=%q", cmd, mock.lastMessage)
+			}
+			if response != "" {
+				t.Errorf("Restarter command %q should return empty, got %q", cmd, response)
+			}
+		})
 	}
 }
 
@@ -366,7 +394,7 @@ func TestAgentCommandSavesToSession(t *testing.T) {
 	log, _ := logger.New(logger.DefaultConfig())
 	mock := newMockAgentLoop()
 	mockOrch := newMockOrchestrator("Coordinator analysis result: project uses Go 1.21")
-	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, mockOrch)
+	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, mockOrch, nil)
 
 	response := handler.ProcessMessage("/agent analyze the project", 12345)
 
@@ -403,7 +431,7 @@ func TestFollowUpAfterAgentSeesCoordinatorResult(t *testing.T) {
 	mock := newMockAgentLoop()
 	coordinatorResult := "Coordinator: Found 3 main packages — handler, agent, tools"
 	mockOrch := newMockOrchestrator(coordinatorResult)
-	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, mockOrch)
+	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, mockOrch, nil)
 
 	// 1. Send /agent command
 	handler.ProcessMessage("/agent analyze the project", 12345)

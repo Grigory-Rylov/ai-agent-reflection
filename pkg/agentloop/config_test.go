@@ -7,19 +7,11 @@ import (
 	"github.com/opencode/llama-client/pkg/compress"
 )
 
-// ============================================================
-// Тесты конфигурации
-// ============================================================
-
 func TestDefaultLoopConfig(t *testing.T) {
 	config := DefaultLoopConfig()
 
-	// Проверяем значения по умолчанию
-	if config.LlamaServerURL != "127.0.0.1:8081" {
-		t.Errorf("expected LlamaServerURL '127.0.0.1:8081', got '%s'", config.LlamaServerURL)
-	}
-	if config.Model != "local-model" {
-		t.Errorf("expected Model 'local-model', got '%s'", config.Model)
+	if config.ModelHolder != nil {
+		t.Errorf("expected ModelHolder to be nil by default")
 	}
 	if config.MaxTokens != 4096 {
 		t.Errorf("expected MaxTokens 4096, got %d", config.MaxTokens)

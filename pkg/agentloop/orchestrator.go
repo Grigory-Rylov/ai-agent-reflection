@@ -10,23 +10,23 @@ import (
 
 	"github.com/opencode/llama-client/pkg/agent"
 	"github.com/opencode/llama-client/pkg/agentpolicy"
+	"github.com/opencode/llama-client/pkg/modelsconfig"
 	"github.com/opencode/llama-client/pkg/tools"
 	"github.com/opencode/llama-client/session"
 )
 
 type OrchestratorConfig struct {
-	LlamaServerURL       string
-	Model                string
-	MaxTokens            int
-	Temperature          float64
-	ToolRegistry         *tools.Registry
-	Debug                bool
-	Logger               Logger
-	ThinkingPeerID       int64
-	VKClient             VKClient
-	SystemPromptDir      string
-	MaxReviewIterations  int
-	AgentManager         *agentpolicy.AgentManager
+	ModelHolder        *modelsconfig.Holder
+	MaxTokens          int
+	Temperature        float64
+	ToolRegistry       *tools.Registry
+	Debug              bool
+	Logger             Logger
+	ThinkingPeerID     int64
+	VKClient           VKClient
+	SystemPromptDir    string
+	MaxReviewIterations int
+	AgentManager       *agentpolicy.AgentManager
 }
 
 type Orchestrator struct {
@@ -104,7 +104,7 @@ func (o *Orchestrator) RunAgent(ctx context.Context, agentName, task string, pee
 		o.debugLog("[TOOL] Coordinator mode for %s: read-only + task tool", agentName)
 		o.addReadOnlyTools(a)
 		o.registerSubAgentTool(agentName, a, peerID)
-	
+
 	case o.isReviewAgent(agentName):
 		o.debugLog("[TOOL] Review mode for %s: read-only + approve tool", agentName)
 		o.addReadOnlyTools(a)
@@ -203,7 +203,6 @@ func (o *Orchestrator) makeSubAgent(name, systemPrompt string, peerID int64) age
 
 	a := agent.NewAgent(cfg)
 
-	// Устанавливаем permission checker из AgentManager
 	if o.config.AgentManager != nil {
 		if info, err := o.config.AgentManager.GetAgent(name); err == nil && info.Permission != nil && len(info.Permission) > 0 {
 			a.SetPermissionChecker(agentpolicy.NewPermissionAdapter(info.Permission))
@@ -237,9 +236,10 @@ func (o *Orchestrator) systemPromptDir() string {
 }
 
 func (o *Orchestrator) makeAgentConfig() agent.Config {
+	_, modelName, llamaURL := o.config.ModelHolder.GetCurrent()
 	return agent.Config{
-		LlamaServerURL:            o.config.LlamaServerURL,
-		Model:                     o.config.Model,
+		LlamaServerURL:            llamaURL,
+		Model:                     modelName,
 		MaxTokens:                 o.config.MaxTokens,
 		Temperature:               o.config.Temperature,
 		SystemPromptFile:          o.systemPromptDir() + "/coordinator.txt",
@@ -316,6 +316,7 @@ func (o *Orchestrator) registerSubAgentTool(name string, a agent.Agent, peerID i
 		VKClient:        o.config.VKClient,
 		Log:             o.config.Logger,
 		Debug:           o.config.Debug,
+		ModelHolder:     o.config.ModelHolder,
 		SetActiveAgent:  func(n string) { o.setActiveAgent(n) },
 	})
 	if inserter, ok := a.(toolInserter); ok {
@@ -360,4 +361,3 @@ func (o *Orchestrator) debugLog(format string, args ...interface{}) {
 		o.config.Logger.DebugLogf("[AGENT] "+format, args...)
 	}
 }
-

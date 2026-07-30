@@ -1,0 +1,13 @@
+{
+    "default": "my-model",
+    "models": {
+        "my-model": {
+            "name": "model-name-on-server.gguf",
+            "host": "127.0.0.1:8081"
+        },
+        "another-model": {
+            "name": "another-model.gguf",
+            "host": "192.168.1.1:8081"
+        }
+    }
+}

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/opencode/llama-client/pkg/modelsconfig"
 	"github.com/opencode/llama-client/pkg/tools"
 )
 
@@ -45,9 +46,15 @@ func runScenario(t *testing.T, scenarioName string) {
 	reg.Register(&tools.FileReadTool{})
 	reg.Register(&tools.TimeGetTool{})
 
+	modelHolder := modelsconfig.NewTestHolder(&modelsconfig.ModelsConfig{
+		Default: "test",
+		Models: map[string]modelsconfig.ModelEntry{
+			"test": {Name: "test-model", Host: server.URL},
+		},
+	})
+
 	orchestrator := NewOrchestrator(OrchestratorConfig{
-		LlamaServerURL:  server.URL,
-		Model:           "test-model",
+		ModelHolder:     modelHolder,
 		MaxTokens:       100,
 		Temperature:     0.7,
 		ToolRegistry:    reg,

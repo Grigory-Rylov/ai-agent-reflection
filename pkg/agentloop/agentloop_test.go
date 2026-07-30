@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/opencode/llama-client/pkg/modelsconfig"
 	"github.com/opencode/llama-client/pkg/tools"
 )
 
@@ -137,10 +138,20 @@ func (m *mockLogger) GetMessages() []string {
 // Тесты AgentLoop
 // ============================================================
 
+func testHolder() *modelsconfig.Holder {
+	return modelsconfig.NewTestHolder(&modelsconfig.ModelsConfig{
+		Default: "test",
+		Models: map[string]modelsconfig.ModelEntry{
+			"test": {Name: "test-model", Host: "http://localhost:8081"},
+		},
+	})
+}
+
 func TestNewAgentLoop(t *testing.T) {
 	vk := &mockVKClient{}
 	reg := newMockToolRegistry()
 	config := DefaultLoopConfig()
+	config.ModelHolder = testHolder()
 
 	loop, err := NewAgentLoop(config, vk, reg)
 	if err != nil {
@@ -155,6 +166,7 @@ func TestNewAgentLoopEmptyConfig(t *testing.T) {
 	vk := &mockVKClient{}
 	reg := newMockToolRegistry()
 	config := LoopConfig{}
+	config.ModelHolder = testHolder()
 
 	loop, err := NewAgentLoop(config, vk, reg)
 	if err != nil {
@@ -170,6 +182,7 @@ func TestAgentLoopGetSession(t *testing.T) {
 	vk := &mockVKClient{}
 	reg := newMockToolRegistry()
 	config := DefaultLoopConfig()
+	config.ModelHolder = testHolder()
 
 	loop, err := NewAgentLoop(config, vk, reg)
 	if err != nil {
@@ -189,6 +202,7 @@ func TestAgentLoopResetSession(t *testing.T) {
 	vk := &mockVKClient{}
 	reg := newMockToolRegistry()
 	config := DefaultLoopConfig()
+	config.ModelHolder = testHolder()
 
 	loop, err := NewAgentLoop(config, vk, reg)
 	if err != nil {
@@ -322,6 +336,7 @@ func TestProcessToolCallsEmpty(t *testing.T) {
 	vk := &mockVKClient{}
 	reg := newMockToolRegistry()
 	config := DefaultLoopConfig()
+	config.ModelHolder = testHolder()
 	config.EnableThinking = true
 
 	loop, _ := NewAgentLoop(config, vk, reg)
@@ -339,6 +354,7 @@ func TestProcessToolCallsNoRegistry(t *testing.T) {
 	vk := &mockVKClient{}
 	var reg ToolRegistry = nil
 	config := DefaultLoopConfig()
+	config.ModelHolder = testHolder()
 
 	loop, _ := NewAgentLoop(config, vk, reg)
 
@@ -362,6 +378,7 @@ func TestProcessToolCallsNoRegistry(t *testing.T) {
 func TestSendThinkingDisabled(t *testing.T) {
 	vk := &mockVKClient{}
 	config := DefaultLoopConfig()
+	config.ModelHolder = testHolder()
 	config.EnableThinking = false
 
 	loop, _ := NewAgentLoop(config, vk, nil)
@@ -373,6 +390,7 @@ func TestSendThinkingDisabled(t *testing.T) {
 func TestSendThinkingNoThinkingPeerID(t *testing.T) {
 	vk := &mockVKClient{}
 	config := DefaultLoopConfig()
+	config.ModelHolder = testHolder()
 	config.EnableThinking = true
 	config.ThinkingPeerID = 0
 
@@ -385,6 +403,7 @@ func TestSendThinkingNoThinkingPeerID(t *testing.T) {
 func TestSendThinkingWithVK(t *testing.T) {
 	vk := &mockVKClient{}
 	config := DefaultLoopConfig()
+	config.ModelHolder = testHolder()
 	config.EnableThinking = true
 	config.ThinkingPeerID = 456
 

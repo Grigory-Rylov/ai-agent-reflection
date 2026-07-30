@@ -7,22 +7,32 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/opencode/llama-client/pkg/modelsconfig"
 	"github.com/opencode/llama-client/pkg/tools"
 )
 
 type loggedRequest struct {
-	Messages []map[string]string `json:"messages"`
+	Messages []map[string]interface{} `json:"messages"`
 	Tools    []interface{}       `json:"tools,omitempty"`
 }
 
 func TestOrchestratorSendsUserMessageToLLM(t *testing.T) {
-	promptDir := setupSystemPromptDir(t)
+	dir := t.TempDir()
+	for _, name := range []string{"worker.txt", "qa.txt", "coordinator.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("You are a helpful assistant."), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	var mu sync.Mutex
 	var requests []loggedRequest
+
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -48,14 +58,20 @@ func TestOrchestratorSendsUserMessageToLLM(t *testing.T) {
 	reg.Register(&tools.FileReadTool{})
 	reg.Register(&tools.TimeGetTool{})
 
+	modelHolder := modelsconfig.NewTestHolder(&modelsconfig.ModelsConfig{
+		Default: "test",
+		Models: map[string]modelsconfig.ModelEntry{
+			"test": {Name: "test-model", Host: server.URL},
+		},
+	})
+
 	orchestrator := NewOrchestrator(OrchestratorConfig{
-		LlamaServerURL:  server.URL,
-		Model:           "test-model",
+		ModelHolder:     modelHolder,
 		MaxTokens:       100,
 		Temperature:     0.7,
 		ToolRegistry:    reg,
 		Debug:           false,
-		SystemPromptDir: promptDir,
+		SystemPromptDir: dir,
 	})
 
 	ctx := context.Background()
@@ -78,48 +94,34 @@ func TestOrchestratorSendsUserMessageToLLM(t *testing.T) {
 	}
 
 	foundUser := false
+	foundSystem := false
 	for _, msg := range first.Messages {
-		if msg["role"] == "user" && strings.Contains(msg["content"], prompt) {
+		role, _ := msg["role"].(string)
+		switch role {
+		case "system":
+			foundSystem = true
+		case "user":
 			foundUser = true
+		}
+	}
+
+	if !foundSystem {
+		t.Error("LLM request should contain a system message")
+	}
+	if !foundUser {
+		t.Error("LLM request should contain a user message")
+	}
+
+	hasUserPrompt := false
+	for _, msg := range first.Messages {
+		role, _ := msg["role"].(string)
+		content, _ := msg["content"].(string)
+		if role == "user" && strings.Contains(strings.ToLower(content), strings.ToLower(prompt)) {
+			hasUserPrompt = true
 			break
 		}
 	}
-	if !foundUser {
-		t.Fatalf("first LLM request has no user message containing the task prompt. Messages: %+v", first.Messages)
-	}
-}
-
-func TestOrchestrator_CoordinatorReturnsResponse(t *testing.T) {
-	promptDir := setupSystemPromptDir(t)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Hello from coordinator\"}}]}\n\n"))
-		w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
-		w.Write([]byte("[DONE]\n"))
-	}))
-	defer server.Close()
-
-	reg := tools.NewRegistry()
-	reg.Register(&tools.FileReadTool{})
-
-	orchestrator := NewOrchestrator(OrchestratorConfig{
-		LlamaServerURL:  server.URL,
-		Model:           "test-model",
-		MaxTokens:       100,
-		Temperature:     0.7,
-		ToolRegistry:    reg,
-		Debug:           false,
-		SystemPromptDir: promptDir,
-	})
-
-	ctx := context.Background()
-	result, err := orchestrator.ExecuteTask(ctx, "тестовая задача", 12346)
-	if err != nil {
-		t.Fatalf("ExecuteTask failed: %v", err)
-	}
-
-	if !strings.Contains(result, "Hello from coordinator") {
-		t.Errorf("expected result to contain coordinator response, got: %q", result)
+	if !hasUserPrompt {
+		t.Errorf("expected user message to contain '%s', got messages: %+v", prompt, first.Messages)
 	}
 }

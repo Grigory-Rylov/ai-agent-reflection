@@ -9,6 +9,7 @@ import (
 
 	"github.com/opencode/llama-client/pkg/agent"
 	"github.com/opencode/llama-client/pkg/agentpolicy"
+	"github.com/opencode/llama-client/pkg/modelsconfig"
 	"github.com/opencode/llama-client/pkg/tools"
 	"github.com/opencode/llama-client/session"
 )
@@ -25,6 +26,7 @@ type SubAgentTool struct {
 	VKClient        VKClient
 	Log             Logger
 	Debug           bool
+	ModelHolder     *modelsconfig.Holder
 	SetActiveAgent  func(name string)
 }
 
@@ -110,7 +112,6 @@ func (t *SubAgentTool) Schema() map[string]interface{} {
 }
 
 func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (tools.ToolResult, error) {
-	// Normalize parameter names — opencode-style FIRST, then our aliases
 	name := inputs["subagent_type"]
 	if name == "" {
 		name = inputs["name"]
@@ -147,7 +148,6 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 				inputs["prompt"], inputs["task"], inputs["description"])}, nil
 	}
 
-	// Validate agent name via AgentManager or fallback
 	name, err := t.resolveAgentName(name)
 	if err != nil {
 		return tools.ToolResult{Success: false, Error: err.Error()}, nil
@@ -232,13 +232,10 @@ func (t *SubAgentTool) registerReadOnlyTools(a agent.Agent) {
 }
 
 func (t *SubAgentTool) resolveAgentName(raw string) (string, error) {
-	// Если есть AgentManager — проверяем по нему
 	if t.AgentManager != nil {
-		// Прямое совпадение
 		if _, err := t.AgentManager.GetAgent(raw); err == nil {
 			return raw, nil
 		}
-		// Fuzzy match: ищем содержащий raw в имени или наоборот
 		for _, a := range t.availableAgents() {
 			if strings.Contains(a.Name, raw) || strings.Contains(raw, a.Name) {
 				t.debugLog("Agent name %q fuzzy-matched to %q", raw, a.Name)
@@ -253,7 +250,6 @@ func (t *SubAgentTool) resolveAgentName(raw string) (string, error) {
 		return "", fmt.Errorf("unknown agent: %q. Available: %s", raw, strings.Join(names, ", "))
 	}
 
-	// Fallback: старый Flexible name matching
 	normalizedName := raw
 	switch {
 	case strings.Contains(raw, "worker") || strings.Contains(raw, "coder") || strings.Contains(raw, "developer"):
@@ -271,13 +267,11 @@ func (t *SubAgentTool) resolveAgentName(raw string) (string, error) {
 }
 
 func (t *SubAgentTool) loadSystemPrompt(name string) (string, error) {
-	// Если есть AgentManager — используем prompt из конфига
 	if t.AgentManager != nil {
 		if info, err := t.AgentManager.GetAgent(name); err == nil && info.Prompt != "" {
 			return info.Prompt, nil
 		}
 	}
-	// Fallback: читаем из файла system_prompt/<name>.txt
 	promptPath := filepath.Join(t.SystemPromptDir, name+".txt")
 	data, err := os.ReadFile(promptPath)
 	if err != nil {
@@ -288,6 +282,13 @@ func (t *SubAgentTool) loadSystemPrompt(name string) (string, error) {
 
 func (t *SubAgentTool) createAgent(name, systemPrompt string) agent.Agent {
 	cfg := t.AgentConfig
+
+	if t.ModelHolder != nil {
+		_, modelName, llamaURL := t.ModelHolder.GetCurrent()
+		cfg.LlamaServerURL = llamaURL
+		cfg.Model = modelName
+	}
+
 	cfg.SystemPromptFile = ""
 	cfg.SessionConfig = session.Config{
 		AutoSave:    false,
@@ -353,6 +354,7 @@ func (t *SubAgentTool) registerSubAgentTool(name string, a agent.Agent) {
 		VKClient:        t.VKClient,
 		Log:             t.Log,
 		Debug:           t.Debug,
+		ModelHolder:     t.ModelHolder,
 		SetActiveAgent:  t.SetActiveAgent,
 	})
 	if inserter, ok := a.(toolInserter); ok {

@@ -13,6 +13,7 @@ func TestLoopDetectionExactDuplicate(t *testing.T) {
 	vk := &mockVKClient{}
 	reg := newMockToolRegistry()
 	config := DefaultLoopConfig()
+	config.ModelHolder = testHolder()
 	config.EnableLoopDetection = true
 	config.LoopThreshold = 0.9
 
@@ -32,6 +33,7 @@ func TestLoopDetectionNoLoop(t *testing.T) {
 	vk := &mockVKClient{}
 	reg := newMockToolRegistry()
 	config := DefaultLoopConfig()
+	config.ModelHolder = testHolder()
 	config.EnableLoopDetection = true
 	config.LoopThreshold = 0.9
 
@@ -71,6 +73,7 @@ func TestThinkingMessageDelivery(t *testing.T) {
 	vk := &mockVKClient{}
 	reg := newMockToolRegistry()
 	config := DefaultLoopConfig()
+	config.ModelHolder = testHolder()
 	config.EnableThinking = true
 	config.ThinkingPeerID = 456
 
@@ -96,6 +99,7 @@ func TestThinkingDisabled(t *testing.T) {
 	vk := &mockVKClient{}
 	reg := newMockToolRegistry()
 	config := DefaultLoopConfig()
+	config.ModelHolder = testHolder()
 	config.EnableThinking = false
 
 	loop, _ := NewAgentLoop(config, vk, reg)
@@ -114,6 +118,7 @@ func TestThinkingNoPeerID(t *testing.T) {
 	vk := &mockVKClient{}
 	reg := newMockToolRegistry()
 	config := DefaultLoopConfig()
+	config.ModelHolder = testHolder()
 	config.EnableThinking = true
 	config.ThinkingPeerID = 0 // Не установлен
 
@@ -137,6 +142,7 @@ func TestToolProcessingMultipleCalls(t *testing.T) {
 	vk := &mockVKClient{}
 	reg := newMockToolRegistry()
 	config := DefaultLoopConfig()
+	config.ModelHolder = testHolder()
 
 	loop, _ := NewAgentLoop(config, vk, reg)
 	al := loop.(*agentLoop)
@@ -160,6 +166,7 @@ func TestToolProcessingLogging(t *testing.T) {
 	vk := &mockVKClient{}
 	reg := newMockToolRegistry()
 	config := DefaultLoopConfig()
+	config.ModelHolder = testHolder()
 	config.EnableLogging = true
 
 	loop, _ := NewAgentLoop(config, vk, reg)

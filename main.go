@@ -19,6 +19,7 @@ import (
 	"github.com/opencode/llama-client/pkg/agentpolicy"
 	"github.com/opencode/llama-client/pkg/logger"
 	"github.com/opencode/llama-client/pkg/mcp"
+	"github.com/opencode/llama-client/pkg/modelsconfig"
 	"github.com/opencode/llama-client/pkg/store"
 	"github.com/opencode/llama-client/pkg/tools"
 	"github.com/opencode/llama-client/pkg/vk"
@@ -28,13 +29,11 @@ import (
 var Version = "dev"
 
 type Config struct {
-	LlamaServerURL string                         `json:"llama_server_url"`
-	Model          string                         `json:"model"`
-	MaxTokens      int                            `json:"max_tokens"`
-	Temperature    float64                        `json:"temperature"`
 	TokenVK        string                         `json:"token_vk"`
 	PeerID         int64                          `json:"peer_id"`
 	ThinkingPeerID int64                          `json:"thinking_peer_id"`
+	MaxTokens      int                            `json:"max_tokens"`
+	Temperature    float64                        `json:"temperature"`
 	MCPConfigPath  string                         `json:"mcp_config_path"`
 	AllowedDirs    []string                       `json:"allowed_dirs"`
 	DBPath         string                         `json:"db_path"`
@@ -70,6 +69,13 @@ func main() {
 	config, err := loadConfig(filepath.Join(agentDir, "config.json"))
 	if err != nil {
 		println("Error loading config:", err.Error())
+		os.Exit(1)
+	}
+
+	modelHolder, err := modelsconfig.NewHolder(filepath.Join(agentDir, "models.json"))
+	if err != nil {
+		println("Error loading models.json:")
+		println(err.Error())
 		os.Exit(1)
 	}
 
@@ -117,7 +123,6 @@ func main() {
 		log.InfoLog("SQLite store initialized: %s", dbPath)
 	}
 
-	// Wire persistent permission grants
 	if dbStore != nil {
 		tools.SetGrantPersistence(
 			func(peerID int64, path string) {
@@ -133,7 +138,6 @@ func main() {
 				}
 			},
 		)
-		// Load existing path grants from database
 		sessions, err := dbStore.GetDistinctGrantSessions()
 		if err != nil {
 			log.WarnLogf("Failed to list grant sessions: %v", err)
@@ -184,12 +188,7 @@ func main() {
 	}
 
 	loopConfig := agentloop.DefaultLoopConfig()
-	llamaURL := config.LlamaServerURL
-	if !strings.HasPrefix(llamaURL, "http://") && !strings.HasPrefix(llamaURL, "https://") {
-		llamaURL = "http://" + llamaURL
-	}
-	loopConfig.LlamaServerURL = llamaURL
-	loopConfig.Model = config.Model
+	loopConfig.ModelHolder = modelHolder
 	loopConfig.MaxTokens = config.MaxTokens
 	loopConfig.Temperature = config.Temperature
 
@@ -232,10 +231,11 @@ func main() {
 
 	agentManager := initAgentManager(config.Agents, agentDir, log)
 
+	alias, modelName, llamaURL := modelHolder.GetCurrent()
 	sysPromptDir := filepath.Join(agentDir, "agents")
 	subAgentCfg := agent.Config{
 		LlamaServerURL: llamaURL,
-		Model:          config.Model,
+		Model:          modelName,
 		MaxTokens:      config.MaxTokens,
 		Temperature:    config.Temperature,
 		EnableTools:    true,
@@ -258,26 +258,26 @@ func main() {
 		VKClient:        vkClient,
 		Log:             log,
 		Debug:           *debug,
+		ModelHolder:     modelHolder,
 		SetActiveAgent:  func(name string) {},
 	})
 
 	orchestrator := agentloop.NewOrchestrator(agentloop.OrchestratorConfig{
-		LlamaServerURL:  llamaURL,
-		Model:           config.Model,
-		MaxTokens:       config.MaxTokens,
-		Temperature:     config.Temperature,
-		ToolRegistry:    toolRegistry,
-		Debug:           *debug,
-		Logger:          log,
-		ThinkingPeerID:  config.ThinkingPeerID,
-		VKClient:        vkClient,
-		SystemPromptDir: sysPromptDir,
-		AgentManager:    agentManager,
+		ModelHolder:        modelHolder,
+		MaxTokens:          config.MaxTokens,
+		Temperature:        config.Temperature,
+		ToolRegistry:       toolRegistry,
+		Debug:              *debug,
+		Logger:             log,
+		ThinkingPeerID:     config.ThinkingPeerID,
+		VKClient:           vkClient,
+		SystemPromptDir:    sysPromptDir,
+		AgentManager:       agentManager,
 		MaxReviewIterations: config.MaxReviewIterations,
 	})
 
 	botHandler := vk.NewBotHandlerWithPeerID(vkClient, agentLoop, log,
-		config.PeerID, config.ThinkingPeerID, orchestrator)
+		config.PeerID, config.ThinkingPeerID, orchestrator, modelHolder)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -298,8 +298,8 @@ func main() {
 	}()
 
 	if config.PeerID > 0 {
-		startMsg := fmt.Sprintf("AI Agent started.\nDir: %s\nTools: %d",
-			tools.WorkingDir, len(toolRegistry.GetAll()))
+		startMsg := fmt.Sprintf("AI Agent started.\nDir: %s\nTools: %d\nModel: %s (%s)",
+			tools.WorkingDir, len(toolRegistry.GetAll()), alias, modelName)
 		keyboard := vk.CreateCommandKeyboard()
 		if _, err := vkClient.SendMessageWithKeyboard(config.PeerID, startMsg, keyboard); err != nil {
 			log.WarnLogf("Failed to send startup message: %v", err)
@@ -371,7 +371,6 @@ func extractQuestionOptions(q map[string]interface{}) []map[string]string {
 	if !ok {
 		return nil
 	}
-	// Нормализуем через JSON — работает для любого Go-типа ([]interface{}, []map[string]interface{} и т.д.)
 	data, err := json.Marshal(optsRaw)
 	if err != nil {
 		return nil
