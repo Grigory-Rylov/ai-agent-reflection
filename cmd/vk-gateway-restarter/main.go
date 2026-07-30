@@ -318,7 +318,7 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 }
 
 func buildAgent(agentPath string) error {
-	output, err := exec.Command("go", "build", "-o", agentPath, ".").CombinedOutput()
+	output, err := exec.Command("/usr/local/go/bin/go", "build", "-o", agentPath, ".").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(output)))
 	}
