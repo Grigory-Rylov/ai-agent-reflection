@@ -1,0 +1,24 @@
+{
+    "agents": {
+        "lead": {
+            "mode": "primary",
+            "prompt": "testdata/lead.md"
+        },
+        "developer": {
+            "mode": "subagent",
+            "prompt": "testdata/developer.md"
+        },
+        "reviewer": {
+            "mode": "subagent",
+            "prompt": "testdata/reviewer.md"
+        },
+        "qa": {
+            "mode": "subagent",
+            "prompt": "testdata/qa.md"
+        },
+        "explore": {
+            "mode": "subagent",
+            "prompt": "testdata/explore.md"
+        }
+    }
+}

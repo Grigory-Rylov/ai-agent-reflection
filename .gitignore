@@ -1,7 +1,9 @@
 # Binaries
 vk-gateway
+restarter
 vk-gateway-restarter
 /agent
+ai-agent
 
 # Databases
 *.db
