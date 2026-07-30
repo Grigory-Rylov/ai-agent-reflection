@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/opencode/llama-client/pkg/store"
 )
 
 // ============================================================
@@ -325,3 +327,58 @@ func TestDefaultConfig(t *testing.T) {
 		t.Error("expected AutoSave false by default")
 	}
 }
+
+// TestSetWorkingDirPersists проверяет что SetWorkingDir сохраняет workingDir в стор
+func TestSetWorkingDirPersists(t *testing.T) {
+	// Моковый стор
+	mockSt := &mockWorkingDirStore{
+		workingDir: "",
+	}
+
+	config := DefaultConfig()
+	config.PeerID = 12345
+	config.Store = mockSt
+	config.AutoSave = true
+
+	s := NewSession(config)
+
+	newDir := "/home/user/projects/my-project"
+	s.SetWorkingDir(newDir)
+
+	// Проверяем что workingDir установлен
+	if s.GetWorkingDir() != newDir {
+		t.Errorf("expected workingDir = %q, got %q", newDir, s.GetWorkingDir())
+	}
+
+	// Проверяем что workingDir сохранён в стор
+	if mockSt.workingDir != newDir {
+		t.Errorf("expected store workingDir = %q, got %q", newDir, mockSt.workingDir)
+	}
+}
+
+// mockWorkingDirStore — минимальный мок стора для тестирования workingDir
+type mockWorkingDirStore struct {
+	workingDir string
+}
+
+func (m *mockWorkingDirStore) GetSession(peerID int64) (*store.SessionData, error) {
+	return nil, nil
+}
+
+func (m *mockWorkingDirStore) SaveSession(s *store.SessionData) error {
+	m.workingDir = s.WorkingDir
+	return nil
+}
+
+func (m *mockWorkingDirStore) ClearSession(peerID int64) error { return nil }
+func (m *mockWorkingDirStore) AddMessage(peerID int64, msg store.MessageData) error { return nil }
+func (m *mockWorkingDirStore) GetMessages(peerID int64) ([]store.MessageData, error) { return nil, nil }
+func (m *mockWorkingDirStore) ClearMessages(peerID int64) error { return nil }
+func (m *mockWorkingDirStore) GetTodos(sessionID string) ([]store.TodoItem, error) { return nil, nil }
+func (m *mockWorkingDirStore) UpdateTodos(sessionID string, todos []store.TodoItem) error { return nil }
+func (m *mockWorkingDirStore) GetPermission(sessionID, toolName, resource string) (*store.PermissionRecord, error) { return nil, nil }
+func (m *mockWorkingDirStore) GetPermissions(sessionID string) ([]store.PermissionRecord, error) { return nil, nil }
+func (m *mockWorkingDirStore) GetDistinctGrantSessions() ([]string, error) { return nil, nil }
+func (m *mockWorkingDirStore) SavePermission(sessionID, toolName, resource, decision string) error { return nil }
+func (m *mockWorkingDirStore) ClearPermissions(sessionID string) error { return nil }
+func (m *mockWorkingDirStore) Close() error { return nil }
