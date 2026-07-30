@@ -202,6 +202,14 @@ func (o *Orchestrator) makeSubAgent(name, systemPrompt string, peerID int64) age
 	cfg.AgentName = name
 
 	a := agent.NewAgent(cfg)
+
+	// Устанавливаем permission checker из AgentManager
+	if o.config.AgentManager != nil {
+		if info, err := o.config.AgentManager.GetAgent(name); err == nil && info.Permission != nil && len(info.Permission) > 0 {
+			a.SetPermissionChecker(agentpolicy.NewPermissionAdapter(info.Permission))
+		}
+	}
+
 	a.SetThinkingCallback(o.makeThinkingCallback(name))
 	a.GetSession(peerID).UpdateSystemPrompt(systemPrompt)
 	return a

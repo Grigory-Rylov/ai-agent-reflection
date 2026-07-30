@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/opencode/llama-client/pkg/agent"
+	"github.com/opencode/llama-client/pkg/agentpolicy"
 	"github.com/opencode/llama-client/pkg/compress"
 	"github.com/opencode/llama-client/pkg/tokenizers"
 	"github.com/opencode/llama-client/pkg/tools"
@@ -448,6 +449,11 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 	// Создаём agent для обработки
 	agentConfig := al.buildAgentConfig()
 	var a agent.Agent = agent.NewAgent(agentConfig)
+
+	// Устанавливаем permission checker — опасные инструменты требуют подтверждения
+	if ps, ok := a.(interface{ SetPermissionChecker(agent.PermissionChecker) }); ok {
+		ps.SetPermissionChecker(agentpolicy.NewPermissionAdapter(agentpolicy.UserFacingPermission()))
+	}
 
 	// Устанавливаем callback для thinking сообщений
 	a.SetThinkingCallback(func(cbPeerID int64, content string) error {

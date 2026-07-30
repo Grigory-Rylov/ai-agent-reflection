@@ -126,6 +126,19 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	// Извлекаем команду из сообщения (удаляем VK mention если есть)
 	command := extractCommand(message)
 
+	// Если есть ожидающий вопрос для этого peerID — направляем ответ туда
+	if tools.HasPendingQuestion(peerID) {
+		logger.DebugToFile("[ProcessMessage] HasPendingQuestion=true for peer %d, command=%s", peerID, truncateStr(command, 100))
+		if tools.ResolvePendingQuestion(peerID, command) {
+			logger.DebugToFile("[ProcessMessage] Resolved pending question for peer %d with: %s", peerID, truncateStr(command, 50))
+			return ""
+		} else {
+			logger.DebugToFile("[ProcessMessage] ResolvePendingQuestion returned false for peer %d, command=%s", peerID, truncateStr(command, 50))
+		}
+	} else {
+		logger.DebugToFile("[ProcessMessage] HasPendingQuestion=false for peer %d, command=%s", peerID, truncateStr(command, 100))
+	}
+
 	// Проверяем #agent_name (worker, qa, explore, general, agent, coordinator, lead, ...)
 	agentName, task := ParseAgentHashMention(command, h.agentNames())
 	if agentName != "" {
@@ -257,8 +270,9 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 	case "/reset", "/clear":
 		h.aiAgent.ResetSession(peerID)
 		h.clearHandlerSession(peerID)
+		tools.ClearGrants(peerID)
 		if h.log != nil {
-			h.log.InfoLogf("User %d reset session", peerID)
+			h.log.InfoLogf("User %d reset session, grants cleared", peerID)
 		}
 		return "История диалога очищена. Напишите /newsession [path] чтобы сменить рабочую директорию."
 
@@ -394,8 +408,9 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 		return fmt.Sprintf("Ошибка: не удалось получить абсолютный путь: %v", err)
 	}
 
-	// Сбрасываем сессию в agentloop
+	// Сбрасываем сессию и гранты в agentloop
 	h.aiAgent.ResetSession(peerID)
+	tools.ClearGrants(peerID)
 
 	// Устанавливаем рабочую директорию в сессии agentloop
 	if s := h.aiAgent.GetSession(peerID); s != nil {
@@ -574,7 +589,9 @@ func (h *BotHandler) runLongPoll(ctx context.Context, server, key string, ts int
 				// Обрабатываем сообщение в отдельной goroutine
 				go func(messageText string, peerID int64, targetPeer int64) {
 					tools.SetQuestionPeerID(peerID)
+					logger.DebugToFile("[handler] goroutine: peerID=%d, targetPeer=%d, text=%s", peerID, targetPeer, truncateStr(messageText, 100))
 					response := h.ProcessMessage(messageText, peerID)
+					logger.DebugToFile("[handler] goroutine: ProcessMessage returned response=%q (len=%d)", response, len(response))
 					// Не отправляем пустые сообщения
 					if response == "" {
 						return

@@ -8,8 +8,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -43,7 +43,6 @@ type Config struct {
 	Agents         map[string]agentpolicy.AgentCfg `json:"agents"`
 }
 
-// resolvePrompt resolves a prompt value: if it's "{file:./path}", reads from file.
 func resolvePrompt(prompt, baseDir string) (string, error) {
 	if strings.HasPrefix(prompt, "{file:") && strings.HasSuffix(prompt, "}") {
 		path := strings.TrimSuffix(strings.TrimPrefix(prompt, "{file:"), "}")
@@ -116,6 +115,44 @@ func main() {
 		dbStore = nil
 	} else {
 		log.InfoLog("SQLite store initialized: %s", dbPath)
+	}
+
+	// Wire persistent permission grants
+	if dbStore != nil {
+		tools.SetGrantPersistence(
+			func(peerID int64, path string) {
+				sessionID := fmt.Sprintf("%d", peerID)
+				if err := dbStore.SavePermission(sessionID, "*", path, "allow"); err != nil {
+					log.WarnLogf("Failed to persist path grant: %v", err)
+				}
+			},
+			func(peerID int64) {
+				sessionID := fmt.Sprintf("%d", peerID)
+				if err := dbStore.ClearPermissions(sessionID); err != nil {
+					log.WarnLogf("Failed to clear grants: %v", err)
+				}
+			},
+		)
+		// Load existing path grants from database
+		sessions, err := dbStore.GetDistinctGrantSessions()
+		if err != nil {
+			log.WarnLogf("Failed to list grant sessions: %v", err)
+		} else {
+			for _, sessionID := range sessions {
+				perms, err := dbStore.GetPermissions(sessionID)
+				if err != nil {
+					log.WarnLogf("Failed to load permissions for session %s: %v", sessionID, err)
+					continue
+				}
+				for _, p := range perms {
+					if p.Decision == "allow" && p.ToolName == "*" {
+						peerID, _ := strconv.ParseInt(sessionID, 10, 64)
+						tools.ApplyPathGrant(peerID, p.Resource)
+						log.DebugLogf("Loaded path grant: peer=%d path=%s", peerID, p.Resource)
+					}
+				}
+			}
+		}
 	}
 
 	tools.GlobalTodo.Reset()
@@ -195,7 +232,6 @@ func main() {
 
 	agentManager := initAgentManager(config.Agents, agentDir, log)
 
-	// Регистрируем subagent tool как обычный тул (как task в opencode)
 	sysPromptDir := filepath.Join(agentDir, "agents")
 	subAgentCfg := agent.Config{
 		LlamaServerURL: llamaURL,
@@ -225,7 +261,6 @@ func main() {
 		SetActiveAgent:  func(name string) {},
 	})
 
-	// Создаём оркестратор для многоагентного режима
 	orchestrator := agentloop.NewOrchestrator(agentloop.OrchestratorConfig{
 		LlamaServerURL:  llamaURL,
 		Model:           config.Model,
@@ -271,7 +306,6 @@ func main() {
 		}
 	}
 
-	// Запускаем обработчик бота
 	log.InfoLog("Starting VK Bot Handler...")
 	handlerCtx, handlerCancel := context.WithCancel(ctx)
 	defer handlerCancel()
@@ -283,11 +317,9 @@ func main() {
 		}
 	}()
 
-	// Если указан начальный промпт — отправляем его в обработку
 	if *initialPrompt != "" && config.PeerID > 0 {
 		prompt := *initialPrompt
 
-		// Проверяем #agent_name — если есть, пускаем через RunAgent
 		knownNames := agentManager.ListAgentNames()
 		if len(knownNames) == 0 {
 			knownNames = []string{"worker", "qa", "explore", "general", "agent", "coordinator"}
@@ -311,7 +343,6 @@ func main() {
 				vkClient.SendMessage(config.PeerID, "⚠️ Initial prompt returned empty response")
 			}
 		} else {
-			// Обычный промпт — через agent loop
 			log.InfoLogf("Processing initial prompt: %s", truncate(prompt, 100))
 
 			promptCtx, promptCancel := context.WithTimeout(ctx, 10*time.Minute)
@@ -335,61 +366,77 @@ func main() {
 	log.InfoLog("VK Bot Gateway stopped")
 }
 
-var (
-	pendingQuestions   map[int64]chan map[string]interface{}
-	pendingQuestionsMu sync.Mutex
-)
-
-func init() {
-	pendingQuestions = make(map[int64]chan map[string]interface{})
+func extractQuestionOptions(q map[string]interface{}) []map[string]string {
+	optsRaw, ok := q["options"]
+	if !ok {
+		return nil
+	}
+	// Нормализуем через JSON — работает для любого Go-типа ([]interface{}, []map[string]interface{} и т.д.)
+	data, err := json.Marshal(optsRaw)
+	if err != nil {
+		return nil
+	}
+	var items []map[string]interface{}
+	if err := json.Unmarshal(data, &items); err != nil {
+		return nil
+	}
+	var result []map[string]string
+	for _, item := range items {
+		label, _ := item["label"].(string)
+		if label != "" {
+			result = append(result, map[string]string{"label": label})
+		}
+	}
+	return result
 }
 
-func handleQuestion(vkClient interface{ SendMessage(int64, string) (int64, error) }, peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+func handleQuestion(vkClient interface {
+	SendMessage(int64, string) (int64, error)
+	SendMessageWithKeyboard(int64, string, map[string]interface{}) (int64, error)
+}, peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
 	text := buildQuestionText(q)
 
-	if _, err := vkClient.SendMessage(peerID, text); err != nil {
-		return nil, fmt.Errorf("send question: %w", err)
+	ch := tools.RegisterPendingQuestion(peerID)
+	defer tools.UnregisterPendingQuestion(peerID)
+
+	options := extractQuestionOptions(q)
+	if len(options) > 0 {
+		header, _ := q["header"].(string)
+		qText, _ := q["question"].(string)
+		keyboard := vk.CreateQuestionKeyboard(header, qText, options)
+		logger.DebugToFile("[handleQuestion] Sending question to peer %d: %s", peerID, text)
+		if _, err := vkClient.SendMessageWithKeyboard(peerID, text, keyboard); err != nil {
+			logger.DebugToFile("[handleQuestion] SendMessageWithKeyboard failed: %v", err)
+			vkClient.SendMessage(peerID, fmt.Sprintf("\u26a0\ufe0f %s\n\n%s", "Keyboard unavailable, reply with text:", text))
+		} else {
+			logger.DebugToFile("[handleQuestion] Keyboard sent successfully to peer %d", peerID)
+		}
+	} else {
+		if _, err := vkClient.SendMessage(peerID, text); err != nil {
+			return nil, fmt.Errorf("send question: %w", err)
+		}
 	}
 
-	ch := make(chan map[string]interface{}, 1)
-	pendingQuestionsMu.Lock()
-	pendingQuestions[peerID] = ch
-	pendingQuestionsMu.Unlock()
-
-	defer func() {
-		pendingQuestionsMu.Lock()
-		delete(pendingQuestions, peerID)
-		pendingQuestionsMu.Unlock()
-	}()
-
-	select {
-	case answer := <-ch:
-		return answer, nil
-	case <-time.After(5 * time.Minute):
-		return nil, fmt.Errorf("question timed out")
+	logger.DebugToFile("[handleQuestion] Waiting for answer from peer %d...", peerID)
+	answer, err := waitForAnswer(ch)
+	logger.DebugToFile("[handleQuestion] Got answer from peer %d: err=%v", peerID, err)
+	if _, err2 := vkClient.SendMessageWithKeyboard(peerID, "\u2705 Done", vk.CreateCommandKeyboard()); err2 != nil {
+		logger.DebugToFile("[handleQuestion] Reset keyboard failed: %v", err2)
 	}
+	return answer, err
 }
 
-func resolvePendingQuestion(peerID int64, text string) bool {
-	pendingQuestionsMu.Lock()
-	ch, ok := pendingQuestions[peerID]
-	pendingQuestionsMu.Unlock()
+func waitForAnswer(ch chan map[string]interface{}) (map[string]interface{}, error) {
+	answer, ok := <-ch
 	if !ok {
-		return false
+		return nil, fmt.Errorf("question cancelled")
 	}
-
-	answer := map[string]interface{}{
-		"answer":   text,
-		"selected": []string{text},
-	}
-	ch <- answer
-	return true
+	return answer, nil
 }
 
 func buildQuestionText(q map[string]interface{}) string {
 	question, _ := q["question"].(string)
 	header, _ := q["header"].(string)
-	custom, _ := q["custom"].(bool)
 
 	var b strings.Builder
 	if header != "" {
@@ -397,21 +444,13 @@ func buildQuestionText(q map[string]interface{}) string {
 	}
 	b.WriteString(question)
 
-	if !custom {
-		if opts, ok := q["options"].([]interface{}); ok {
-			b.WriteString("\n\nOptions:")
-			for _, opt := range opts {
-				if o, ok := opt.(map[string]interface{}); ok {
-					label, _ := o["label"].(string)
-					desc, _ := o["description"].(string)
-					b.WriteString(fmt.Sprintf("\n- %s", label))
-					if desc != "" {
-						b.WriteString(fmt.Sprintf(" (%s)", desc))
-					}
-				}
-			}
-			b.WriteString("\n\nReply with your choice")
+	options := extractQuestionOptions(q)
+	if len(options) > 0 {
+		b.WriteString("\n\nOptions:")
+		for _, opt := range options {
+			b.WriteString(fmt.Sprintf("\n- %s", opt["label"]))
 		}
+		b.WriteString("\n\nReply with your choice")
 	} else {
 		b.WriteString("\n\nReply with your answer")
 	}
@@ -441,7 +480,6 @@ func loadConfig(path string) (Config, error) {
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// Fallback to global config
 		homeDir, _ := os.UserHomeDir()
 		globalPath := filepath.Join(homeDir, ".config", "ai-agent", "config.json")
 		data, err = os.ReadFile(globalPath)
@@ -467,8 +505,6 @@ func loadMCPConfig(path string) (*mcp.Config, error) {
 	return &config, nil
 }
 
-// initAgentManager creates AgentManager from config agents map,
-// resolving prompt file paths and loading .md prompts.
 func initAgentManager(agents map[string]agentpolicy.AgentCfg, agentDir string, log interface{ InfoLogf(string, ...interface{}) }) *agentpolicy.AgentManager {
 	am := agentpolicy.NewAgentManager()
 	if agents == nil {
@@ -506,13 +542,4 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "..."
-}
-
-func contains(slice []string, s string) bool {
-	for _, item := range slice {
-		if item == s {
-			return true
-		}
-	}
-	return false
 }

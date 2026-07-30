@@ -54,6 +54,17 @@ func DefaultPermission() Permission {
 	}
 }
 
+// UserFacingPermission возвращает разрешение для пользовательского агента:
+// опасные инструменты требуют подтверждения, остальное разрешено.
+func UserFacingPermission() Permission {
+	return Permission{
+		"*":             "allow",
+		"file_write":    "ask",
+		"shell_execute": "ask",
+		"edit":          "ask",
+	}
+}
+
 // MergePermissions объединяет два Permission (второй имеет приоритет)
 func MergePermissions(base Permission, override Permission) Permission {
 	merged := make(Permission)

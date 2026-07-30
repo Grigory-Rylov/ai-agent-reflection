@@ -1,6 +1,9 @@
 package agent
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestHasPartialToolCall_Empty(t *testing.T) {
 	if hasPartialToolCall("") {
@@ -151,3 +154,28 @@ func TestHasPartialToolCall_ValidWithUnclosed(t *testing.T) {
 }
 
 
+
+func TestParseToolArguments_ArrayOptions(t *testing.T) {
+	// Simulate how the model sends options as a JSON array in tool call arguments.
+	// The outer quotes are the JSON-string encoding from the streaming protocol.
+	raw := json.RawMessage(`"{"question":"Pick color","options":[{"label":"Red"},{"label":"Blue"}]}"`)
+	tc := ToolCall{ID: "call_1", Function: ToolCallFunction{Name: "question", Arguments: raw}}
+	args, err := parseToolArguments(tc)
+	if err != nil {
+		t.Fatalf("parseToolArguments failed: %v", err)
+	}
+	opts, ok := args["options"]
+	if !ok {
+		t.Fatal("expected options key")
+	}
+	var parsed []map[string]string
+	if err := json.Unmarshal([]byte(opts), &parsed); err != nil {
+		t.Fatalf("options should be valid JSON array, got: %s (error: %v)", opts, err)
+	}
+	if len(parsed) != 2 {
+		t.Fatalf("expected 2 options, got %d: %v", len(parsed), parsed)
+	}
+	if parsed[0]["label"] != "Red" {
+		t.Errorf("expected label 'Red', got '%s'", parsed[0]["label"])
+	}
+}

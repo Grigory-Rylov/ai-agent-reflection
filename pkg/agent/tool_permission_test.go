@@ -28,14 +28,14 @@ func TestCheckPermissionAsk(t *testing.T) {
 		}
 	})
 
-	t.Run("allow when empty agent name", func(t *testing.T) {
+	t.Run("allow when no checker even with empty agent name", func(t *testing.T) {
 		cfg := DefaultConfig()
 		cfg.AgentName = ""
 		a := NewAgent(cfg)
 		e := newAgentToolExecutor(a)
 		result := e.checkPermissionAsk(context.Background(), "file_write", nil, 12345)
 		if !result {
-			t.Error("expected allow when agent name is empty")
+			t.Error("expected allow when no checker set (backward compat)")
 		}
 	})
 

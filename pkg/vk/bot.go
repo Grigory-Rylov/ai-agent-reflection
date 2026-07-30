@@ -567,3 +567,19 @@ func CreateCommandKeyboard() map[string]interface{} {
 		},
 	}
 }
+
+// CreatePermissionKeyboard creates a keyboard for permission requests with Allow/Always/Deny
+func CreatePermissionKeyboard() map[string]interface{} {
+	return map[string]interface{}{
+		"inline": false,
+		"buttons": [][]map[string]interface{}{
+			{
+				{"action": map[string]interface{}{"type": "text", "label": "✅ Разрешить"}, "color": "positive"},
+				{"action": map[string]interface{}{"type": "text", "label": "✅ Всегда"}, "color": "primary"},
+			},
+			{
+				{"action": map[string]interface{}{"type": "text", "label": "❌ Запретить"}, "color": "negative"},
+			},
+		},
+	}
+}

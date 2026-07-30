@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -11,7 +12,140 @@ var (
 	questionCallback func(peerID int64, question map[string]interface{}) (map[string]interface{}, error)
 	questionPeerID   int64
 	questionMu       sync.RWMutex
+
+	pendingQuestions   map[int64]chan map[string]interface{}
+	pendingQuestionsMu sync.Mutex
+
+	grantedPaths   map[int64][]string
+	grantedPathsMu sync.RWMutex
+
+	grantPersistPath func(peerID int64, path string)
+	grantRemove      func(peerID int64)
 )
+
+func init() {
+	pendingQuestions = make(map[int64]chan map[string]interface{})
+	grantedPaths = make(map[int64][]string)
+}
+
+func HasPendingQuestion(peerID int64) bool {
+	pendingQuestionsMu.Lock()
+	_, ok := pendingQuestions[peerID]
+	pendingQuestionsMu.Unlock()
+	return ok
+}
+
+func ResolvePendingQuestion(peerID int64, text string) bool {
+	pendingQuestionsMu.Lock()
+	ch, ok := pendingQuestions[peerID]
+	pendingQuestionsMu.Unlock()
+	if !ok {
+		return false
+	}
+
+	answer := map[string]interface{}{
+		"answer":   text,
+		"selected": []string{text},
+	}
+
+	select {
+	case ch <- answer:
+		return true
+	default:
+		return false
+	}
+}
+
+func RegisterPendingQuestion(peerID int64) chan map[string]interface{} {
+	ch := make(chan map[string]interface{}, 1)
+	pendingQuestionsMu.Lock()
+	pendingQuestions[peerID] = ch
+	pendingQuestionsMu.Unlock()
+	return ch
+}
+
+func UnregisterPendingQuestion(peerID int64) {
+	pendingQuestionsMu.Lock()
+	delete(pendingQuestions, peerID)
+	pendingQuestionsMu.Unlock()
+}
+
+func IsPathGranted(peerID int64, toolPath string) bool {
+	if toolPath == "" {
+		return false
+	}
+	grantedPathsMu.RLock()
+	defer grantedPathsMu.RUnlock()
+	prefixes, ok := grantedPaths[peerID]
+	if !ok {
+		return false
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(toolPath, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func ClearGrants(peerID int64) {
+	grantedPathsMu.Lock()
+	delete(grantedPaths, peerID)
+	grantedPathsMu.Unlock()
+
+	if grantRemove != nil {
+		grantRemove(peerID)
+	}
+}
+
+func GrantPath(peerID int64, path string) {
+	if path == "" {
+		return
+	}
+	grantedPathsMu.Lock()
+	grantedPaths[peerID] = addPathPrefix(grantedPaths[peerID], path)
+	grantedPathsMu.Unlock()
+
+	if grantPersistPath != nil {
+		grantPersistPath(peerID, path)
+	}
+}
+
+func ApplyPathGrant(peerID int64, path string) {
+	if path == "" {
+		return
+	}
+	grantedPathsMu.Lock()
+	defer grantedPathsMu.Unlock()
+	grantedPaths[peerID] = addPathPrefix(grantedPaths[peerID], path)
+}
+
+func addPathPrefix(prefixes []string, newPath string) []string {
+	// Normalize: ensure trailing /
+	if !strings.HasSuffix(newPath, "/") {
+		newPath += "/"
+	}
+	for _, p := range prefixes {
+		if p == newPath {
+			return prefixes
+		}
+	}
+	// Filter out child paths that are covered by the new one
+	var filtered []string
+	for _, p := range prefixes {
+		if strings.HasPrefix(p, newPath) {
+			continue
+		}
+		filtered = append(filtered, p)
+	}
+	filtered = append(filtered, newPath)
+	return filtered
+}
+
+func SetGrantPersistence(persistPath func(peerID int64, path string), remove func(peerID int64)) {
+	grantPersistPath = persistPath
+	grantRemove = remove
+}
 
 func SetQuestionCallback(cb func(peerID int64, question map[string]interface{}) (map[string]interface{}, error)) {
 	questionMu.Lock()

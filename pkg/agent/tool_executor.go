@@ -123,17 +123,24 @@ func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, 
 }
 
 func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName string, args map[string]string, peerID int64) bool {
-	agentConfig := e.agent.config
-	if agentConfig.AgentName == "" {
-		return true
+	logger.DebugToFile("[checkPermissionAsk] enter: tool=%s, peer=%d, args=%v", toolName, peerID, args)
+
+	// Проверяем path grant — если путь разрешён, любой инструмент на нём проходим
+	if toolPath := extractToolPath(toolName, args); toolPath != "" {
+		if tools.IsPathGranted(peerID, toolPath) {
+			logger.DebugToFile("[checkPermissionAsk] path=%s granted for peer %d, allow all tools", toolPath, peerID)
+			return true
+		}
 	}
 
 	checker := e.agent.getPermissionChecker()
 	if checker == nil {
+		logger.DebugToFile("[checkPermissionAsk] no checker, allow")
 		return true
 	}
 
 	decision := checker.Check(toolName)
+	logger.DebugToFile("[checkPermissionAsk] decision=%s for %s", decision, toolName)
 	switch decision {
 	case "deny":
 		e.agent.debugLog.Info("Permission denied for tool '%s'", toolName)
@@ -147,12 +154,9 @@ func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName str
 
 	e.agent.sendThinking(peerID, fmt.Sprintf("[PERMISSION] Asking user for tool '%s'...", toolName))
 
-	resource := ""
-	if path, ok := args["path"]; ok {
-		resource = path
-	}
-
-	return askUserPermission(ctx, peerID, toolName, resource)
+	result := askUserPermission(ctx, peerID, toolName, args)
+	logger.DebugToFile("[checkPermissionAsk] askUserPermission returned %v for tool=%s, args=%v", result, toolName, args)
+	return result
 }
 
 func (e *agentToolExecutor) getPermissionChecker() permissionChecker {
@@ -173,36 +177,43 @@ func (a *agentImpl) getPermissionChecker() permissionChecker {
 	return a.permissionChecker
 }
 
-func askUserPermission(ctx context.Context, peerID int64, toolName, resource string) bool {
+func askUserPermission(ctx context.Context, peerID int64, toolName string, args map[string]string) bool {
 	cb, _ := getQuestionState()
 	if cb == nil {
+		logger.DebugToFile("[askUserPermission] cb is nil, allowing tool=%s without asking", toolName)
 		return true
 	}
 
-	q := map[string]interface{}{
-		"question": fmt.Sprintf("Allow tool '%s'?", toolName),
-		"header":   "Permission",
-		"options": []map[string]interface{}{
-			{"label": "Allow", "description": "Allow this one time"},
-			{"label": "Deny", "description": "Deny this time"},
-			{"label": "Always allow", "description": "Always allow for this session"},
-		},
-	}
+	logger.DebugToFile("[askUserPermission] asking user for tool=%s, args=%v, peer=%d", toolName, args, peerID)
 
-	if resource != "" {
-		q["question"] = fmt.Sprintf("Allow tool '%s' on '%s'?", toolName, resource)
+	// Собираем подробное описание операции
+	detail := buildToolPermissionDetail(toolName, args)
+
+	// Используем русские подписи для VK клавиатуры
+	q := map[string]interface{}{
+		"question": fmt.Sprintf("Allow: %s?", detail),
+		"header":   "🔐 " + toolName,
+		"options": []map[string]interface{}{
+			{"label": "✅ Allow", "description": "Allow this one time"},
+			{"label": "✅ Always allow", "description": "Always allow for this session"},
+			{"label": "❌ Deny", "description": "Deny this time"},
+		},
 	}
 
 	select {
 	case <-ctx.Done():
+		logger.DebugToFile("[askUserPermission] ctx cancelled for tool=%s", toolName)
 		return false
 	default:
 	}
 
+	logger.DebugToFile("[askUserPermission] calling callback cb(peerID=%d, q) for tool=%s", peerID, toolName)
 	answer, err := cb(peerID, q)
 	if err != nil {
-		return true
+		logger.DebugToFile("[askUserPermission] cb returned err=%v for tool=%s", err, toolName)
+		return false
 	}
+	logger.DebugToFile("[askUserPermission] cb returned answer=%v for tool=%s", answer, toolName)
 
 	selected, _ := answer["selected"].([]interface{})
 	if len(selected) == 0 {
@@ -215,10 +226,14 @@ func askUserPermission(ctx context.Context, peerID int64, toolName, resource str
 	}
 
 	choice, _ := selected[0].(string)
-	switch choice {
-	case "Allow", "allow":
+	switch {
+	case strings.Contains(choice, "Always allow"), strings.Contains(choice, "always allow"), strings.Contains(choice, "Всегда"):
+		if p := extractToolPath(toolName, args); p != "" {
+			tools.GrantPath(peerID, p)
+			logger.DebugToFile("[askUserPermission] path grant for %s on peer %d", toolName, peerID)
+		}
 		return true
-	case "Always allow", "always allow":
+	case strings.Contains(choice, "Allow"), strings.Contains(choice, "allow"), strings.Contains(choice, "Разрешить"):
 		return true
 	default:
 		return false
@@ -234,6 +249,70 @@ func (a *agentImpl) executeAllTools(ctx context.Context, toolCalls []ToolCall, p
 		return a.toolExecutor.ExecuteAll(ctx, toolCalls, peerID)
 	}
 	return newAgentToolExecutor(a).ExecuteAll(ctx, toolCalls, peerID)
+}
+
+
+func extractToolPath(toolName string, args map[string]string) string {
+	if p, ok := args["path"]; ok && p != "" {
+		return p
+	}
+	if cmd, ok := args["command"]; ok && cmd != "" {
+		// Extract path from common shell commands
+		parts := strings.Fields(cmd)
+		for i, part := range parts {
+			if strings.HasPrefix(part, "/") || strings.HasPrefix(part, "~") || strings.HasPrefix(part, ".") || strings.HasPrefix(part, "$") {
+				return part
+			}
+			if i < len(parts)-1 && (part == "cd" || part == "mkdir" || part == "rm" || part == "cp" || part == "mv") {
+				return parts[i+1]
+			}
+		}
+	}
+	return ""
+}
+
+func buildToolPermissionDetail(toolName string, args map[string]string) string {
+	switch toolName {
+	case "shell_execute":
+		if cmd, ok := args["command"]; ok && cmd != "" {
+			return fmt.Sprintf("run shell command: %s", truncateStr(cmd, 200))
+		}
+	case "file_write":
+		detail := "write file"
+		if path, ok := args["path"]; ok && path != "" {
+			detail += " " + path
+		}
+		return detail
+	case "file_read":
+		if path, ok := args["path"]; ok && path != "" {
+			return "read file " + path
+		}
+	case "edit":
+		if path, ok := args["path"]; ok && path != "" {
+			return "edit file " + path
+		}
+	case "dir_list":
+		if path, ok := args["path"]; ok && path != "" {
+			return "list directory " + path
+		}
+	case "glob":
+		if pattern, ok := args["pattern"]; ok && pattern != "" {
+			return "find files by pattern: " + pattern
+		}
+	case "search_code":
+		if pattern, ok := args["pattern"]; ok && pattern != "" {
+			return "search code for: " + truncateStr(pattern, 100)
+		}
+	case "web_fetch":
+		if url, ok := args["url"]; ok && url != "" {
+			return "fetch URL: " + truncateStr(url, 200)
+		}
+	case "web_search":
+		if query, ok := args["query"]; ok && query != "" {
+			return "web search: " + truncateStr(query, 200)
+		}
+	}
+	return fmt.Sprintf("use tool '%s'", toolName)
 }
 
 var toolAliases = map[string]string{

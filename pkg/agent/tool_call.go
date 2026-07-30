@@ -208,7 +208,12 @@ func parseToolArguments(tc ToolCall) (map[string]string, error) {
 			args[normalized] = fmt.Sprintf("%v", val)
 		default:
 			if v != nil {
-				args[normalized] = fmt.Sprintf("%v", v)
+				data, err := json.Marshal(v)
+				if err == nil {
+					args[normalized] = string(data)
+				} else {
+					args[normalized] = fmt.Sprintf("%v", v)
+				}
 			}
 		}
 	}

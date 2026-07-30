@@ -61,6 +61,8 @@ type Store interface {
 	UpdateTodos(sessionID string, todos []TodoItem) error
 
 	GetPermission(sessionID, toolName, resource string) (*PermissionRecord, error)
+	GetPermissions(sessionID string) ([]PermissionRecord, error)
+	GetDistinctGrantSessions() ([]string, error)
 	SavePermission(sessionID, toolName, resource, decision string) error
 	ClearPermissions(sessionID string) error
 }
