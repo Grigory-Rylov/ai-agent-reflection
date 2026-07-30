@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"flag"
+
 	"github.com/opencode/llama-client/pkg/vk"
 )
 
@@ -90,7 +92,19 @@ func (ap *agentProc) pid() int {
 	return 0
 }
 
+func buildAgentArgs() []string {
+	restarterDebug := flag.Bool("d", false, "Enable debug mode")
+	flag.Parse()
+
+	var args []string
+	if *restarterDebug {
+		args = append(args, "-d")
+	}
+	return args
+}
+
 func main() {
+	agentArgs := buildAgentArgs()
 	agentDir, _ := os.Getwd()
 
 	config, err := loadConfig(filepath.Join(agentDir, "config.json"))
@@ -116,7 +130,7 @@ func main() {
 		fmt.Println("[restarter] Agent built successfully")
 	}
 
-	if err := agent.start(agentPath, os.Args[1:]); err != nil {
+	if err := agent.start(agentPath, agentArgs); err != nil {
 		fmt.Fprintf(os.Stderr, "[restarter] Failed to start agent: %v\n", err)
 		os.Exit(1)
 	}
@@ -135,26 +149,26 @@ func main() {
 		os.Exit(0)
 	}()
 
-	go monitorAgent(&agent, agentPath)
+	go monitorAgent(&agent, agentPath, agentArgs)
 
-	runVKListener(ctx, vkClient, config, &agent, agentPath)
+	runVKListener(ctx, vkClient, config, &agent, agentPath, agentArgs)
 }
 
-func monitorAgent(ap *agentProc, agentPath string) {
+func monitorAgent(ap *agentProc, agentPath string, agentArgs []string) {
 	for {
 		time.Sleep(2 * time.Second)
 		if ap.isRunning() {
 			continue
 		}
 		fmt.Println("[restarter] Agent died, restarting...")
-		if err := ap.start(agentPath, os.Args[1:]); err != nil {
+		if err := ap.start(agentPath, agentArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "[restarter] Restart failed: %v\n", err)
 			time.Sleep(5 * time.Second)
 		}
 	}
 }
 
-func runVKListener(ctx context.Context, vkClient *vk.BotClient, config Config, ap *agentProc, agentPath string) {
+func runVKListener(ctx context.Context, vkClient *vk.BotClient, config Config, ap *agentProc, agentPath string, agentArgs []string) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -166,7 +180,7 @@ func runVKListener(ctx context.Context, vkClient *vk.BotClient, config Config, a
 				time.Sleep(3 * time.Second)
 				continue
 			}
-			if err := pollLoop(ctx, vkClient, server, key, ts, config, ap, agentPath); err != nil {
+			if err := pollLoop(ctx, vkClient, server, key, ts, config, ap, agentPath, agentArgs); err != nil {
 				fmt.Fprintf(os.Stderr, "[restarter] Poll error: %v\n", err)
 				time.Sleep(3 * time.Second)
 			}
@@ -174,7 +188,7 @@ func runVKListener(ctx context.Context, vkClient *vk.BotClient, config Config, a
 	}
 }
 
-func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, ts int64, config Config, ap *agentProc, agentPath string) error {
+func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, ts int64, config Config, ap *agentProc, agentPath string, agentArgs []string) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -205,7 +219,7 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 				case cmd == "/restart":
 					vkClient.SendMessage(replyPeerID, "Перезапуск агента...")
 					ap.stop()
-					if err := ap.start(agentPath, os.Args[1:]); err != nil {
+					if err := ap.start(agentPath, agentArgs); err != nil {
 						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ Ошибка перезапуска: %v", err))
 					} else {
 						vkClient.SendMessage(replyPeerID, "✅ Агент перезапущен")
@@ -218,17 +232,17 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 					output, err := exec.Command("git", "pull").CombinedOutput()
 					if err != nil {
 						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ git pull failed:\n%s", truncate(string(output), 500)))
-						ap.start(agentPath, os.Args[1:])
+						ap.start(agentPath, agentArgs)
 						break
 					}
 
 					if err := buildAgent(agentPath); err != nil {
 						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ Build failed: %v", err))
-						ap.start(agentPath, os.Args[1:])
+						ap.start(agentPath, agentArgs)
 						break
 					}
 
-					if err := ap.start(agentPath, os.Args[1:]); err != nil {
+					if err := ap.start(agentPath, agentArgs); err != nil {
 						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ Restart failed: %v", err))
 					} else {
 						vkClient.SendMessage(replyPeerID, "✅ Агент обновлён и перезапущен")
@@ -246,14 +260,14 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 					output, err := exec.Command("git", "fetch", "--all").CombinedOutput()
 					if err != nil {
 						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ git fetch failed:\n%s", truncate(string(output), 500)))
-						ap.start(agentPath, os.Args[1:])
+						ap.start(agentPath, agentArgs)
 						break
 					}
 
 					output, err = exec.Command("git", "checkout", branch).CombinedOutput()
 					if err != nil {
 						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ git checkout %s failed:\n%s", branch, truncate(string(output), 500)))
-						ap.start(agentPath, os.Args[1:])
+						ap.start(agentPath, agentArgs)
 						break
 					}
 
@@ -264,11 +278,11 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 
 					if err := buildAgent(agentPath); err != nil {
 						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ Build failed: %v", err))
-						ap.start(agentPath, os.Args[1:])
+						ap.start(agentPath, agentArgs)
 						break
 					}
 
-					if err := ap.start(agentPath, os.Args[1:]); err != nil {
+					if err := ap.start(agentPath, agentArgs); err != nil {
 						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ Restart failed: %v", err))
 					} else {
 						vkClient.SendMessage(replyPeerID, fmt.Sprintf("✅ Переключено на %s, агент перезапущен", branch))
