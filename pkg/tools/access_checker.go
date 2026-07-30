@@ -64,7 +64,7 @@ const (
 
 // fileToolPaths возвращает список имён параметров, содержащих пути,
 // для указанного инструмента.
-func fileToolPaths(toolName string, args map[string]string) []string {
+func FileToolPaths(toolName string, args map[string]string) []string {
 	switch toolName {
 	case "file_read", "read_file":
 		if p, ok := args["path"]; ok {
@@ -102,7 +102,7 @@ func fileToolPaths(toolName string, args map[string]string) []string {
 
 // CheckToolArgs проверяет все пути в аргументах инструмента на доступ.
 func CheckToolArgs(toolName string, args map[string]string) error {
-	paths := fileToolPaths(toolName, args)
+	paths := FileToolPaths(toolName, args)
 	for _, p := range paths {
 		resolved, err := resolvePath(p)
 		if err != nil {

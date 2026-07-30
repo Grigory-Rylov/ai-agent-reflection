@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/opencode/llama-client/pkg/logger"
@@ -92,6 +93,13 @@ func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, 
 		return e.agent.createErrorResult(toolCall.ID, toolName, errMsg), fmt.Errorf("%s", errMsg)
 	}
 
+	// Проверяем доступ к путям: если запрещено — спрашиваем пользователя
+	if !e.checkPathAccess(ctx, toolName, args, peerID) {
+		errMsg := fmt.Sprintf("Access denied for tool '%s' by user", toolName)
+		e.agent.sendThinking(peerID, "[TOOL] Denied: "+toolName)
+		return e.agent.createErrorResult(toolCall.ID, toolName, errMsg), fmt.Errorf("%s", errMsg)
+	}
+
 	brief := briefToolCall(toolName, args)
 	e.agent.debugLog.Debug("%sCall: %s", e.agent.agentPrefix(), brief)
 	e.agent.sendThinking(peerID, "[TOOL] Call: "+brief)
@@ -158,6 +166,83 @@ func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName str
 	logger.DebugToFile("[checkPermissionAsk] askUserPermission returned %v for tool=%s, args=%v", result, toolName, args)
 	return result
 }
+
+
+func (e *agentToolExecutor) checkPathAccess(ctx context.Context, toolName string, args map[string]string, peerID int64) bool {
+	paths := tools.FileToolPaths(toolName, args)
+	if len(paths) == 0 {
+		return true
+	}
+
+	ctrl := tools.GetAccessController()
+	if ctrl == nil {
+		return true
+	}
+
+	for _, rawPath := range paths {
+		resolved, err := resolveToolPath(rawPath)
+		if err != nil {
+			continue
+		}
+
+		if err := tools.CheckPathAllowed(resolved); err != nil {
+			e.agent.sendThinking(peerID, fmt.Sprintf("[ACCESS] Need permission to access path: %s", resolved))
+
+			cb, _ := getQuestionState()
+			if cb == nil {
+				return true
+			}
+
+			q := map[string]interface{}{
+				"question": fmt.Sprintf("Allow access to path '%s'?", resolved),
+				"header":   "Access Permission",
+				"options": []map[string]interface{}{
+					{"label": "Allow", "description": "Allow access this one time"},
+					{"label": "Allow always", "description": "Always allow for this session"},
+					{"label": "Deny", "description": "Deny access"},
+				},
+			}
+
+			answer, err := cb(peerID, q)
+			if err != nil {
+				return false
+			}
+
+			selected, _ := answer["selected"].([]interface{})
+			if len(selected) == 0 {
+				rawAnswer, _ := answer["answer"].(string)
+				selected = []interface{}{rawAnswer}
+			}
+			if len(selected) == 0 {
+				return false
+			}
+
+			choice, _ := selected[0].(string)
+			switch choice {
+			case "Allow", "allow", "Allow always", "allow always":
+				ctrl.GrantPath(resolved)
+				e.agent.sendThinking(peerID, fmt.Sprintf("[ACCESS] Access granted to: %s", resolved))
+			default:
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// resolveToolPath приводит путь к абсолютному без проверки доступа.
+func resolveToolPath(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("path is empty")
+	}
+	cleaned := filepath.Clean(path)
+	if !filepath.IsAbs(cleaned) {
+		cleaned = filepath.Join(tools.WorkingDir, cleaned)
+	}
+	return filepath.Clean(cleaned), nil
+}
+
 
 func (e *agentToolExecutor) getPermissionChecker() permissionChecker {
 	if e.agent == nil {
