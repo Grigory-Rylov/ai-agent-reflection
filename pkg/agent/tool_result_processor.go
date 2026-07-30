@@ -11,7 +11,7 @@ import (
 type contextKey string
 
 const toolCallDepthKey contextKey = "tool_call_depth"
-const maxToolCallRecursion = 25
+const maxToolCallRecursion = 100
 
 // ============================================================
 // ToolResultProcessor — обработка результатов инструментов
