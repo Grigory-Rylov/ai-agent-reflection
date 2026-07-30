@@ -27,6 +27,14 @@ debug_response.txt
 artifacts/
 workflows/
 
+# macOS
+.DS_Store
+
+# Temp files
+changes.patch
+*.patch
+car_ride.html
+
 # Config (with secrets)
 config.json
 mcp_config.json
