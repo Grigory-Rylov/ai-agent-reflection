@@ -18,6 +18,12 @@ func (m *mockPermissionChecker) Check(toolName string) string {
 	return m.decision
 }
 
+func (m *mockPermissionChecker) Evaluate(permission, pattern string) string {
+	return m.decision
+}
+
+func (m *mockPermissionChecker) Approve(permission, pattern string) {}
+
 // mockToolPermissionChecker returns different decisions based on tool name
 type mockToolPermissionChecker struct {
 	decisions map[string]string
@@ -29,6 +35,15 @@ func (m *mockToolPermissionChecker) Check(toolName string) string {
 	}
 	return "allow"
 }
+
+func (m *mockToolPermissionChecker) Evaluate(permission, pattern string) string {
+	if d, ok := m.decisions[permission]; ok {
+		return d
+	}
+	return "allow"
+}
+
+func (m *mockToolPermissionChecker) Approve(permission, pattern string) {}
 
 func TestCheckPermissionAsk(t *testing.T) {
 	config := DefaultConfig()

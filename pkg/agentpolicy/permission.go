@@ -3,6 +3,8 @@ package agentpolicy
 import (
 	"path/filepath"
 	"strings"
+
+	"github.com/opencode/llama-client/pkg/permission"
 )
 
 // Permission — карта разрешений для инструментов
@@ -81,7 +83,8 @@ func MergePermissions(base Permission, override Permission) Permission {
 // Реализует contract: Check(toolName string) string, возвращая "allow", "deny", "ask".
 // Используется для интеграции с agent.PermissionChecker без импорта пакета agent.
 type PermissionAdapter struct {
-	P Permission
+	P       Permission
+	Ruleset *permission.Ruleset
 }
 
 func (a *PermissionAdapter) Check(toolName string) string {
@@ -91,9 +94,40 @@ func (a *PermissionAdapter) Check(toolName string) string {
 	return a.P.GetAction(toolName)
 }
 
+// Evaluate возвращает действие по правилам (permission, pattern).
+// Используется для shell-команд: permission="bash", pattern=полная команда.
+func (a *PermissionAdapter) Evaluate(permissionName, pattern string) string {
+	if a == nil || a.Ruleset == nil {
+		return "ask"
+	}
+	return string(permission.Evaluate(permissionName, pattern, *a.Ruleset).Action)
+}
+
+// Approve добавляет правило allow для (permission, pattern).
+// Используется при выборе "Always allow" для запомненной команды.
+func (a *PermissionAdapter) Approve(permissionName, pattern string) {
+	if a == nil {
+		return
+	}
+	rs := permission.Merge(*a.Ruleset, permission.Ruleset{
+		{Permission: permissionName, Pattern: pattern, Action: permission.Allow},
+	})
+	a.Ruleset = &rs
+}
+
+// SetRuleset устанавливает правила конфигурации.
+func (a *PermissionAdapter) SetRuleset(rs permission.Ruleset) {
+	a.Ruleset = &rs
+}
+
 // NewPermissionAdapter создаёт адаптер из Permission
 func NewPermissionAdapter(p Permission) *PermissionAdapter {
 	return &PermissionAdapter{P: p}
+}
+
+// NewRulePermissionAdapter создаёт адаптер из правил конфигурации.
+func NewRulePermissionAdapter(rs permission.Ruleset) *PermissionAdapter {
+	return &PermissionAdapter{P: Permission{}, Ruleset: &rs}
 }
 
 // matchGlob — простой glob-матчер для паттернов

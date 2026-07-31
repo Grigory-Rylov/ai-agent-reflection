@@ -60,9 +60,10 @@ type agentImpl struct {
 
 // PermissionChecker проверяет разрешения на выполнение инструментов
 type PermissionChecker interface {
-	Check(toolName string) string // "allow", "deny", "ask"
+	Check(toolName string) string                    // "allow", "deny", "ask"
+	Evaluate(permission, pattern string) string      // "allow", "deny", "ask" по правилам
+	Approve(permission, pattern string)              // добавить правило allow
 }
-
 // ============================================================
 // Инициализация
 // ============================================================
