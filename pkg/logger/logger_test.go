@@ -3,6 +3,7 @@ package logger
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -174,6 +175,69 @@ func TestRotateLogFile(t *testing.T) {
 		_, err = os.Stat(logFile)
 		if err != nil {
 			t.Error("expected original file to remain")
+		}
+	})
+}
+
+func TestNewLoggerRotatesInsteadOfTruncating(t *testing.T) {
+	t.Run("rotates oversized log on startup", func(t *testing.T) {
+		dir := setupTempDir(t)
+		defer cleanupTempDir(t, dir)
+
+		logFile := filepath.Join(dir, "debug.log")
+		f, _ := os.Create(logFile)
+		f.Write(make([]byte, 6*1024*1024)) // 6MB
+		f.Close()
+
+		config := DefaultConfig()
+		config.File = logFile
+		config.MaxSizeMB = 5
+
+		l, err := New(config)
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		defer l.Close()
+
+		if _, err := os.Stat(logFile); err != nil {
+			t.Error("expected fresh log file to exist")
+		}
+		entries, _ := os.ReadDir(dir)
+		archives := 0
+		for _, e := range entries {
+			if e.Name() != "debug.log" {
+				archives++
+			}
+		}
+		if archives != 1 {
+			t.Errorf("expected 1 rotated archive, got %d", archives)
+		}
+	})
+
+	t.Run("appends to existing log without clearing", func(t *testing.T) {
+		dir := setupTempDir(t)
+		defer cleanupTempDir(t, dir)
+
+		logFile := filepath.Join(dir, "debug.log")
+		if err := os.WriteFile(logFile, []byte("old content\n"), 0644); err != nil {
+			t.Fatalf("failed to write file: %v", err)
+		}
+
+		config := DefaultConfig()
+		config.File = logFile
+		config.MaxSizeMB = 5
+
+		l, err := New(config)
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		defer l.Close()
+
+		l.InfoLogf("new line")
+
+		data, _ := os.ReadFile(logFile)
+		if !strings.HasPrefix(string(data), "old content\n") {
+			t.Errorf("expected old content to be preserved, got %q", data)
 		}
 	})
 }

@@ -110,8 +110,13 @@ func New(config Config) (*Logger, error) {
 			return nil, fmt.Errorf("failed to create log directory: %w", err)
 		}
 
-		// Открываем файл (TRUNC очищает файл при старте)
-		logFile, err := os.OpenFile(config.File, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		// Если существующий лог превысил лимит — ротируем вместо очистки
+		if err := RotateLogFile(config.File, config.MaxSizeMB, config.MaxAgeDays); err != nil {
+			return nil, fmt.Errorf("failed to rotate log file: %w", err)
+		}
+
+		// Открываем файл в режиме добавления (не удаляем историю)
+		logFile, err := os.OpenFile(config.File, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
 			return nil, fmt.Errorf("failed to open log file: %w", err)
 		}
@@ -290,6 +295,9 @@ func RotateLogFile(path string, maxSizeMB int, maxAgeDays int) error {
 	// Проверяем размер файла
 	info, err := os.Stat(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
 	}
 
