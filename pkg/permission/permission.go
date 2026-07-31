@@ -2,6 +2,7 @@ package permission
 
 import (
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -56,18 +57,31 @@ func Merge(rulesets ...Ruleset) Ruleset {
 //	{"tool": {"pattern": "action"}}   -> правила с конкретными паттернами
 //
 // Паттерны "~" и "$HOME" раскрываются в домашнюю директорию.
+// Ключи сортируются для детерминированного порядка правил; "~" и "*"
+// при сортировке идут первыми, поэтому специфичные паттерны выигрывают.
 func FromConfig(cfg map[string]any) Ruleset {
+	keys := make([]string, 0, len(cfg))
+	for key := range cfg {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
 	rules := make(Ruleset, 0, len(cfg))
-	for key, value := range cfg {
-		switch v := value.(type) {
+	for _, key := range keys {
+		switch v := cfg[key].(type) {
 		case string:
 			rules = append(rules, Rule{Permission: key, Pattern: "*", Action: Action(v)})
 		case map[string]any:
-			for pattern, action := range v {
+			patterns := make([]string, 0, len(v))
+			for pattern := range v {
+				patterns = append(patterns, pattern)
+			}
+			sort.Strings(patterns)
+			for _, pattern := range patterns {
 				rules = append(rules, Rule{
 					Permission: key,
 					Pattern:    expand(pattern),
-					Action:     Action(action.(string)),
+					Action:     Action(v[pattern].(string)),
 				})
 			}
 		}
