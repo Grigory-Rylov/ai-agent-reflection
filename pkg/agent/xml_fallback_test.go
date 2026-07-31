@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/opencode/llama-client/pkg/debug"
@@ -888,6 +889,87 @@ func TestProcessMessage_Integration_NativeToolCallsThenXMLInToolResults(t *testi
 	t.Logf("Final response: %s, LLM calls: %d, tool log: %v", response, callCount, executor.ReadLog())
 }
 
+// TestReasoningSentToThinkingInToolCallsFlow проверяет что reasoning
+// отправляется в thinking чат даже когда модель использует нативные
+// tool_calls (finish_reason="tool_calls"). Раньше reasoning терялся.
+func TestReasoningSentToThinkingInToolCallsFlow(t *testing.T) {
+	var mu sync.Mutex
+	callCount := 0
+	var thinking []string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		callCount++
+		n := callCount
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+
+		if n == 1 {
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Подумаю о задаче перед вызовом инструмента\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"counting\",\"arguments\":\"{}\"}}]}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"))
+		} else {
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Инструмент выполнен, готов отвечать\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Task done\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		}
+		w.Write([]byte("[DONE]\n"))
+	}))
+	defer server.Close()
+
+	config := Config{
+		LlamaServerURL: server.URL,
+		Model:          "test-model",
+		MaxTokens:      100,
+		Temperature:    0.7,
+		SessionConfig:  session.DefaultConfig(),
+	}
+	config.SessionConfig.PeerID = 99980
+	config.SessionConfig.MaxHistory = 100
+
+	a, executor := newTestAgentWithStub(t, config)
+	a.SetThinkingCallback(func(peerID int64, content string) error {
+		mu.Lock()
+		thinking = append(thinking, content)
+		mu.Unlock()
+		return nil
+	})
+
+	ctx := context.Background()
+	response, err := a.ProcessMessage(ctx, "выполни задачу", 99980)
+	if err != nil {
+		t.Fatalf("ProcessMessage failed: %v", err)
+	}
+
+	if response != "Task done" {
+		t.Errorf("expected response 'Task done', got %q", response)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	foundFirst := false
+	foundSecond := false
+	for _, msg := range thinking {
+		if strings.Contains(msg, "Подумаю о задаче") {
+			foundFirst = true
+		}
+		if strings.Contains(msg, "Инструмент выполнен") {
+			foundSecond = true
+		}
+	}
+
+	if !foundFirst {
+		t.Error("BUG: initial reasoning (before tool call) was not sent to thinking chat")
+	}
+	if !foundSecond {
+		t.Error("BUG: reasoning after tool execution was not sent to thinking chat")
+	}
+	if len(executor.ReadLog()) == 0 {
+		t.Error("expected tool call to be executed")
+	}
+}
+
 // TestReasoningNotLeakedToResponse проверяет что reasoning текст не попадает
 // в обычный ответ (peer_id), а остаётся только в thinking_peer_id.
 func TestReasoningNotLeakedToResponse(t *testing.T) {
@@ -979,6 +1061,56 @@ func TestMalformedXMLInReasoning_NotSilentlyReturned(t *testing.T) {
 	// BUG CHECK: должно быть минимум 2 вызова LLM (ошибка формата → retry)
 	if callCount < 2 {
 		t.Errorf("BUG: expected at least 2 LLM calls (format error should retry), got %d", callCount)
+	}
+
+	t.Logf("Final response: %s, LLM calls: %d", response, callCount)
+}
+
+// TestEmptyToolCallInReasoning_SendsCorrectiveFeedback проверяет что пустой
+// <tool_call></tool_call> в reasoning детектируется: система НЕ молча
+// игнорирует его, а логирует ошибку и отправляет модели corrective feedback
+// (второй вызов LLM с сообщением о неверном формате).
+func TestEmptyToolCallInReasoning_SendsCorrectiveFeedback(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "text/event-stream")
+
+		if callCount == 1 {
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Нужно вызвать инструмент\\n<tool_call></tool_call>\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		} else {
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Proper response after format error.\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		}
+		w.Write([]byte("[DONE]\n"))
+	}))
+	defer server.Close()
+
+	config := Config{
+		LlamaServerURL: server.URL,
+		Model:          "test-model",
+		MaxTokens:      100,
+		Temperature:    0.7,
+		SessionConfig:  session.DefaultConfig(),
+	}
+	config.SessionConfig.PeerID = 99982
+	config.SessionConfig.MaxHistory = 100
+
+	a, _ := newTestAgentWithStub(t, config)
+
+	ctx := context.Background()
+	response, err := a.ProcessMessage(ctx, "do something", 99982)
+	if err != nil {
+		t.Fatalf("ProcessMessage failed: %v", err)
+	}
+
+	if strings.Contains(response, "Нужно вызвать инструмент") {
+		t.Error("BUG: response contains reasoning text instead of corrective flow result")
+	}
+
+	if callCount < 2 {
+		t.Errorf("BUG: expected corrective feedback (2nd LLM call) for empty <tool_call></tool_call> in reasoning, got %d calls", callCount)
 	}
 
 	t.Logf("Final response: %s, LLM calls: %d", response, callCount)

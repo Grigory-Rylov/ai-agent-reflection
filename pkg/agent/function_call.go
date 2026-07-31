@@ -31,6 +31,10 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 		return FunctionCallResult{}, err
 	}
 
+	// Отправляем reasoning в thinking чат сразу после получения,
+	// чтобы он не терялся при обработке tool_calls
+	a.sendThinkingIfNeeded(session, reasoningText)
+
 	executedToolCalls := make(map[string]bool)
 
 	if result, err := a.handleNativeToolCalls(ctx, messages, session, responseText, reasoningText, finishReason, streamToolCalls, executedToolCalls); result != nil || err != nil {
@@ -44,8 +48,6 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 	if cleanedResult != nil {
 		return *cleanedResult, nil
 	}
-
-	a.sendThinkingIfNeeded(session, reasoningText)
 
 	if result, err := a.handleXMLFallback(ctx, responseText, reasoningText, messages, session, executedToolCalls); result != nil || err != nil {
 		if err != nil {

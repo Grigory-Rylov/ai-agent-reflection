@@ -119,6 +119,10 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		return "", err
 	}
 
+	// Отправляем reasoning в thinking чат сразу после получения,
+	// чтобы он не терялся при рекурсивных вызовах инструментов
+	a.sendThinkingIfNeeded(session, reasoningText)
+
 	prefix := a.agentPrefix()
 	logger.DebugToFile("%sprocessToolResults: content=%d, reasoning=%d, tool_calls=%d, finish=%q",
 		prefix, len(responseText), len(reasoningText), len(streamToolCalls), finishReason)
@@ -211,20 +215,6 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 				recursiveCtx := context.WithValue(ctx, toolCallDepthKey, depth+1)
 				return a.processToolResults(recursiveCtx, messages, jsonParsed.Content, uniqueCalls, result.ToolCalls, session, executed)
 			}
-		}
-	}
-
-	// Отправляем очищенный reasoning в thinking
-	cleanedReasoning := reasoningText
-	if reasoningText != "" {
-		parsedReasoning := ParseXMLToolCalls(reasoningText)
-		cleanedReasoning = parsedReasoning.Content
-	}
-	if cleanedReasoning != "" && a.thinkingCallback != nil {
-		logger.DebugToFile("%s[THINKING] Sending %d chars of reasoning to thinking chat", a.agentPrefix(), len(cleanedReasoning))
-		if err := a.thinkingCallback(session.GetPeerID(), cleanedReasoning); err != nil {
-			a.debugLog.Warn("%sFailed to send thinking message: %v", a.agentPrefix(), err)
-			logger.DebugToFile("%s[THINKING] Failed to send: %v", a.agentPrefix(), err)
 		}
 	}
 
