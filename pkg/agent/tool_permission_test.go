@@ -330,6 +330,132 @@ func TestShellExecutePermissionNoPaths(t *testing.T) {
 	})
 }
 
+func TestFileToolPermissionWithinAllowedDir(t *testing.T) {
+	config := DefaultConfig()
+	config.AgentName = "test-agent"
+
+	allowedDir, err := os.MkdirTemp("", "file_perm_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(allowedDir)
+
+	oldWorkingDir := tools.WorkingDir
+	tools.WorkingDir = allowedDir
+	defer func() { tools.WorkingDir = oldWorkingDir }()
+
+	ctrl := access.NewController([]string{allowedDir})
+	tools.SetAccessController(ctrl)
+	defer tools.SetAccessController(nil)
+
+	askChecker := &mockToolPermissionChecker{
+		decisions: map[string]string{
+			"edit":       "ask",
+			"file_write": "ask",
+		},
+	}
+
+	t.Run("edit file in allowed dir bypasses ask", func(t *testing.T) {
+		a := NewAgent(config)
+		a.SetPermissionChecker(askChecker)
+		e := newAgentToolExecutor(a)
+
+		asked := false
+		tools.SetQuestionCallback(func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+			asked = true
+			return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
+		})
+		defer tools.SetQuestionCallback(nil)
+
+		result := e.checkPermissionAsk(context.Background(), "edit", map[string]string{
+			"path":       "avito_bot.py",
+			"old_string": "old",
+			"new_string": "new",
+		}, 12345)
+
+		if !result {
+			t.Error("expected allow for edit inside allowed dir")
+		}
+		if asked {
+			t.Error("expected NO permission ask for edit inside allowed dir")
+		}
+	})
+
+	t.Run("file_write in allowed dir bypasses ask", func(t *testing.T) {
+		a := NewAgent(config)
+		a.SetPermissionChecker(askChecker)
+		e := newAgentToolExecutor(a)
+
+		asked := false
+		tools.SetQuestionCallback(func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+			asked = true
+			return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
+		})
+		defer tools.SetQuestionCallback(nil)
+
+		result := e.checkPermissionAsk(context.Background(), "file_write", map[string]string{
+			"path":    "new_bot.py",
+			"content": "print('hello')",
+		}, 12345)
+
+		if !result {
+			t.Error("expected allow for file_write inside allowed dir")
+		}
+		if asked {
+			t.Error("expected NO permission ask for file_write inside allowed dir")
+		}
+	})
+
+	t.Run("edit absolute path in allowed dir bypasses ask", func(t *testing.T) {
+		a := NewAgent(config)
+		a.SetPermissionChecker(askChecker)
+		e := newAgentToolExecutor(a)
+
+		asked := false
+		tools.SetQuestionCallback(func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+			asked = true
+			return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
+		})
+		defer tools.SetQuestionCallback(nil)
+
+		target := filepath.Join(allowedDir, "main.py")
+		result := e.checkPermissionAsk(context.Background(), "edit", map[string]string{
+			"path": target,
+		}, 12345)
+
+		if !result {
+			t.Error("expected allow for edit with absolute path inside allowed dir")
+		}
+		if asked {
+			t.Error("expected NO permission ask for edit with absolute path inside allowed dir")
+		}
+	})
+
+	t.Run("edit outside allowed dir MUST ask", func(t *testing.T) {
+		a := NewAgent(config)
+		a.SetPermissionChecker(askChecker)
+		e := newAgentToolExecutor(a)
+
+		asked := false
+		tools.SetQuestionCallback(func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+			asked = true
+			return map[string]interface{}{"selected": []interface{}{"❌ Deny"}}, nil
+		})
+		defer tools.SetQuestionCallback(nil)
+
+		result := e.checkPermissionAsk(context.Background(), "edit", map[string]string{
+			"path": "/etc/hosts",
+		}, 12345)
+
+		if result {
+			t.Error("expected deny for edit outside allowed dir")
+		}
+		if !asked {
+			t.Error("expected permission ask for edit outside allowed dir")
+		}
+	})
+}
+
 func TestShellExecutePathOutsideAllowed(t *testing.T) {
 	config := DefaultConfig()
 	config.AgentName = "test-agent"

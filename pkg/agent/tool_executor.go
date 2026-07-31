@@ -155,6 +155,14 @@ func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName str
 		e.agent.sendThinking(peerID, fmt.Sprintf("[TOOL] Denied: %s (permission)", toolName))
 		return false
 	case "ask":
+		// Для файловых инструментов: не спрашиваем, если все пути
+		// находятся в разрешённых директориях (рабочая папка сессии и др.)
+		if paths := tools.FileToolPaths(toolName, args); len(paths) > 0 {
+			if tools.PathsAllAllowed(paths) {
+				logger.DebugToFile("[checkPermissionAsk] %s: all %d paths in allowed dirs, skip ask", toolName, len(paths))
+				return true
+			}
+		}
 		// Для shell_execute: спрашиваем только если есть пути к файлам
 		// и хотя бы один путь вне разрешённых директорий
 		if toolName == "shell_execute" || toolName == "shell" {

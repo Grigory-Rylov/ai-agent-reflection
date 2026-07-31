@@ -191,10 +191,10 @@ func ExtractShellPaths(command string) []string {
 	return paths
 }
 
-// ShellPathsAllAllowed проверяет, что все указанные пути находятся
+// PathsAllAllowed проверяет, что все указанные пути находятся
 // в разрешённых директориях access controller'а.
 // Возвращает true если контроллера нет, путей нет, или все пути разрешены.
-func ShellPathsAllAllowed(paths []string) bool {
+func PathsAllAllowed(paths []string) bool {
 	ctrl := GetAccessController()
 	if ctrl == nil {
 		return true
@@ -209,6 +209,13 @@ func ShellPathsAllAllowed(paths []string) bool {
 		}
 	}
 	return true
+}
+
+// ShellPathsAllAllowed проверяет, что все указанные пути находятся
+// в разрешённых директориях access controller'а.
+// Возвращает true если контроллера нет, путей нет, или все пути разрешены.
+func ShellPathsAllAllowed(paths []string) bool {
+	return PathsAllAllowed(paths)
 }
 
 // CheckToolArgs проверяет все пути в аргументах инструмента на доступ.

@@ -436,6 +436,43 @@ func TestSessionGrantIntegration(t *testing.T) {
 	})
 }
 
+func TestPathsAllAllowed(t *testing.T) {
+	t.Run("all paths inside allowed dir", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+
+		oldWorkingDir := WorkingDir
+		WorkingDir = dir
+		defer func() { WorkingDir = oldWorkingDir }()
+
+		if !PathsAllAllowed([]string{"a.txt", filepath.Join(dir, "sub", "b.txt")}) {
+			t.Error("expected all paths allowed inside allowed dir")
+		}
+	})
+
+	t.Run("any path outside allowed dir", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+
+		otherDir, err := os.MkdirTemp("", "outside_paths_*")
+		if err != nil {
+			t.Fatalf("failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(otherDir)
+
+		if PathsAllAllowed([]string{filepath.Join(dir, "a.txt"), filepath.Join(otherDir, "secret.txt")}) {
+			t.Error("expected false when a path is outside allowed dir")
+		}
+	})
+
+	t.Run("empty paths always allowed", func(t *testing.T) {
+		SetAccessController(nil)
+		if !PathsAllAllowed(nil) {
+			t.Error("expected true for empty paths")
+		}
+	})
+}
+
 func TestMultipleAllowedDirs(t *testing.T) {
 	t.Run("multiple dirs all allow file operations", func(t *testing.T) {
 		dir1, err := os.MkdirTemp("", "multi_allowed_1_*")
