@@ -15,6 +15,7 @@ import (
 
 	"flag"
 
+	"github.com/opencode/llama-client/pkg/buildinfo"
 	"github.com/opencode/llama-client/pkg/vk"
 )
 
@@ -314,7 +315,7 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 					ap.setRestarting(false)
 
 				case cmd == "/status":
-					status := fmt.Sprintf("Restarter v%s\n", Version)
+					status := fmt.Sprintf("Restarter v%s (build %s)\n", Version, buildinfo.HumanReadable())
 					if ap.isRunning() {
 						status += fmt.Sprintf("Агент: запущен (PID %d)\n", ap.pid())
 					} else {
@@ -343,7 +344,10 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 }
 
 func buildAgent(agentPath string) error {
-	output, err := exec.Command("/usr/local/go/bin/go", "build", "-o", agentPath, ".").CombinedOutput()
+	buildTime := time.Now().UTC().Format(time.RFC3339)
+	output, err := exec.Command("/usr/local/go/bin/go", "build",
+		"-ldflags", "-X github.com/opencode/llama-client/pkg/buildinfo.BuildTime="+buildTime,
+		"-o", agentPath, ".").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(output)))
 	}

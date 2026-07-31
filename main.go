@@ -17,6 +17,7 @@ import (
 	"github.com/opencode/llama-client/pkg/agent"
 	"github.com/opencode/llama-client/pkg/agentloop"
 	"github.com/opencode/llama-client/pkg/agentpolicy"
+	"github.com/opencode/llama-client/pkg/buildinfo"
 	"github.com/opencode/llama-client/pkg/logger"
 	"github.com/opencode/llama-client/pkg/mcp"
 	"github.com/opencode/llama-client/pkg/modelsconfig"
@@ -105,6 +106,7 @@ func main() {
 	}
 	logger.InitGlobalLogger(logConfig)
 	log.InfoLog("VK Bot Gateway v%s starting...", Version)
+	log.InfoLog("Build time: %s", buildinfo.HumanReadable())
 
 	dbPath := config.DBPath
 	if dbPath == "" {
@@ -310,8 +312,8 @@ func main() {
 	}()
 
 	if config.PeerID > 0 {
-		startMsg := fmt.Sprintf("AI Agent started.\nDir: %s\nTools: %d\nModel: %s (%s)",
-			tools.WorkingDir, len(toolRegistry.GetAll()), alias, modelName)
+		startMsg := fmt.Sprintf("AI Agent started.\nDir: %s\nTools: %d\nModel: %s (%s)\nBuild: %s",
+			tools.WorkingDir, len(toolRegistry.GetAll()), alias, modelName, buildinfo.HumanReadable())
 		keyboard := vk.CreateCommandKeyboard()
 		if _, err := vkClient.SendMessageWithKeyboard(config.PeerID, startMsg, keyboard); err != nil {
 			log.WarnLogf("Failed to send startup message: %v", err)
