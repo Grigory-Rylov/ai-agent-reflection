@@ -12,6 +12,7 @@ import (
 
 	"github.com/opencode/llama-client/pkg/compress"
 	"github.com/opencode/llama-client/pkg/debug"
+	"github.com/opencode/llama-client/pkg/instructions"
 	"github.com/opencode/llama-client/pkg/prompt"
 	"github.com/opencode/llama-client/pkg/tokenizers"
 	"github.com/opencode/llama-client/pkg/tools"
@@ -273,6 +274,14 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 	// Формируем сообщения для API
 	apiMessages := a.convertHistoryToAPIMessages(history)
 
+	// Добавляем AGENTS.md/CLAUDE.md из рабочей директории (как в opencode)
+	// отдельным system-сообщением после основного системного промпта
+	workingDir := s.GetWorkingDir()
+	if workingDir == "" {
+		workingDir = tools.WorkingDir
+	}
+	apiMessages = a.injectInstructions(apiMessages, workingDir)
+
 	// Проверяем, нужно ли использовать инструменты
 	if a.config.EnableTools {
 		// Используем function calling с инструментами
@@ -417,6 +426,31 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 
 	session.AddAssistantMessage(responseText)
 	return responseText, nil
+}
+
+// injectInstructions добавляет содержимое AGENTS.md/CLAUDE.md (если найдено
+// в рабочей директории или глобальной конфиг-директории) отдельным
+// system-сообщением сразу после основного системного промпта.
+func (a *agentImpl) injectInstructions(messages []Message, workingDir string) []Message {
+	content := instructions.Build(workingDir)
+	if content == "" {
+		return messages
+	}
+
+	instrMsg := Message{Role: "system", Content: content}
+	out := make([]Message, 0, len(messages)+1)
+	inserted := false
+	for _, m := range messages {
+		out = append(out, m)
+		if !inserted && m.Role == "system" {
+			out = append(out, instrMsg)
+			inserted = true
+		}
+	}
+	if !inserted {
+		out = append([]Message{instrMsg}, out...)
+	}
+	return out
 }
 
 // ============================================================

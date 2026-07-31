@@ -2,10 +2,12 @@ package agent
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/opencode/llama-client/pkg/store"
@@ -125,6 +127,7 @@ func TestAgentProcessMessageWithMockServer(t *testing.T) {
 	}
 }
 
+// TestProcessMessageAddsUserMessageToSession добавляет юзер-сообщение в сессию
 func TestProcessMessageAddsUserMessageToSession(t *testing.T) {
 	server := newMockSSEServer("Response")
 	defer server.Close()
@@ -152,6 +155,54 @@ func TestProcessMessageAddsUserMessageToSession(t *testing.T) {
 	}
 	if userMsg.Content != "Test user message" {
 		t.Errorf("expected 2nd message content %q, got %q", "Test user message", userMsg.Content)
+	}
+}
+
+// TestProcessMessage_InjectsAGENTSMD проверяет что AGENTS.md из рабочей
+// директории попадает в LLM-запрос отдельным system-сообщением
+// в формате "Instructions from: <путь>" (как в opencode).
+func TestProcessMessage_InjectsAGENTSMD(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("TEST AGENTS INSTRUCTIONS"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var lastBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		lastBody = string(body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n"))
+		w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		w.Write([]byte("[DONE]\n"))
+	}))
+	defer server.Close()
+
+	config := DefaultConfig()
+	config.LlamaServerURL = server.URL
+	config.Model = "test-model"
+	config.MaxTokens = 100
+	config.Temperature = 0.7
+	config.EnableTools = true
+	config.SessionConfig = session.Config{
+		WorkingDir: dir,
+		MaxHistory: 100,
+	}
+
+	a := NewAgent(config)
+	ctx := context.Background()
+	if _, err := a.ProcessMessage(ctx, "Привет", 54321); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(lastBody, "TEST AGENTS INSTRUCTIONS") {
+		t.Error("BUG: AGENTS.md content not present in LLM request")
+	}
+	if !strings.Contains(lastBody, "Instructions from: "+filepath.Join(dir, "AGENTS.md")) {
+		t.Error("BUG: 'Instructions from:' header not present in LLM request")
 	}
 }
 
