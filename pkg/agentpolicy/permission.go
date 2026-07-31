@@ -122,12 +122,33 @@ func (a *PermissionAdapter) SetRuleset(rs permission.Ruleset) {
 
 // NewPermissionAdapter создаёт адаптер из Permission
 func NewPermissionAdapter(p Permission) *PermissionAdapter {
-	return &PermissionAdapter{P: p}
+	return &PermissionAdapter{P: p, Ruleset: toRuleset(p)}
 }
 
 // NewRulePermissionAdapter создаёт адаптер из правил конфигурации.
 func NewRulePermissionAdapter(rs permission.Ruleset) *PermissionAdapter {
 	return &PermissionAdapter{P: Permission{}, Ruleset: &rs}
+}
+
+// toRuleset преобразует Permission (tool -> action) в Ruleset с паттерном "*".
+// Ключ "*" пропускается: он управляет только Check() на уровне инструмента,
+// а для Evaluate (напр. bash-паттерны) не должен переопределять поведение.
+func toRuleset(p Permission) *permission.Ruleset {
+	rs := make(permission.Ruleset, 0, len(p))
+	for tool, action := range p {
+		if tool == "*" {
+			continue
+		}
+		rs = append(rs, permission.Rule{
+			Permission: tool,
+			Pattern:    "*",
+			Action:     permission.Action(action),
+		})
+	}
+	if len(rs) == 0 {
+		return nil
+	}
+	return &rs
 }
 
 // matchGlob — простой glob-матчер для паттернов
