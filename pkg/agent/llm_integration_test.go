@@ -1,3 +1,5 @@
+//go:build integration
+
 package agent
 
 import (
@@ -79,13 +81,13 @@ func setupTestAgent(t *testing.T) (*agentImpl, string) {
 	reg.Register(&tools.WebSearchTool{})
 
 	config := Config{
-		LlamaServerURL: serverURL,
-		Model:          model,
-		MaxTokens:      maxTokens,
-		Temperature:    temperature,
-		SessionConfig:  session.DefaultConfig(),
-		EnableTools:    true,
-		MaxToolCalls:   3,
+		LlamaServerURL:           serverURL,
+		Model:                    model,
+		MaxTokens:                maxTokens,
+		Temperature:              temperature,
+		SessionConfig:            session.DefaultConfig(),
+		EnableTools:              true,
+		MaxToolCalls:             3,
 		EnableContextCompression: false,
 	}
 

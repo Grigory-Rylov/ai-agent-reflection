@@ -82,58 +82,6 @@ func (m *mockToolRegistry) Register(name string, tool tools.Tool) {
 	m.tools[name] = tool
 }
 
-// mockLogger — mock для Logger
-type mockLogger struct {
-	mu       sync.Mutex
-	messages []string
-}
-
-func (m *mockLogger) DebugLog(msg string, args ...interface{}) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.messages = append(m.messages, "[DEBUG] "+msg)
-}
-
-func (m *mockLogger) InfoLog(msg string, args ...interface{}) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.messages = append(m.messages, "[INFO] "+msg)
-}
-
-func (m *mockLogger) WarnLog(msg string, args ...interface{}) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.messages = append(m.messages, "[WARN] "+msg)
-}
-
-func (m *mockLogger) ErrorLog(msg string, args ...interface{}) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.messages = append(m.messages, "[ERROR] "+msg)
-}
-
-func (m *mockLogger) DebugLogf(format string, args ...interface{}) {
-	m.DebugLog(format, args...)
-}
-
-func (m *mockLogger) InfoLogf(format string, args ...interface{}) {
-	m.InfoLog(format, args...)
-}
-
-func (m *mockLogger) WarnLogf(format string, args ...interface{}) {
-	m.WarnLog(format, args...)
-}
-
-func (m *mockLogger) ErrorLogf(format string, args ...interface{}) {
-	m.ErrorLog(format, args...)
-}
-
-func (m *mockLogger) GetMessages() []string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.messages
-}
-
 // ============================================================
 // Тесты AgentLoop
 // ============================================================

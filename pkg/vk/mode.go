@@ -103,8 +103,7 @@ func (s *ModeState) ExitMode(peerID int64) {
 
 // GlobalAgentState хранит ссылки на workflow manager и mode state
 type GlobalAgentState struct {
-	mu       sync.RWMutex
-	wfMgr    *workflow.WorkflowManager
+	wfMgr     *workflow.WorkflowManager
 	modeState *ModeState
 }
 

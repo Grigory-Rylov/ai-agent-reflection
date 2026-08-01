@@ -24,7 +24,7 @@ debug_response.txt
 
 # Generated artifacts
 artifacts/
-workflows/
+/workflows/
 
 # macOS
 .DS_Store

@@ -302,10 +302,18 @@ func isExplicitPathToken(token string) bool {
 	return isAbsolutePath(token) || strings.HasPrefix(token, "~") || token == ".."
 }
 
+// isDiscardPath возвращает true для псевдо-устройств, запись в которые
+// ничего не сохраняет (например, /dev/null). Такие пути не считаются
+// файловыми операциями и не проверяются против allowed_dirs.
+func isDiscardPath(p string) bool {
+	return p == "/dev/null"
+}
+
 // collectFilePaths собирает локальные (host) файловые пути подкоманды:
 // пути из аргументов файловых команд, цели редиректов и явные пути
 // (абсолютные, ~, ..) в любом месте подкоманды. Пути удалённого устройства
-// из devPaths (см. collectDevicePaths) не считаются хостовыми.
+// из devPaths (см. collectDevicePaths) и discard-пути (/dev/null) не считаются
+// хостовыми файловыми операциями.
 func collectFilePaths(sub string, devPaths map[string]bool) []string {
 	parts := strings.Fields(sub)
 	if len(parts) == 0 {
@@ -313,7 +321,7 @@ func collectFilePaths(sub string, devPaths map[string]bool) []string {
 	}
 	if hostPaths, remote := remoteHostPaths(sub); remote {
 		for _, p := range redirectionTargets(sub) {
-			if !devPaths[p] {
+			if !devPaths[p] && !isDiscardPath(p) {
 				hostPaths = append(hostPaths, p)
 			}
 		}
@@ -321,18 +329,18 @@ func collectFilePaths(sub string, devPaths map[string]bool) []string {
 	}
 	var paths []string
 	for _, p := range ExtractShellPaths(sub) {
-		if !devPaths[p] {
+		if !devPaths[p] && !isDiscardPath(p) {
 			paths = append(paths, p)
 		}
 	}
 	for _, p := range redirectionTargets(sub) {
-		if !devPaths[p] {
+		if !devPaths[p] && !isDiscardPath(p) {
 			paths = append(paths, p)
 		}
 	}
 	rest, _ := commandParts(parts)
 	for _, tok := range rest[1:] {
-		if isExplicitPathToken(tok) && !devPaths[tok] {
+		if isExplicitPathToken(tok) && !devPaths[tok] && !isDiscardPath(tok) {
 			paths = append(paths, tok)
 		}
 	}

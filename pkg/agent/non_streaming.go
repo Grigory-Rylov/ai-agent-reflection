@@ -100,29 +100,3 @@ func buildToolCallForRequest(tc ToolCall) ToolCall {
 	tc.Function.Arguments = rawArgs
 	return tc
 }
-
-func (a *agentImpl) buildMessagesWithToolResults(originalMessages []Message, toolCalls []ToolCall, toolResults []ToolCallResult) []Message {
-	messages := make([]Message, len(originalMessages))
-	copy(messages, originalMessages)
-
-	reqToolCalls := make([]ToolCall, len(toolCalls))
-	for i, tc := range toolCalls {
-		reqToolCalls[i] = buildToolCallForRequest(tc)
-	}
-	messages = append(messages, Message{
-		Role:      "assistant",
-		Content:   "",
-		ToolCalls: reqToolCalls,
-	})
-
-	for _, tr := range toolResults {
-		messages = append(messages, Message{
-			Role:       "tool",
-			ToolCallID: tr.ToolCallID,
-			Name:       tr.ToolName,
-			Content:    tr.Content,
-		})
-	}
-
-	return messages
-}

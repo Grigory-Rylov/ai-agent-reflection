@@ -420,6 +420,10 @@ func TestShellExecutePathOutsideAllowed(t *testing.T) {
 	config := DefaultConfig()
 	config.AgentName = "test-agent"
 
+	dir := t.TempDir()
+	tools.SetAccessController(access.NewController([]string{dir}))
+	t.Cleanup(func() { tools.SetAccessController(nil) })
+
 	askChecker := &mockToolPermissionChecker{
 		decisions: map[string]string{
 			"shell_execute": "ask",

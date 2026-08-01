@@ -1,30 +1,11 @@
 package vk
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
-
-// ============================================================
-// Mock AI Agent для тестов
-// ============================================================
-
-type mockAgent struct {
-	response string
-	error    error
-	called   bool
-}
-
-func (m *mockAgent) ProcessMessage(ctx context.Context, message string, peerID int64) (string, error) {
-	m.called = true
-	return m.response, m.error
-}
-
-func (m *mockAgent) ResetSession(peerID int64) {}
-func (m *mockAgent) GetSession(peerID int64) interface{} { return nil }
 
 // ============================================================
 // Тесты VKBotClient

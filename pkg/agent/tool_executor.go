@@ -303,13 +303,6 @@ func resolveToolPath(path string) (string, error) {
 	return filepath.Clean(cleaned), nil
 }
 
-func (e *agentToolExecutor) getPermissionChecker() permissionChecker {
-	if e.agent == nil {
-		return nil
-	}
-	return e.agent.permissionChecker
-}
-
 type permissionChecker interface {
 	Check(toolName string) string
 	Evaluate(permission, pattern string) string

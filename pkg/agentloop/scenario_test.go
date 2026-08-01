@@ -83,6 +83,14 @@ func (s *Scenario) MockServer() *httptest.Server {
 	callIndex := 0
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Запросы к /tokenize (подсчёт токенов контекста) не должны
+		// потреблять шаги сценария — иначе чат-запросы съезжают со своих шагов.
+		if r.URL.Path == "/tokenize" {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"tokens":[1]}`)
+			return
+		}
+
 		mu.Lock()
 		idx := callIndex
 		callIndex++

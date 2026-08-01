@@ -500,13 +500,6 @@ func (h *BotHandler) ensureSession(peerID int64) {
 	}
 }
 
-func (h *BotHandler) getSession(peerID int64) *session.Session {
-	if h.aiAgent != nil {
-		return h.aiAgent.GetSession(peerID)
-	}
-	return nil
-}
-
 func (h *BotHandler) Start(ctx context.Context) error {
 	if h.log != nil {
 		h.log.InfoLog("Starting VK Long Poll bot...")

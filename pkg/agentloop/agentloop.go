@@ -152,16 +152,6 @@ func (al *agentLoop) GetModelHolder() *modelsconfig.Holder {
 	return al.config.ModelHolder
 }
 
-func (al *agentLoop) currentModelName() string {
-	_, name, _ := al.config.ModelHolder.GetCurrent()
-	return name
-}
-
-func (al *agentLoop) currentLlamaURL() string {
-	_, _, host := al.config.ModelHolder.GetCurrent()
-	return host
-}
-
 func (al *agentLoop) GetContextStats(peerID int64) (charCount int, tokenCount int, err error) {
 	s := al.GetSession(peerID)
 	if s == nil {

@@ -1,3 +1,5 @@
+//go:build integration
+
 package compress
 
 import (
@@ -165,10 +167,10 @@ func TestIntegration_CompactionLevels(t *testing.T) {
 	compactor := NewCompactor(config, nil, nil)
 
 	tests := []struct {
-		name       string
-		msgCount   int
-		maxTokens  int
-		wantLevel  CompactionLevel
+		name      string
+		msgCount  int
+		maxTokens int
+		wantLevel CompactionLevel
 	}{
 		{"Small context", 5, 32000, CompactionNone},
 		{"Medium context", 50, 10000, CompactionNormal},

@@ -46,21 +46,6 @@ type Config struct {
 	SkipShellPermissionForPathless bool `json:"skip_shell_permission_without_paths"`
 }
 
-func resolvePrompt(prompt, baseDir string) (string, error) {
-	if strings.HasPrefix(prompt, "{file:") && strings.HasSuffix(prompt, "}") {
-		path := strings.TrimSuffix(strings.TrimPrefix(prompt, "{file:"), "}")
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(baseDir, path)
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return "", fmt.Errorf("reading prompt file %s: %w", path, err)
-		}
-		return string(data), nil
-	}
-	return prompt, nil
-}
-
 func main() {
 	debug := flag.Bool("d", false, "Enable debug mode")
 	reset := flag.Bool("r", false, "Reset session on startup")

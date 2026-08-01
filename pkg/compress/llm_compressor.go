@@ -193,15 +193,6 @@ func (c *LLMCompressor) sendCompressionRequest(ctx context.Context, systemPrompt
 	return compressedText, summary, nil
 }
 
-// countRequestTokens подсчитывает токены в запросе
-func (c *LLMCompressor) countRequestTokens(ctx context.Context, messages []tokenizers.Message) (int, error) {
-	if len(messages) == 0 {
-		return 0, nil
-	}
-	tokenizer := tokenizers.NewLlamaServerTokenizer(c.serverURL, c.model, 8192)
-	return tokenizer.CountMessagesTokens(messages)
-}
-
 // simpleCountTokens — простой подсчёт без API
 func (c *LLMCompressor) simpleCountTokens(messages []tokenizers.Message) int {
 	total := 0

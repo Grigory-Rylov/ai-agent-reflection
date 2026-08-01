@@ -465,6 +465,39 @@ func TestShellCommandFilesystemSafe(t *testing.T) {
 		}
 	})
 
+	t.Run("redirect to /dev/null is safe", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+		if !ShellCommandFilesystemSafe("pkill -f qemu-system-aarch64 2>/dev/null") {
+			t.Error("expected true: /dev/null is a discard path, not a host file op")
+		}
+	})
+
+	t.Run("emulator command with /dev/null and allowed binary is safe", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+		emu := filepath.Join(dir, "emulator")
+		if err := os.MkdirAll(emu, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		prevWD := WorkingDir
+		t.Cleanup(func() { SetWorkingDir(prevWD) })
+		SetWorkingDir(dir)
+		cmd := "pkill -f qemu-system-aarch64 2>/dev/null && sleep 3 && LD_LIBRARY_PATH=" + emu + "/lib64 nohup " + emu + "/emulator -avd MyAVD > " + filepath.Join(dir, "emulator.log") + " 2>&1 &"
+		if !ShellCommandFilesystemSafe(cmd) {
+			t.Error("expected true: /dev/null discard and binary inside allowed dir")
+		}
+	})
+
+	t.Run("emulator binary outside allowed dir is not safe", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+		cmd := "nohup ~/Android/Sdk/emulator/emulator -avd MyAVD > " + filepath.Join(dir, "emulator.log") + " 2>&1 &"
+		if ShellCommandFilesystemSafe(cmd) {
+			t.Error("expected false: emulator binary path is outside allowed dir")
+		}
+	})
+
 	t.Run("empty command is safe", func(t *testing.T) {
 		SetAccessController(nil)
 		if !ShellCommandFilesystemSafe("") {

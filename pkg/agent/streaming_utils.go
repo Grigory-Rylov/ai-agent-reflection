@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/opencode/llama-client/pkg/logger"
-	"github.com/opencode/llama-client/session"
 )
 
 func (a *agentImpl) collectStreamResponse(chunkChan <-chan StreamChunkEvent) (string, string, int, int, error) {
@@ -106,14 +105,6 @@ func (a *agentImpl) isNonToolResponse(finishReason string) bool {
 		return false
 	}
 	return !strings.Contains(finishReason, "tool")
-}
-
-func (a *agentImpl) returnTextResponse(session *session.Session, responseText string) FunctionCallResult {
-	session.AddAssistantMessage(responseText)
-	return FunctionCallResult{
-		Success:  true,
-		Response: responseText,
-	}
 }
 
 func (a *agentImpl) stripThinkingTags(text string, peerID int64) string {

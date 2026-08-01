@@ -19,7 +19,7 @@ import (
 
 type loggedRequest struct {
 	Messages []map[string]interface{} `json:"messages"`
-	Tools    []interface{}       `json:"tools,omitempty"`
+	Tools    []interface{}            `json:"tools,omitempty"`
 }
 
 func TestOrchestratorSendsUserMessageToLLM(t *testing.T) {
@@ -33,16 +33,19 @@ func TestOrchestratorSendsUserMessageToLLM(t *testing.T) {
 	var mu sync.Mutex
 	var requests []loggedRequest
 
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(bytes.NewBuffer(body))
 
-		var req loggedRequest
-		if err := json.Unmarshal(body, &req); err == nil {
-			mu.Lock()
-			requests = append(requests, req)
-			mu.Unlock()
+		// Запросы /tokenize (подсчёт токенов контекста) не являются
+		// чат-запросами LLM — их не записываем.
+		if r.URL.Path == "/v1/chat/completions" {
+			var req loggedRequest
+			if err := json.Unmarshal(body, &req); err == nil {
+				mu.Lock()
+				requests = append(requests, req)
+				mu.Unlock()
+			}
 		}
 
 		w.Header().Set("Content-Type", "text/event-stream")

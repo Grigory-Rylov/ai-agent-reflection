@@ -33,7 +33,6 @@ type AgentInfo struct {
 // AgentManager управляет доступными агентами
 type AgentManager struct {
 	agents map[string]AgentInfo
-	user   Permission
 }
 
 // NewAgentManager создаёт менеджер с предустановленными агентами

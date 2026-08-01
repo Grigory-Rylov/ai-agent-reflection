@@ -141,43 +141,6 @@ func parseToolCalls(rawMessage map[string]interface{}) ([]ToolCall, error) {
 	return toolCalls, nil
 }
 
-func getToolCallContent(rawMessage map[string]interface{}) string {
-	if content, ok := rawMessage["content"].(string); ok {
-		return content
-	}
-	return ""
-}
-
-func getFinishReason(rawMessage map[string]interface{}) string {
-	if finishReason, ok := rawMessage["finish_reason"].(string); ok {
-		return finishReason
-	}
-	return ""
-}
-
-func formatToolMessage(toolCallID, toolName, result string) map[string]interface{} {
-	return map[string]interface{}{
-		"role":         "tool",
-		"tool_call_id": toolCallID,
-		"name":         toolName,
-		"content":      result,
-	}
-}
-
-func formatToolErrorMessage(toolCallID, toolName, errorMsg string) map[string]interface{} {
-	return map[string]interface{}{
-		"role":         "tool",
-		"tool_call_id": toolCallID,
-		"name":         toolName,
-		"content":      fmt.Sprintf("Error: %s", errorMsg),
-	}
-}
-
-func isToolCallResponse(rawMessage map[string]interface{}) bool {
-	_, hasToolCalls := rawMessage["tool_calls"]
-	return hasToolCalls
-}
-
 // parseToolArguments распарсивает JSON-аргументы tool_call в map[string]string
 // Автоматически нормализует camelCase ключи в snake_case для совместимости
 func parseToolArguments(tc ToolCall) (map[string]string, error) {

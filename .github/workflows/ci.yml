@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  test:
+    name: Unit tests (non-integration)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Интеграционные тесты (требуют запущенный llama-server / config.json)
+      # помечены build tag "integration" и сюда не попадают.
+      - name: Run non-integration tests
+        run: go test -count=1 -vet=off -timeout 20m ./...

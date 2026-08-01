@@ -13,32 +13,6 @@ type contextKey string
 const toolCallDepthKey contextKey = "tool_call_depth"
 const maxToolCallRecursion = 100
 
-// ============================================================
-// ToolResultProcessor — обработка результатов инструментов
-// ============================================================
-
-// ToolResultProcessor определяет интерфейс для рекурсивной обработки результатов
-type ToolResultProcessor interface {
-	ProcessResults(ctx context.Context, originalMessages []Message, assistantContent string, toolCalls []ToolCall, toolResults []ToolCallResult, session *sess.Session, executed map[string]bool) (string, error)
-}
-
-// agentToolResultProcessor реализует ToolResultProcessor через агента
-type agentToolResultProcessor struct {
-	agent    *agentImpl
-	executor ToolExecutor
-}
-
-func newAgentToolResultProcessor(a *agentImpl, executor ToolExecutor) *agentToolResultProcessor {
-	return &agentToolResultProcessor{
-		agent:    a,
-		executor: executor,
-	}
-}
-
-func (p *agentToolResultProcessor) ProcessResults(ctx context.Context, originalMessages []Message, assistantContent string, toolCalls []ToolCall, toolResults []ToolCallResult, session *sess.Session, executed map[string]bool) (string, error) {
-	return p.agent.processToolResults(ctx, originalMessages, assistantContent, toolCalls, toolResults, session, executed)
-}
-
 // processToolResults отправляет результат выполнения инструментов обратно в AI
 // Поддерживает как NATIVE (OpenAI format), так и XML/JSON tool calls в ответе
 // executed — карта сигнатур уже выполненных инструментов (для дедупликации между рекурсиями)
