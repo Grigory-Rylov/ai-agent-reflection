@@ -395,7 +395,7 @@ func askShellPermission(ctx context.Context, checker permissionChecker, scan per
 
 	detail := strings.Join(scan.Patterns, " && ")
 	q := map[string]interface{}{
-		"question": fmt.Sprintf("Allow shell command: %s?", detail),
+		"question": fmt.Sprintf("Allow shell command: %s?", truncateStr(detail, 200)),
 		"header":   "🔐 bash",
 		"options": []map[string]interface{}{
 			{"label": "✅ Allow", "description": "Allow this one time"},

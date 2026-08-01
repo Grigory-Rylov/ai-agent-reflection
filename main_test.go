@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/opencode/llama-client/pkg/agentpolicy"
@@ -355,4 +356,73 @@ type testLogger struct{}
 
 func (l *testLogger) InfoLogf(format string, args ...interface{}) {
 	// silent logger for tests
+}
+
+func TestBuildQuestionTextKeepsOptions(t *testing.T) {
+	q := map[string]interface{}{
+		"header":   "🔐 bash",
+		"question": "Allow shell command: cat > /tmp/file.py << 'PYEOF'?",
+		"options": []interface{}{
+			map[string]interface{}{"label": "✅ Allow", "description": "one time"},
+			map[string]interface{}{"label": "✅ Always allow", "description": "session"},
+			map[string]interface{}{"label": "❌ Deny", "description": "now"},
+		},
+	}
+
+	text := buildQuestionText(q)
+
+	if !strings.Contains(text, "Options:") {
+		t.Error("expected Options block in question text")
+	}
+	for _, label := range []string{"✅ Allow", "✅ Always allow", "❌ Deny"} {
+		if !strings.Contains(text, label) {
+			t.Errorf("expected option %q in question text", label)
+		}
+	}
+	if strings.Contains(text, "...") {
+		t.Error("question text should not be truncated when short")
+	}
+}
+
+func TestTruncateQuestionKeepsOptionsAndLimit(t *testing.T) {
+	longQuestion := strings.Repeat("code line\n", 500)
+	q := map[string]interface{}{
+		"header":   "🔐 bash",
+		"question": longQuestion,
+		"options": []interface{}{
+			map[string]interface{}{"label": "✅ Allow"},
+			map[string]interface{}{"label": "❌ Deny"},
+		},
+	}
+
+	text := buildQuestionText(q)
+
+	if len([]rune(text)) > 4096 {
+		t.Errorf("question text %d chars exceeds VK limit 4096", len([]rune(text)))
+	}
+	if !strings.Contains(text, "✅ Allow") || !strings.Contains(text, "❌ Deny") {
+		t.Error("options must survive truncation")
+	}
+	if !strings.HasSuffix(text, "Reply with your choice") {
+		t.Error("expected reply instruction at the end")
+	}
+	if !strings.Contains(text, "...") {
+		t.Error("expected truncation marker for long question")
+	}
+}
+
+func TestTruncateQuestionWithoutOptions(t *testing.T) {
+	longQuestion := strings.Repeat("x", 5000)
+	q := map[string]interface{}{
+		"question": longQuestion,
+	}
+
+	text := buildQuestionText(q)
+
+	if len([]rune(text)) > 4096 {
+		t.Errorf("question text %d chars exceeds VK limit 4096", len([]rune(text)))
+	}
+	if !strings.Contains(text, "...") {
+		t.Error("expected truncation marker")
+	}
 }

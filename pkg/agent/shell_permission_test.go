@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/opencode/llama-client/pkg/access"
@@ -435,5 +436,44 @@ func TestCheckShellPermissionSkipsAskForADBPullChainWhenEnabled(t *testing.T) {
 	}
 	if called {
 		t.Error("expected no question: only device paths and cwd host files")
+	}
+}
+
+func TestAskShellPermissionQuestionTruncatesLongCommand(t *testing.T) {
+	dir := t.TempDir()
+	prevWD := tools.WorkingDir
+	tools.SetWorkingDir(dir)
+	tools.SetAccessController(access.NewController([]string{dir}))
+	t.Cleanup(func() {
+		tools.SetAccessController(nil)
+		tools.SetWorkingDir(prevWD)
+	})
+
+	var gotQuestion string
+	withQuestionCallback(t, func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+		gotQuestion, _ = q["question"].(string)
+		return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
+	})
+
+	config := DefaultConfig()
+	config.SkipShellPermissionForPathless = false
+	a := NewAgent(config)
+	a.SetPermissionChecker(&rulesetChecker{P: &permission.Ruleset{
+		{Permission: "bash", Pattern: "*", Action: permission.Ask},
+	}})
+	e := newAgentToolExecutor(a)
+
+	longCmd := "cat > /outside/file.py << 'PYEOF'\n" + strings.Repeat("code line\n", 500) + "PYEOF"
+	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		"command": longCmd,
+	}, 12345)
+	if !result {
+		t.Error("expected shell command approved after user choice")
+	}
+	if !strings.Contains(gotQuestion, "Allow shell command:") {
+		t.Errorf("expected permission question, got %q", gotQuestion)
+	}
+	if len(gotQuestion) > 300 {
+		t.Errorf("permission question too long (%d chars): %q", len(gotQuestion), gotQuestion)
 	}
 }

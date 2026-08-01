@@ -463,7 +463,33 @@ func buildQuestionText(q map[string]interface{}) string {
 		b.WriteString("\n\nReply with your answer")
 	}
 
-	return b.String()
+	return truncateQuestion(b.String())
+}
+
+// truncateQuestion обрезает текст вопроса до лимита VK (4096 символов),
+// сохраняя при этом заголовок и список опций в конце.
+func truncateQuestion(text string) string {
+	const vkMessageLimit = 4096
+	runes := []rune(text)
+	if len(runes) <= vkMessageLimit {
+		return text
+	}
+
+	// Находим блок опций в конце сообщения и сохраняем его целиком.
+	marker := "\n\nOptions:"
+	markerIdx := strings.LastIndex(text, marker)
+	if markerIdx == -1 {
+		runes = runes[:vkMessageLimit-len("...")]
+		return string(runes) + "..."
+	}
+
+	optionsPart := text[markerIdx:]
+	headLimit := vkMessageLimit - len([]rune(optionsPart)) - len("...")
+	head := []rune(text[:markerIdx])
+	if len(head) > headLimit {
+		head = head[:headLimit]
+	}
+	return string(head) + "..." + optionsPart
 }
 
 func registerTools(r *tools.Registry) {
