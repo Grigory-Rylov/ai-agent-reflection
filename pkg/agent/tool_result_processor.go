@@ -114,7 +114,7 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	}
 
 	// Собираем ответ с проверкой на tool_calls
-	responseText, reasoningText, finishReason, streamToolCalls, err := a.collectStreamResponseWithToolCalls(chunkChan)
+	responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.collectStreamResponseWithToolCalls(chunkChan)
 	if err != nil {
 		return "", err
 	}
@@ -122,6 +122,9 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	// Отправляем reasoning в thinking чат сразу после получения,
 	// чтобы он не терялся при рекурсивных вызовах инструментов
 	a.sendThinkingIfNeeded(session, reasoningText)
+
+	// Отправляем количество токенов после ответа LLM
+	a.sendThinkingTokens(session.GetPeerID(), promptTokens, completionTokens)
 
 	prefix := a.agentPrefix()
 	logger.DebugToFile("%sprocessToolResults: content=%d, reasoning=%d, tool_calls=%d, finish=%q",

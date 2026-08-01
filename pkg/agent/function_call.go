@@ -26,7 +26,7 @@ type FunctionCallResult struct {
 
 // processWithTools обрабатывает ответ AI с поддержкой инструментов
 func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, session *sess.Session, maxToolCalls int) (FunctionCallResult, error) {
-	responseText, reasoningText, finishReason, streamToolCalls, err := a.collectStreamAndLog(ctx, messages)
+	responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.collectStreamAndLog(ctx, messages)
 	if err != nil {
 		return FunctionCallResult{}, err
 	}
@@ -34,6 +34,9 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 	// Отправляем reasoning в thinking чат сразу после получения,
 	// чтобы он не терялся при обработке tool_calls
 	a.sendThinkingIfNeeded(session, reasoningText)
+
+	// Отправляем количество токенов после ответа LLM
+	a.sendThinkingTokens(session.GetPeerID(), promptTokens, completionTokens)
 
 	executedToolCalls := make(map[string]bool)
 
@@ -74,23 +77,23 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 }
 
 // collectStreamAndLog отправляет streaming запрос, собирает ответ и логирует
-func (a *agentImpl) collectStreamAndLog(ctx context.Context, messages []Message) (string, string, string, []ToolCall, error) {
+func (a *agentImpl) collectStreamAndLog(ctx context.Context, messages []Message) (string, string, string, []ToolCall, int, int, error) {
 	toolsSchema := a.toolsRegistry.ToOpenAISchema()
 	streamConfig := a.buildToolsStreamConfig(toolsSchema)
 
 	chunkChan, err := a.streamingRequest(ctx, streamConfig, messages)
 	if err != nil {
-		return "", "", "", nil, fmt.Errorf("streaming request: %w", err)
+		return "", "", "", nil, 0, 0, fmt.Errorf("streaming request: %w", err)
 	}
 
-	responseText, reasoningText, finishReason, streamToolCalls, err := a.collectStreamResponseWithToolCalls(chunkChan)
+	responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.collectStreamResponseWithToolCalls(chunkChan)
 	if err != nil {
-		return "", "", "", nil, err
+		return "", "", "", nil, 0, 0, err
 	}
 
 	prefix := a.agentPrefix()
-	logger.DebugToFile("%sstreaming response: content=%d, reasoning=%d, tool_calls=%d, finish=%q",
-		prefix, len(responseText), len(reasoningText), len(streamToolCalls), finishReason)
+	logger.DebugToFile("%sstreaming response: content=%d, reasoning=%d, tool_calls=%d, finish=%q, in=%d, out=%d",
+		prefix, len(responseText), len(reasoningText), len(streamToolCalls), finishReason, promptTokens, completionTokens)
 	if len(responseText) > 0 {
 		logger.DebugToFile("\n---------------- response content ----------------------")
 		logger.DebugToFile("%s%s", prefix, responseText)
@@ -106,7 +109,7 @@ func (a *agentImpl) collectStreamAndLog(ctx context.Context, messages []Message)
 	}
 	logger.DebugToFile("\n====================================================")
 
-	return responseText, reasoningText, finishReason, streamToolCalls, nil
+	return responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, nil
 }
 
 // handleNativeToolCalls обрабатывает NATIVE tool_calls из streaming ответа

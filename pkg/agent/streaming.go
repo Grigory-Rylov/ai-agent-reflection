@@ -36,6 +36,8 @@ type StreamChunkEvent struct {
 	ReasoningContent string
 	ToolCalls        []ToolCall
 	FinishReason     string
+	PromptTokens     int
+	CompletionTokens int
 	IsDone           bool
 	IsError          bool
 	ErrorCode        string
@@ -231,11 +233,14 @@ func (a *agentImpl) processSSEData(lineStr string, chunkChan chan StreamChunkEve
 
 	if finishReason != "" {
 		// ВАЖНО: отправляем finish_reason ВМЕСТЕ с tool_calls если они есть
+		promptTokens, completionTokens := tokenCounts(event)
 		chunkChan <- StreamChunkEvent{
 			Content:          content,
 			ReasoningContent: choice.Delta.ReasoningContent,
 			ToolCalls:        toolCalls,
 			FinishReason:     finishReason,
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
 			IsDone:           true,
 			Timestamp:        time.Now(),
 		}
@@ -270,6 +275,32 @@ type SSEEvent struct {
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
+	// Usage — стандартное поле OpenAI (не-стриминг).
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage"`
+	// Timings — llama.cpp-специфичное поле в финальном чанке стрима.
+	Timings *struct {
+		PromptN    int `json:"prompt_n"`
+		PredictedN int `json:"predicted_n"`
+	} `json:"timings"`
+}
+
+// tokenCounts возвращает токены (подано, ответ) из события.
+// Приоритет: usage (OpenAI), затем timings (llama.cpp).
+func tokenCounts(event *SSEEvent) (int, int) {
+	if event == nil {
+		return 0, 0
+	}
+	if event.Usage != nil && event.Usage.TotalTokens > 0 {
+		return event.Usage.PromptTokens, event.Usage.CompletionTokens
+	}
+	if event.Timings != nil {
+		return event.Timings.PromptN, event.Timings.PredictedN
+	}
+	return 0, 0
 }
 
 func (a *agentImpl) parseSSEEvent(jsonData string) *SSEEvent {

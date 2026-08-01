@@ -3,7 +3,8 @@
     "models": {
         "my-model": {
             "name": "model-name-on-server.gguf",
-            "host": "127.0.0.1:8081"
+            "host": "127.0.0.1:8081",
+            "context": 32768
         },
         "another-model": {
             "name": "another-model.gguf",

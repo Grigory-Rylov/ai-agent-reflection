@@ -9,17 +9,20 @@ import (
 	"github.com/opencode/llama-client/session"
 )
 
-func (a *agentImpl) collectStreamResponse(chunkChan <-chan StreamChunkEvent) (string, string, error) {
+func (a *agentImpl) collectStreamResponse(chunkChan <-chan StreamChunkEvent) (string, string, int, int, error) {
 	logger.DebugToFile(a.agentPrefix()+"[LLM RESPONSE] Starting to collect stream response...")
 	var fullResponse strings.Builder
 	var fullReasoning strings.Builder
+	var promptTokens, completionTokens int
 
 	for event := range chunkChan {
 		if event.IsError {
 			logger.DebugToFile(a.agentPrefix()+"[LLM RESPONSE] Stream error: %s", event.Content)
-			return "", "", fmt.Errorf("API error: %s (code: %s)", event.Content, event.ErrorCode)
+			return "", "", 0, 0, fmt.Errorf("API error: %s (code: %s)", event.Content, event.ErrorCode)
 		}
 		if event.IsDone {
+			promptTokens = event.PromptTokens
+			completionTokens = event.CompletionTokens
 			break
 		}
 		if event.Content != "" {
@@ -32,22 +35,25 @@ func (a *agentImpl) collectStreamResponse(chunkChan <-chan StreamChunkEvent) (st
 
 	response := fullResponse.String()
 	reasoning := fullReasoning.String()
-	logger.DebugToFile(a.agentPrefix()+"[LLM RESPONSE] Collected: content=%d chars, reasoning=%d chars", len(response), len(reasoning))
-	return response, reasoning, nil
+	logger.DebugToFile(a.agentPrefix()+"[LLM RESPONSE] Collected: content=%d chars, reasoning=%d chars, in=%d, out=%d", len(response), len(reasoning), promptTokens, completionTokens)
+	return response, reasoning, promptTokens, completionTokens, nil
 }
 
-func (a *agentImpl) collectStreamResponseWithToolCalls(chunkChan <-chan StreamChunkEvent) (string, string, string, []ToolCall, error) {
+func (a *agentImpl) collectStreamResponseWithToolCalls(chunkChan <-chan StreamChunkEvent) (string, string, string, []ToolCall, int, int, error) {
 	var fullResponse strings.Builder
 	var fullReasoning strings.Builder
 	var finishReason string
 	var allToolCalls []ToolCall
+	var promptTokens, completionTokens int
 
 	for event := range chunkChan {
 		if event.IsError {
-			return "", "", "", nil, fmt.Errorf("API error: %s (code: %s)", event.Content, event.ErrorCode)
+			return "", "", "", nil, 0, 0, fmt.Errorf("API error: %s (code: %s)", event.Content, event.ErrorCode)
 		}
 		if event.IsDone {
 			finishReason = event.FinishReason
+			promptTokens = event.PromptTokens
+			completionTokens = event.CompletionTokens
 			break
 		}
 		if event.Content != "" {
@@ -66,7 +72,7 @@ func (a *agentImpl) collectStreamResponseWithToolCalls(chunkChan <-chan StreamCh
 
 	a.saveDebugResponse(response, reasoning, finishReason, allToolCalls)
 
-	return response, reasoning, finishReason, allToolCalls, nil
+	return response, reasoning, finishReason, allToolCalls, promptTokens, completionTokens, nil
 }
 
 func (a *agentImpl) saveDebugResponse(content, reasoning, finishReason string, toolCalls []ToolCall) {

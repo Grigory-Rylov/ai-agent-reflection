@@ -18,6 +18,12 @@ func (m *mockPermissionChecker) Check(toolName string) string {
 	return m.decision
 }
 
+func (m *mockPermissionChecker) Evaluate(permission, pattern string) string {
+	return m.decision
+}
+
+func (m *mockPermissionChecker) Approve(permission, pattern string) {}
+
 // mockToolPermissionChecker returns different decisions based on tool name
 type mockToolPermissionChecker struct {
 	decisions map[string]string
@@ -29,6 +35,15 @@ func (m *mockToolPermissionChecker) Check(toolName string) string {
 	}
 	return "allow"
 }
+
+func (m *mockToolPermissionChecker) Evaluate(permission, pattern string) string {
+	if d, ok := m.decisions[permission]; ok {
+		return d
+	}
+	return "allow"
+}
+
+func (m *mockToolPermissionChecker) Approve(permission, pattern string) {}
 
 func TestCheckPermissionAsk(t *testing.T) {
 	config := DefaultConfig()
@@ -129,19 +144,12 @@ func TestExecuteToolWithPermission(t *testing.T) {
 	})
 }
 
-func TestShellExecutePermissionWithPaths(t *testing.T) {
+func TestShellExecutePermissionGrantedPath(t *testing.T) {
 	config := DefaultConfig()
 	config.AgentName = "test-agent"
 
-	allowedDir, err := os.MkdirTemp("", "shell_perm_test_*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(allowedDir)
-
-	ctrl := access.NewController([]string{allowedDir})
-	tools.SetAccessController(ctrl)
-	defer tools.SetAccessController(nil)
+	const peerID int64 = 777777
+	tools.GrantPath(peerID, "/home/user/granted")
 
 	askChecker := &mockToolPermissionChecker{
 		decisions: map[string]string{
@@ -149,91 +157,43 @@ func TestShellExecutePermissionWithPaths(t *testing.T) {
 		},
 	}
 
-	t.Run("shell cat in allowed dir bypasses ask", func(t *testing.T) {
+	t.Run("shell command on granted path bypasses ask", func(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(askChecker)
 		e := newAgentToolExecutor(a)
 
-		targetFile := filepath.Join(allowedDir, "test.txt")
+		asked := false
+		tools.SetQuestionCallback(func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+			asked = true
+			return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
+		})
+		defer tools.SetQuestionCallback(nil)
+
 		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
-			"command": "cat " + targetFile,
-		}, 12345)
+			"command": "ls /home/user/granted",
+		}, peerID)
 
 		if !result {
-			t.Error("expected allow for shell command with path in allowed dir")
+			t.Error("expected allow for shell command on granted path")
 		}
-	})
-
-	t.Run("shell ls in allowed dir bypasses ask", func(t *testing.T) {
-		a := NewAgent(config)
-		a.SetPermissionChecker(askChecker)
-		e := newAgentToolExecutor(a)
-
-		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
-			"command": "ls -la " + allowedDir,
-		}, 12345)
-
-		if !result {
-			t.Error("expected allow for ls in allowed dir")
-		}
-	})
-
-	t.Run("shell grep in allowed dir bypasses ask", func(t *testing.T) {
-		a := NewAgent(config)
-		a.SetPermissionChecker(askChecker)
-		e := newAgentToolExecutor(a)
-
-		targetFile := filepath.Join(allowedDir, "main.go")
-		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
-			"command": "grep 'func' " + targetFile,
-		}, 12345)
-
-		if !result {
-			t.Error("expected allow for grep in allowed dir")
-		}
-	})
-
-	t.Run("shell rm in allowed dir bypasses ask", func(t *testing.T) {
-		a := NewAgent(config)
-		a.SetPermissionChecker(askChecker)
-		e := newAgentToolExecutor(a)
-
-		targetFile := filepath.Join(allowedDir, "temp.txt")
-		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
-			"command": "rm " + targetFile,
-		}, 12345)
-
-		if !result {
-			t.Error("expected allow for rm in allowed dir")
-		}
-	})
-
-	t.Run("shell cp both paths in allowed dir bypasses ask", func(t *testing.T) {
-		a := NewAgent(config)
-		a.SetPermissionChecker(askChecker)
-		e := newAgentToolExecutor(a)
-
-		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
-			"command": "cp " + filepath.Join(allowedDir, "a.txt") + " " + filepath.Join(allowedDir, "b.txt"),
-		}, 12345)
-
-		if !result {
-			t.Error("expected allow for cp with both paths in allowed dir")
+		if asked {
+			t.Error("expected NO permission ask for granted path")
 		}
 	})
 }
 
-func TestShellExecutePermissionNoPaths(t *testing.T) {
+func TestShellExecutePermissionAsksForUnmatched(t *testing.T) {
 	config := DefaultConfig()
 	config.AgentName = "test-agent"
 
 	askChecker := &mockToolPermissionChecker{
 		decisions: map[string]string{
 			"shell_execute": "ask",
+			"bash":          "ask",
 		},
 	}
 
-	t.Run("shell ping should NOT ask (no file paths)", func(t *testing.T) {
+	t.Run("shell ping asks when bash permission unresolved", func(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(askChecker)
 		e := newAgentToolExecutor(a)
@@ -250,14 +210,14 @@ func TestShellExecutePermissionNoPaths(t *testing.T) {
 		}, 12345)
 
 		if !result {
-			t.Error("expected allow for ping (no file paths)")
+			t.Error("expected allow after user approved ping")
 		}
-		if asked {
-			t.Error("expected NO permission ask for ping (no file paths)")
+		if !asked {
+			t.Error("expected permission ask for ping when bash permission is ask")
 		}
 	})
 
-	t.Run("shell echo should NOT ask (no file paths)", func(t *testing.T) {
+	t.Run("shell echo asks when bash permission unresolved", func(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(askChecker)
 		e := newAgentToolExecutor(a)
@@ -274,14 +234,14 @@ func TestShellExecutePermissionNoPaths(t *testing.T) {
 		}, 12345)
 
 		if !result {
-			t.Error("expected allow for echo (no file paths)")
+			t.Error("expected allow after user approved echo")
 		}
-		if asked {
-			t.Error("expected NO permission ask for echo (no file paths)")
+		if !asked {
+			t.Error("expected permission ask for echo when bash permission is ask")
 		}
 	})
 
-	t.Run("shell whoami should NOT ask (no file paths)", func(t *testing.T) {
+	t.Run("shell whoami asks when bash permission unresolved", func(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(askChecker)
 		e := newAgentToolExecutor(a)
@@ -298,14 +258,14 @@ func TestShellExecutePermissionNoPaths(t *testing.T) {
 		}, 12345)
 
 		if !result {
-			t.Error("expected allow for whoami (no file paths)")
+			t.Error("expected allow after user approved whoami")
 		}
-		if asked {
-			t.Error("expected NO permission ask for whoami (no file paths)")
+		if !asked {
+			t.Error("expected permission ask for whoami when bash permission is ask")
 		}
 	})
 
-	t.Run("shell curl should NOT ask (no file paths)", func(t *testing.T) {
+	t.Run("shell curl asks when bash permission unresolved", func(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(askChecker)
 		e := newAgentToolExecutor(a)
@@ -322,10 +282,10 @@ func TestShellExecutePermissionNoPaths(t *testing.T) {
 		}, 12345)
 
 		if !result {
-			t.Error("expected allow for curl (no file paths)")
+			t.Error("expected allow after user approved curl")
 		}
-		if asked {
-			t.Error("expected NO permission ask for curl (no file paths)")
+		if !asked {
+			t.Error("expected permission ask for curl when bash permission is ask")
 		}
 	})
 }
@@ -460,23 +420,14 @@ func TestShellExecutePathOutsideAllowed(t *testing.T) {
 	config := DefaultConfig()
 	config.AgentName = "test-agent"
 
-	allowedDir, err := os.MkdirTemp("", "shell_perm_outside_*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(allowedDir)
-
-	ctrl := access.NewController([]string{allowedDir})
-	tools.SetAccessController(ctrl)
-	defer tools.SetAccessController(nil)
-
 	askChecker := &mockToolPermissionChecker{
 		decisions: map[string]string{
 			"shell_execute": "ask",
+			"bash":          "ask",
 		},
 	}
 
-	t.Run("shell cat outside allowed dir MUST ask", func(t *testing.T) {
+	t.Run("shell cat outside allowed dir asks", func(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(askChecker)
 		e := newAgentToolExecutor(a)
@@ -493,14 +444,14 @@ func TestShellExecutePathOutsideAllowed(t *testing.T) {
 		}, 12345)
 
 		if result {
-			t.Error("expected deny for cat /etc/passwd (path outside allowed dir)")
+			t.Error("expected deny for cat /etc/passwd when bash permission is ask")
 		}
 		if !asked {
-			t.Error("expected permission ask for cat /etc/passwd (path outside allowed dir)")
+			t.Error("expected permission ask for cat /etc/passwd when bash permission is ask")
 		}
 	})
 
-	t.Run("shell rm outside allowed dir MUST ask", func(t *testing.T) {
+	t.Run("shell rm outside allowed dir asks", func(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(askChecker)
 		e := newAgentToolExecutor(a)
@@ -517,14 +468,14 @@ func TestShellExecutePathOutsideAllowed(t *testing.T) {
 		}, 12345)
 
 		if result {
-			t.Error("expected deny for rm /important/data (path outside allowed dir)")
+			t.Error("expected deny for rm /important/data when bash permission is ask")
 		}
 		if !asked {
-			t.Error("expected permission ask for rm /important/data (path outside allowed dir)")
+			t.Error("expected permission ask for rm /important/data when bash permission is ask")
 		}
 	})
 
-	t.Run("shell cp one path outside allowed dir MUST ask", func(t *testing.T) {
+	t.Run("shell cp asks when bash permission is ask", func(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(askChecker)
 		e := newAgentToolExecutor(a)
@@ -537,14 +488,14 @@ func TestShellExecutePathOutsideAllowed(t *testing.T) {
 		defer tools.SetQuestionCallback(nil)
 
 		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
-			"command": "cp /etc/shadow " + filepath.Join(allowedDir, "stolen.txt"),
+			"command": "cp /etc/shadow /tmp/stolen.txt",
 		}, 12345)
 
 		if result {
-			t.Error("expected deny for cp with path outside allowed dir")
+			t.Error("expected deny for cp when bash permission is ask")
 		}
 		if !asked {
-			t.Error("expected permission ask for cp with path outside allowed dir")
+			t.Error("expected permission ask for cp when bash permission is ask")
 		}
 	})
 }

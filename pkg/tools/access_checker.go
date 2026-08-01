@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/opencode/llama-client/pkg/access"
+	"github.com/opencode/llama-client/pkg/permission"
 )
 
 // Global access controller, shared across all tool instances.
@@ -135,6 +136,9 @@ func looksLikePath(token string) bool {
 	if strings.HasPrefix(token, "~") {
 		return true
 	}
+	if token == ".." {
+		return true
+	}
 	if strings.Contains(token, ".") && !strings.Contains(token, "@") {
 		parts := strings.Split(token, ".")
 		allNumeric := true
@@ -216,6 +220,60 @@ func PathsAllAllowed(paths []string) bool {
 // Возвращает true если контроллера нет, путей нет, или все пути разрешены.
 func ShellPathsAllAllowed(paths []string) bool {
 	return PathsAllAllowed(paths)
+}
+
+// cwdShellCommands меняют рабочую директорию и не требуют отдельной проверки.
+var cwdShellCommands = map[string]bool{
+	"cd": true, "chdir": true, "popd": true, "pushd": true,
+}
+
+// ShellCommandPathsAllowed проверяет, что каждая подкоманда shell-команды
+// работает только внутри разрешённых директорий (рабочая папка и allowed_dirs).
+// Возвращает false, если какая-то подкоманда не оперирует файлами или
+// трогает путь вне разрешённых директорий — такую команду нужно
+// проверять паттернами и, возможно, спрашивать пользователя.
+func ShellCommandPathsAllowed(command string) bool {
+	if command == "" {
+		return true
+	}
+	for _, sub := range permission.SplitCommands(command) {
+		if !shellSubcommandPathsAllowed(sub) {
+			return false
+		}
+	}
+	return true
+}
+
+// shellSubcommandPathsAllowed проверяет одну подкоманду.
+func shellSubcommandPathsAllowed(sub string) bool {
+	parts := strings.Fields(sub)
+	if len(parts) == 0 {
+		return true
+	}
+	cmd := parts[0]
+	if slashIdx := strings.LastIndex(cmd, "/"); slashIdx >= 0 {
+		cmd = cmd[slashIdx+1:]
+	}
+	if cwdShellCommands[cmd] {
+		return cwdTargetAllowed(parts)
+	}
+	paths := ExtractShellPaths(sub)
+	if len(paths) > 0 {
+		return PathsAllAllowed(paths)
+	}
+	return fileCommands[cmd]
+}
+
+// cwdTargetAllowed проверяет, что цель cd/pushd находится внутри
+// разрешённых директорий. popd и cd без аргумента считаем непроверяемыми.
+func cwdTargetAllowed(parts []string) bool {
+	if parts[0] == "popd" {
+		return false
+	}
+	if len(parts) < 2 {
+		return false
+	}
+	return PathsAllAllowed(parts[1:2])
 }
 
 // CheckToolArgs проверяет все пути в аргументах инструмента на доступ.

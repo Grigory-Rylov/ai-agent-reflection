@@ -60,9 +60,10 @@ type agentImpl struct {
 
 // PermissionChecker проверяет разрешения на выполнение инструментов
 type PermissionChecker interface {
-	Check(toolName string) string // "allow", "deny", "ask"
+	Check(toolName string) string                    // "allow", "deny", "ask"
+	Evaluate(permission, pattern string) string      // "allow", "deny", "ask" по правилам
+	Approve(permission, pattern string)              // добавить правило allow
 }
-
 // ============================================================
 // Инициализация
 // ============================================================
@@ -384,7 +385,7 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 	}
 
 	// Собираем ответ с reasoning
-	responseText, reasoningText, err := a.collectStreamResponse(chunkChan)
+	responseText, reasoningText, promptTokens, completionTokens, err := a.collectStreamResponse(chunkChan)
 	if err != nil {
 		return "", err
 	}
@@ -415,6 +416,9 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 			}
 		}
 	}
+
+	// Отправляем количество токенов после ответа LLM
+	a.sendThinkingTokens(session.GetPeerID(), promptTokens, completionTokens)
 
 	// Если reasoning есть но response пустой — reasoning уже отправлен в thinking_peer_id
 	// Не возвращаем его как обычный ответ

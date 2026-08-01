@@ -167,6 +167,88 @@ func TestExtractShellPaths(t *testing.T) {
 	})
 }
 
+func TestShellCommandPathsAllowed(t *testing.T) {
+	setup := func(t *testing.T) string {
+		dir, _ := setupAccessTest(t)
+		SetWorkingDir(dir)
+		t.Cleanup(func() {
+			SetWorkingDir("")
+			cleanupAccessTest(t, dir)
+		})
+		return dir
+	}
+
+	t.Run("cat file inside allowed dir is allowed", func(t *testing.T) {
+		dir := setup(t)
+		if !ShellCommandPathsAllowed("cat " + dir + "/file.txt") {
+			t.Error("expected true for file in allowed dir")
+		}
+	})
+
+	t.Run("cat file outside allowed dir is denied", func(t *testing.T) {
+		_ = setup(t)
+		if ShellCommandPathsAllowed("cat /etc/passwd") {
+			t.Error("expected false for file outside allowed dir")
+		}
+	})
+
+	t.Run("ls without paths is allowed", func(t *testing.T) {
+		_ = setup(t)
+		if !ShellCommandPathsAllowed("ls -la") {
+			t.Error("expected true for file command without explicit paths")
+		}
+	})
+
+	t.Run("git status is allowed", func(t *testing.T) {
+		_ = setup(t)
+		if !ShellCommandPathsAllowed("git status") {
+			t.Error("expected true for git command in allowed dir")
+		}
+	})
+
+	t.Run("non-file command is denied", func(t *testing.T) {
+		_ = setup(t)
+		if ShellCommandPathsAllowed("pip install requests") {
+			t.Error("expected false for non-file command")
+		}
+	})
+
+	t.Run("compound command with cd inside is allowed", func(t *testing.T) {
+		dir := setup(t)
+		if !ShellCommandPathsAllowed("cd " + dir + "/subdir && ls -la") {
+			t.Error("expected true for cd inside allowed dir")
+		}
+	})
+
+	t.Run("cd outside allowed dir is denied", func(t *testing.T) {
+		_ = setup(t)
+		if ShellCommandPathsAllowed("cd /etc && cat passwd") {
+			t.Error("expected false for cd outside allowed dir")
+		}
+	})
+
+	t.Run("rm -rf .. is denied", func(t *testing.T) {
+		_ = setup(t)
+		if ShellCommandPathsAllowed("rm -rf ..") {
+			t.Error("expected false for rm -rf .. (escapes allowed dir)")
+		}
+	})
+
+	t.Run("one outside path denies whole command", func(t *testing.T) {
+		dir := setup(t)
+		if ShellCommandPathsAllowed("cat " + dir + "/a.txt && cat /etc/passwd") {
+			t.Error("expected false when any path is outside allowed dir")
+		}
+	})
+
+	t.Run("empty command is allowed", func(t *testing.T) {
+		_ = setup(t)
+		if !ShellCommandPathsAllowed("") {
+			t.Error("expected true for empty command")
+		}
+	})
+}
+
 func TestShellPathsAllAllowed(t *testing.T) {
 	t.Run("returns true when all paths are allowed", func(t *testing.T) {
 		dir, _ := setupAccessTest(t)

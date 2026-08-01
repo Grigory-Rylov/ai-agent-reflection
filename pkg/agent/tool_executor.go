@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/opencode/llama-client/pkg/logger"
+	"github.com/opencode/llama-client/pkg/permission"
 	"github.com/opencode/llama-client/pkg/tools"
 )
 
@@ -130,6 +131,45 @@ func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, 
 	}, nil
 }
 
+func (e *agentToolExecutor) checkShellPermission(ctx context.Context, checker permissionChecker, command string, peerID int64) bool {
+	scan := permission.ScanCommand(command)
+	if len(scan.Patterns) == 0 {
+		logger.DebugToFile("[checkPermissionAsk] shell_execute: no patterns (cd-only), allow")
+		return true
+	}
+
+	needsAsk := false
+	for _, pattern := range scan.Patterns {
+		action := checker.Evaluate("bash", pattern)
+		logger.DebugToFile("[checkPermissionAsk] shell_execute: evaluate bash %q -> %s", pattern, action)
+		switch action {
+		case "deny":
+			logger.DebugToFile("[checkPermissionAsk] shell_execute: denied pattern %q", pattern)
+			e.agent.debugLog.Info("Permission denied for bash command '%s'", pattern)
+			e.agent.sendThinking(peerID, fmt.Sprintf("[TOOL] Denied: bash %s (permission)", pattern))
+			return false
+		case "allow":
+			continue
+		default:
+			needsAsk = true
+		}
+	}
+
+	if !needsAsk {
+		logger.DebugToFile("[checkPermissionAsk] shell_execute: all patterns allowed, skip ask")
+		return true
+	}
+
+	// Команда работает только внутри разрешённых директорий — не спрашиваем.
+	if tools.ShellCommandPathsAllowed(command) {
+		logger.DebugToFile("[checkPermissionAsk] shell_execute: all paths in allowed dirs, skip ask")
+		return true
+	}
+
+	e.agent.sendThinking(peerID, fmt.Sprintf("[PERMISSION] Asking user for bash command '%s'...", command))
+	return askShellPermission(ctx, checker, scan, peerID)
+}
+
 func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName string, args map[string]string, peerID int64) bool {
 	logger.DebugToFile("[checkPermissionAsk] enter: tool=%s, peer=%d, args=%v", toolName, peerID, args)
 
@@ -163,20 +203,12 @@ func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName str
 				return true
 			}
 		}
-		// Для shell_execute: спрашиваем только если есть пути к файлам
-		// и хотя бы один путь вне разрешённых директорий
+		// Для shell_execute: оцениваем каждую подкоманду по паттернам
+		// правил (opencode-модель): все allow -> allow, любой deny -> deny,
+		// иначе спрашиваем пользователя.
 		if toolName == "shell_execute" || toolName == "shell" {
 			if cmd, ok := args["command"]; ok {
-				shellPaths := tools.ExtractShellPaths(cmd)
-				if len(shellPaths) == 0 {
-					// Нет путей к файлам — пропускаем без ask
-					logger.DebugToFile("[checkPermissionAsk] shell_execute: no file paths, skip ask")
-					return true
-				}
-				if tools.ShellPathsAllAllowed(shellPaths) {
-					logger.DebugToFile("[checkPermissionAsk] shell_execute: all %d paths in allowed dirs, skip ask", len(shellPaths))
-					return true
-				}
+				return e.checkShellPermission(ctx, checker, cmd, peerID)
 			}
 		}
 		// ask user below
@@ -277,6 +309,8 @@ func (e *agentToolExecutor) getPermissionChecker() permissionChecker {
 
 type permissionChecker interface {
 	Check(toolName string) string
+	Evaluate(permission, pattern string) string
+	Approve(permission, pattern string)
 }
 
 func (a *agentImpl) getPermissionChecker() permissionChecker {
@@ -351,6 +385,62 @@ func askUserPermission(ctx context.Context, peerID int64, toolName string, args 
 
 func getQuestionState() (func(int64, map[string]interface{}) (map[string]interface{}, error), int64) {
 	return tools.GetQuestionState()
+}
+
+// askShellPermission спрашивает пользователя о разрешении shell-команды.
+// При выборе "Always allow" запоминаются always-префиксы (например "git *")
+// в виде правил allow для текущей сессии.
+func askShellPermission(ctx context.Context, checker permissionChecker, scan permission.Scan, peerID int64) bool {
+	cb, _ := getQuestionState()
+	if cb == nil {
+		logger.DebugToFile("[askShellPermission] cb is nil, allowing command without asking")
+		return true
+	}
+
+	detail := strings.Join(scan.Patterns, " && ")
+	q := map[string]interface{}{
+		"question": fmt.Sprintf("Allow shell command: %s?", detail),
+		"header":   "🔐 bash",
+		"options": []map[string]interface{}{
+			{"label": "✅ Allow", "description": "Allow this one time"},
+			{"label": "✅ Always allow", "description": "Always allow this command for this session"},
+			{"label": "❌ Deny", "description": "Deny this time"},
+		},
+	}
+
+	select {
+	case <-ctx.Done():
+		return false
+	default:
+	}
+
+	answer, err := cb(peerID, q)
+	if err != nil {
+		return false
+	}
+
+	selected, _ := answer["selected"].([]interface{})
+	if len(selected) == 0 {
+		rawAnswer, _ := answer["answer"].(string)
+		selected = []interface{}{rawAnswer}
+	}
+	if len(selected) == 0 {
+		return false
+	}
+
+	choice, _ := selected[0].(string)
+	switch {
+	case strings.Contains(choice, "Always allow"), strings.Contains(choice, "always allow"), strings.Contains(choice, "Всегда"):
+		for _, prefix := range scan.Always {
+			checker.Approve("bash", prefix)
+			logger.DebugToFile("[askShellPermission] approved always rule bash %q", prefix)
+		}
+		return true
+	case strings.Contains(choice, "Allow"), strings.Contains(choice, "allow"), strings.Contains(choice, "Разрешить"):
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *agentImpl) executeAllTools(ctx context.Context, toolCalls []ToolCall, peerID int64) FunctionCallResult {
@@ -556,6 +646,15 @@ func (a *agentImpl) sendThinking(peerID int64, content string) {
 	if a.thinkingCallback != nil {
 		a.thinkingCallback(peerID, content)
 	}
+}
+
+// sendThinkingTokens отправляет в thinking чат количество токенов
+// (подано/ответ) после ответа LLM.
+func (a *agentImpl) sendThinkingTokens(peerID int64, promptTokens, completionTokens int) {
+	if a.thinkingCallback == nil || (promptTokens <= 0 && completionTokens <= 0) {
+		return
+	}
+	a.thinkingCallback(peerID, fmt.Sprintf("[TOKENS] in: %d, out: %d", promptTokens, completionTokens))
 }
 
 func (a *agentImpl) getAvailableToolsList() string {

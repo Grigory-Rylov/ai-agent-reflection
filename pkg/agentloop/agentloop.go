@@ -54,7 +54,7 @@ type agentLoop struct {
 }
 
 func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentLoop, error) {
-	_, modelName, llamaURL := config.ModelHolder.GetCurrent()
+	alias, modelName, llamaURL := config.ModelHolder.GetCurrent()
 
 	if llamaURL == "" {
 		llamaURL = "http://127.0.0.1:8081"
@@ -70,19 +70,35 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 		l = NewDefaultLogger(config.Debug)
 	}
 
+	// Лимит контекста для текущей модели:
+	// 1) явно задан в models.json (поле context) — приоритет,
+	// 2) иначе — реальный контекст с сервера (аргумент --ctx-size/-c),
+	// 3) иначе — config.MaxTokens.
+	modelCtx := config.ModelHolder.GetModelContext(alias)
+	if modelCtx > 0 {
+		config.MaxTokens = modelCtx
+	}
+
 	tokenizer := tokenizers.NewLlamaServerTokenizer(llamaURL, modelName, config.MaxTokens)
 	if config.EnableLogging {
 		tokenizer.SetDebug(true)
 	}
 
-	if err := tokenizer.InitializeContextLimit(); err != nil {
+	switch {
+	case modelCtx > 0:
 		if l != nil {
-			l.WarnLogf("Failed to get actual context limit from server: %v (using configured maxTokens=%d)", err, config.MaxTokens)
+			l.InfoLogf("Using model context from models.json for %s: %d tokens", alias, modelCtx)
 		}
-	} else if l != nil {
+	case tokenizer.InitializeContextLimit() == nil:
 		actualCtx := tokenizer.GetActualContextLimit()
-		l.InfoLogf("Using actual model context limit: %d tokens (config had %d)", actualCtx, config.MaxTokens)
+		if l != nil {
+			l.InfoLogf("Using actual server context for %s: %d tokens (config had %d)", alias, actualCtx, config.MaxTokens)
+		}
 		config.MaxTokens = actualCtx
+	default:
+		if l != nil {
+			l.WarnLogf("Failed to get actual context limit from server (using configured maxTokens=%d)", config.MaxTokens)
+		}
 	}
 
 	llmCompressor := compress.NewLLMCompressor(llamaURL, modelName, config.Temperature)
@@ -458,18 +474,18 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 func (al *agentLoop) buildAgentConfig() agent.Config {
 	_, modelName, llamaURL := al.config.ModelHolder.GetCurrent()
 	cfg := agent.Config{
-		LlamaServerURL:                llamaURL,
-		Model:                         modelName,
-		MaxTokens:                     al.config.MaxTokens,
-		Temperature:                   al.config.Temperature,
-		SessionConfig:                 al.config.SessionConfig,
-		SystemPromptFile:              al.config.SystemPromptFile,
-		EnableTools:                   al.config.EnableTools,
-		MaxToolCalls:                  al.config.MaxToolCalls,
-		EnableContextCompression:      false,
-		CompressionTokenThreshold:     al.config.CompressionTokenThreshold,
+		LlamaServerURL:                 llamaURL,
+		Model:                          modelName,
+		MaxTokens:                      al.config.MaxTokens,
+		Temperature:                    al.config.Temperature,
+		SessionConfig:                  al.config.SessionConfig,
+		SystemPromptFile:               al.config.SystemPromptFile,
+		EnableTools:                    al.config.EnableTools,
+		MaxToolCalls:                   al.config.MaxToolCalls,
+		EnableContextCompression:       false,
+		CompressionTokenThreshold:      al.config.CompressionTokenThreshold,
 		CompressionPercentageThreshold: al.config.CompressionPercentageThreshold,
-		Debug:                         al.config.Debug,
+		Debug:                          al.config.Debug,
 	}
 
 	// Передаём список инструментов из реестра (включая MCP) в системный промпт

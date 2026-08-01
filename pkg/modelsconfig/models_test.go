@@ -131,7 +131,7 @@ func TestHolderGetCurrent(t *testing.T) {
 	content := `{
 		"default": "gemma",
 		"models": {
-			"gemma": {"name": "gemma-4.gguf", "host": "127.0.0.1:8081"},
+			"gemma": {"name": "gemma-4.gguf", "host": "127.0.0.1:8081", "context": 32768},
 			"llama": {"name": "llama-3.gguf", "host": "192.168.1.1:8081"}
 		}
 	}`
@@ -196,6 +196,36 @@ func TestHolderSwitch(t *testing.T) {
 	}
 	if cfg2.Default != "llama" {
 		t.Errorf("persisted default: got %q, want 'llama'", cfg2.Default)
+	}
+}
+
+func TestHolderContext(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "models.json")
+	content := `{
+		"default": "gemma",
+		"models": {
+			"gemma": {"name": "gemma-4.gguf", "host": "127.0.0.1:8081", "context": 32768},
+			"llama": {"name": "llama-3.gguf", "host": "192.168.1.1:8081"}
+		}
+	}`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	holder, err := NewHolder(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := holder.GetCurrentContext(); got != 32768 {
+		t.Errorf("GetCurrentContext: got %d, want 32768", got)
+	}
+	if got := holder.GetModelContext("llama"); got != 0 {
+		t.Errorf("GetModelContext(llama): got %d, want 0 (not set)", got)
+	}
+	if got := holder.GetModelContext("gemma"); got != 32768 {
+		t.Errorf("GetModelContext(gemma): got %d, want 32768", got)
 	}
 }
 
