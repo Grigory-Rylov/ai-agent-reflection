@@ -6,39 +6,48 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 )
 
 // ModelInfo содержит информацию о модели от llama-server
 type ModelInfo struct {
-	ID       string     `json:"id"`
-	Object   string     `json:"object"`
-	Created  int64      `json:"created"`
-	OwnedBy  string     `json:"owned_by"`
-	Meta     *ModelMeta `json:"meta"`
+	ID      string       `json:"id"`
+	Object  string       `json:"object"`
+	Created int64        `json:"created"`
+	OwnedBy string       `json:"owned_by"`
+	Meta    *ModelMeta   `json:"meta"`
+	Status  *ModelStatus `json:"status"`
+}
+
+// ModelStatus содержит статус модели (аргументы запуска сервера)
+type ModelStatus struct {
+	Value string   `json:"value"`
+	Args  []string `json:"args"`
 }
 
 // ModelMeta содержит метаданные модели
 type ModelMeta struct {
-	VocabType  int    `json:"vocab_type"`
-	NVocab     int    `json:"n_vocab"`
-	NCtxTrain  int    `json:"n_ctx_train"` // Реальный контекст модели!
-	NEmbd      int    `json:"n_embd"`
-	NParams    int    `json:"n_params"`
-	Size       int    `json:"size"`
+	VocabType int `json:"vocab_type"`
+	NVocab    int `json:"n_vocab"`
+	NCtxTrain int `json:"n_ctx_train"` // Тренировочный контекст (не используем)
+	NCtx      int `json:"n_ctx"`       // Реальный контекст сервера
+	NEmbd     int `json:"n_embd"`
+	NParams   int `json:"n_params"`
+	Size      int `json:"size"`
 }
 
 // ModelsResponse - ответ от /v1/models
 type ModelsResponse struct {
-	Object string       `json:"object"`
-	Data   []ModelInfo  `json:"data"`
+	Object string      `json:"object"`
+	Data   []ModelInfo `json:"data"`
 }
 
 // PropsResponse - ответ от /props
 type PropsResponse struct {
 	DefaultGenerationSettings *GenerationSettings `json:"default_generation_settings"`
-	TotalSlots                int                  `json:"total_slots"`
-	ModelPath                 string               `json:"model_path"`
+	TotalSlots                int                 `json:"total_slots"`
+	ModelPath                 string              `json:"model_path"`
 }
 
 // GenerationSettings содержит настройки генерации
@@ -69,14 +78,12 @@ func (c *ServerInfoClient) SetDebug(debug bool) {
 	c.debug = debug
 }
 
-// GetModelContextLength получает реальный контекст модели от llama-server
-// Пробует несколько endpoints в порядке приоритета:
-// 1. /v1/models - OpenAI-compatible, возвращает n_ctx_train
-// 2. /props - возвращает n_ctx из настроек
-// Возвращает -1 если не удалось получить информацию
-func (c *ServerInfoClient) GetModelContextLength() int {
+// GetModelContextLength получает реальный контекст модели от llama-server.
+// Ищет модель по имени в /v1/models (n_ctx_train), иначе фоллбэк на /props (n_ctx).
+// Возвращает -1 если не удалось получить информацию.
+func (c *ServerInfoClient) GetModelContextLength(model string) int {
 	// Сначала пробуем /v1/models
-	if ctxLen := c.getContextFromV1Models(); ctxLen > 0 {
+	if ctxLen := c.getContextFromV1Models(model); ctxLen > 0 {
 		return ctxLen
 	}
 
@@ -88,8 +95,10 @@ func (c *ServerInfoClient) GetModelContextLength() int {
 	return -1
 }
 
-// getContextFromV1Models получает n_ctx_train из /v1/models
-func (c *ServerInfoClient) getContextFromV1Models() int {
+// getContextFromV1Models получает контекст сервера для модели из /v1/models.
+// Приоритет: --ctx-size/-c из status.args (аргумент запуска сервера),
+// затем meta.n_ctx (реальный контекст).
+func (c *ServerInfoClient) getContextFromV1Models(model string) int {
 	reqURL := fmt.Sprintf("%s/v1/models", c.serverURL)
 	req, err := http.NewRequestWithContext(context.Background(), "GET", reqURL, nil)
 	if err != nil {
@@ -131,23 +140,64 @@ func (c *ServerInfoClient) getContextFromV1Models() int {
 		return -1
 	}
 
-	meta := modelsResp.Data[0].Meta
-	if meta == nil {
+	// Ищем модель по id; если не найдена — берём первую модель со статусом.
+	var matched *ModelInfo
+	for i := range modelsResp.Data {
+		if modelsResp.Data[i].ID == model {
+			matched = &modelsResp.Data[i]
+			break
+		}
+	}
+	if matched == nil {
+		for i := range modelsResp.Data {
+			if modelsResp.Data[i].Status != nil {
+				matched = &modelsResp.Data[i]
+				break
+			}
+		}
+	}
+
+	if matched == nil {
 		if c.debug {
-			fmt.Println("[server-info] No meta in /v1/models response")
+			fmt.Printf("[server-info] Model %q not found in /v1/models response\n", model)
 		}
 		return -1
 	}
 
-	ctxLen := meta.NCtxTrain
-	if ctxLen > 0 {
+	// 1. Аргумент запуска --ctx-size / -c
+	if ctxLen := ctxSizeFromArgs(matched.Status); ctxLen > 0 {
 		if c.debug {
-			fmt.Printf("[server-info] Got n_ctx_train from /v1/models: %d\n", ctxLen)
+			fmt.Printf("[server-info] Got --ctx-size=%d for model %q from /v1/models\n", ctxLen, model)
 		}
 		return ctxLen
 	}
 
+	// 2. Реальный контекст сервера
+	if matched.Meta != nil && matched.Meta.NCtx > 0 {
+		if c.debug {
+			fmt.Printf("[server-info] Got n_ctx=%d for model %q from /v1/models\n", matched.Meta.NCtx, model)
+		}
+		return matched.Meta.NCtx
+	}
+
 	return -1
+}
+
+// ctxSizeFromArgs извлекает значение --ctx-size/-c из аргументов запуска сервера.
+func ctxSizeFromArgs(status *ModelStatus) int {
+	if status == nil {
+		return 0
+	}
+	for i, arg := range status.Args {
+		if arg == "--ctx-size" || arg == "-c" {
+			if i+1 < len(status.Args) {
+				if n, err := strconv.Atoi(status.Args[i+1]); err == nil && n > 0 {
+					return n
+				}
+			}
+		}
+	}
+	return 0
 }
 
 // getContextFromProps получает n_ctx из /props

@@ -16,17 +16,17 @@ import (
 )
 
 type OrchestratorConfig struct {
-	ModelHolder        *modelsconfig.Holder
-	MaxTokens          int
-	Temperature        float64
-	ToolRegistry       *tools.Registry
-	Debug              bool
-	Logger             Logger
-	ThinkingPeerID     int64
-	VKClient           VKClient
-	SystemPromptDir    string
+	ModelHolder         *modelsconfig.Holder
+	MaxTokens           int
+	Temperature         float64
+	ToolRegistry        *tools.Registry
+	Debug               bool
+	Logger              Logger
+	ThinkingPeerID      int64
+	VKClient            VKClient
+	SystemPromptDir     string
 	MaxReviewIterations int
-	AgentManager       *agentpolicy.AgentManager
+	AgentManager        *agentpolicy.AgentManager
 }
 
 type Orchestrator struct {
@@ -236,19 +236,24 @@ func (o *Orchestrator) systemPromptDir() string {
 }
 
 func (o *Orchestrator) makeAgentConfig() agent.Config {
-	_, modelName, llamaURL := o.config.ModelHolder.GetCurrent()
+	alias, modelName, llamaURL := o.config.ModelHolder.GetCurrent()
+	// Контекст для текущей модели: из models.json (если указан), иначе общий.
+	maxTokens := o.config.MaxTokens
+	if ctx := o.config.ModelHolder.GetModelContext(alias); ctx > 0 {
+		maxTokens = ctx
+	}
 	return agent.Config{
-		LlamaServerURL:            llamaURL,
-		Model:                     modelName,
-		MaxTokens:                 o.config.MaxTokens,
-		Temperature:               o.config.Temperature,
-		SystemPromptFile:          o.systemPromptDir() + "/coordinator.txt",
-		EnableTools:               true,
-		MaxToolCalls:              10,
-		EnableLoopAlert:           false,
-		EnableContextCompression:  false,
-		Debug:                     o.config.Debug,
-		AgentName:                 "coordinator",
+		LlamaServerURL:           llamaURL,
+		Model:                    modelName,
+		MaxTokens:                maxTokens,
+		Temperature:              o.config.Temperature,
+		SystemPromptFile:         o.systemPromptDir() + "/coordinator.txt",
+		EnableTools:              true,
+		MaxToolCalls:             10,
+		EnableLoopAlert:          false,
+		EnableContextCompression: false,
+		Debug:                    o.config.Debug,
+		AgentName:                "coordinator",
 		SessionConfig: session.Config{
 			AutoSave:    false,
 			SessionFile: "",

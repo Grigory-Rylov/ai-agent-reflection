@@ -385,7 +385,7 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 	}
 
 	// Собираем ответ с reasoning
-	responseText, reasoningText, err := a.collectStreamResponse(chunkChan)
+	responseText, reasoningText, promptTokens, completionTokens, err := a.collectStreamResponse(chunkChan)
 	if err != nil {
 		return "", err
 	}
@@ -416,6 +416,9 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 			}
 		}
 	}
+
+	// Отправляем количество токенов после ответа LLM
+	a.sendThinkingTokens(session.GetPeerID(), promptTokens, completionTokens)
 
 	// Если reasoning есть но response пустой — reasoning уже отправлен в thinking_peer_id
 	// Не возвращаем его как обычный ответ

@@ -30,17 +30,17 @@ import (
 var Version = "dev"
 
 type Config struct {
-	TokenVK        string                         `json:"token_vk"`
-	PeerID         int64                          `json:"peer_id"`
-	ThinkingPeerID int64                          `json:"thinking_peer_id"`
-	MaxTokens      int                            `json:"max_tokens"`
-	Temperature    float64                        `json:"temperature"`
-	MCPConfigPath  string                         `json:"mcp_config_path"`
-	AllowedDirs    []string                       `json:"allowed_dirs"`
-	DBPath         string                         `json:"db_path"`
-	PromptsDir     string                         `json:"prompts_dir"`
-	MaxReviewIterations int                       `json:"max_review_iterations"`
-	Agents         map[string]agentpolicy.AgentCfg `json:"agents"`
+	TokenVK             string                          `json:"token_vk"`
+	PeerID              int64                           `json:"peer_id"`
+	ThinkingPeerID      int64                           `json:"thinking_peer_id"`
+	MaxTokens           int                             `json:"max_tokens"`
+	Temperature         float64                         `json:"temperature"`
+	MCPConfigPath       string                          `json:"mcp_config_path"`
+	AllowedDirs         []string                        `json:"allowed_dirs"`
+	DBPath              string                          `json:"db_path"`
+	PromptsDir          string                          `json:"prompts_dir"`
+	MaxReviewIterations int                             `json:"max_review_iterations"`
+	Agents              map[string]agentpolicy.AgentCfg `json:"agents"`
 }
 
 func resolvePrompt(prompt, baseDir string) (string, error) {
@@ -201,11 +201,17 @@ func main() {
 		}
 	}
 
+	// Лимит контекста: из models.json для текущей модели, если указан.
+	maxTokens := config.MaxTokens
+	if ctx := modelHolder.GetCurrentContext(); ctx > 0 {
+		maxTokens = ctx
+		log.InfoLogf("Model context from models.json: %d tokens", ctx)
+	}
+
 	loopConfig := agentloop.DefaultLoopConfig()
 	loopConfig.ModelHolder = modelHolder
-	loopConfig.MaxTokens = config.MaxTokens
+	loopConfig.MaxTokens = maxTokens
 	loopConfig.Temperature = config.Temperature
-
 	if dbStore != nil {
 		loopConfig.SessionConfig.Store = dbStore
 	} else {
@@ -250,7 +256,7 @@ func main() {
 	subAgentCfg := agent.Config{
 		LlamaServerURL: llamaURL,
 		Model:          modelName,
-		MaxTokens:      config.MaxTokens,
+		MaxTokens:      maxTokens,
 		Temperature:    config.Temperature,
 		EnableTools:    true,
 		MaxToolCalls:   10,
@@ -277,16 +283,16 @@ func main() {
 	})
 
 	orchestrator := agentloop.NewOrchestrator(agentloop.OrchestratorConfig{
-		ModelHolder:        modelHolder,
-		MaxTokens:          config.MaxTokens,
-		Temperature:        config.Temperature,
-		ToolRegistry:       toolRegistry,
-		Debug:              *debug,
-		Logger:             log,
-		ThinkingPeerID:     config.ThinkingPeerID,
-		VKClient:           vkClient,
-		SystemPromptDir:    sysPromptDir,
-		AgentManager:       agentManager,
+		ModelHolder:         modelHolder,
+		MaxTokens:           maxTokens,
+		Temperature:         config.Temperature,
+		ToolRegistry:        toolRegistry,
+		Debug:               *debug,
+		Logger:              log,
+		ThinkingPeerID:      config.ThinkingPeerID,
+		VKClient:            vkClient,
+		SystemPromptDir:     sysPromptDir,
+		AgentManager:        agentManager,
 		MaxReviewIterations: config.MaxReviewIterations,
 	})
 

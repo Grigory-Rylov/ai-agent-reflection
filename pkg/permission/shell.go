@@ -10,7 +10,7 @@ import (
 // only change directories (cd, pushd, ...) produce no pattern.
 func ScanCommand(command string) Scan {
 	scan := Scan{}
-	for _, source := range splitCommands(command) {
+	for _, source := range SplitCommands(command) {
 		tokens := tokenize(source)
 		if len(tokens) == 0 {
 			continue
@@ -32,9 +32,9 @@ var cwdCommands = map[string]bool{
 	"cd": true, "chdir": true, "popd": true, "pushd": true,
 }
 
-// splitCommands splits on command separators while respecting quotes and
-// command substitution. Substitutions like $(...) are kept whole.
-func splitCommands(command string) []string {
+// SplitCommands splits a shell command into subcommands on separators
+// (&&, ||, ;, |, newline) while respecting quotes and command substitution.
+func SplitCommands(command string) []string {
 	var commands []string
 	var current strings.Builder
 	inSingle, inDouble := false, false

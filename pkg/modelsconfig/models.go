@@ -1,8 +1,8 @@
 package modelsconfig
 
 import (
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -10,8 +10,9 @@ import (
 )
 
 type ModelEntry struct {
-	Name string `json:"name"`
-	Host string `json:"host"`
+	Name    string `json:"name"`
+	Host    string `json:"host"`
+	Context int    `json:"context,omitempty"` // Лимит контекста модели в токенах (0 = не указан)
 }
 
 type ModelsConfig struct {
@@ -137,6 +138,22 @@ func (h *Holder) GetDefaultAlias() string {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.config.Default
+}
+
+// GetCurrentContext возвращает лимит контекста текущей модели из models.json
+// (0, если не указан).
+func (h *Holder) GetCurrentContext() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.config.Models[h.config.Default].Context
+}
+
+// GetModelContext возвращает лимит контекста модели по алиасу из models.json
+// (0, если не указан).
+func (h *Holder) GetModelContext(alias string) int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.config.Models[alias].Context
 }
 
 func (h *Holder) GetModelHost(alias string) (ModelEntry, bool) {

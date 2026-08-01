@@ -160,6 +160,12 @@ func (e *agentToolExecutor) checkShellPermission(ctx context.Context, checker pe
 		return true
 	}
 
+	// Команда работает только внутри разрешённых директорий — не спрашиваем.
+	if tools.ShellCommandPathsAllowed(command) {
+		logger.DebugToFile("[checkPermissionAsk] shell_execute: all paths in allowed dirs, skip ask")
+		return true
+	}
+
 	e.agent.sendThinking(peerID, fmt.Sprintf("[PERMISSION] Asking user for bash command '%s'...", command))
 	return askShellPermission(ctx, checker, scan, peerID)
 }
@@ -640,6 +646,15 @@ func (a *agentImpl) sendThinking(peerID int64, content string) {
 	if a.thinkingCallback != nil {
 		a.thinkingCallback(peerID, content)
 	}
+}
+
+// sendThinkingTokens отправляет в thinking чат количество токенов
+// (подано/ответ) после ответа LLM.
+func (a *agentImpl) sendThinkingTokens(peerID int64, promptTokens, completionTokens int) {
+	if a.thinkingCallback == nil || (promptTokens <= 0 && completionTokens <= 0) {
+		return
+	}
+	a.thinkingCallback(peerID, fmt.Sprintf("[TOKENS] in: %d, out: %d", promptTokens, completionTokens))
 }
 
 func (a *agentImpl) getAvailableToolsList() string {

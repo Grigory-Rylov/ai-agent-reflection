@@ -38,7 +38,7 @@ func createMockServer(response string) *httptest.Server {
 // ============================================================
 
 func TestServerInfoClient_GetModelContextLength(t *testing.T) {
-	t.Run("gets n_ctx_train from /v1/models", func(t *testing.T) {
+	t.Run("gets --ctx-size from /v1/models status args", func(t *testing.T) {
 		response := `{
 			"object": "list",
 			"data": [{
@@ -46,10 +46,9 @@ func TestServerInfoClient_GetModelContextLength(t *testing.T) {
 				"object": "model",
 				"created": 1234567890,
 				"owned_by": "test",
-				"meta": {
-					"vocab_type": 2,
-					"n_vocab": 128256,
-					"n_ctx_train": 131072
+				"status": {
+					"value": "loaded",
+					"args": ["--ctx-size", "131072", "--n-gpu-layers", "999"]
 				}
 			}]
 		}`
@@ -58,10 +57,36 @@ func TestServerInfoClient_GetModelContextLength(t *testing.T) {
 		defer server.Close()
 
 		client := NewServerInfoClient(server.URL)
-		ctxLen := client.GetModelContextLength()
+		ctxLen := client.GetModelContextLength("test-model")
 
 		if ctxLen != 131072 {
 			t.Errorf("Expected context length 131072, got %d", ctxLen)
+		}
+	})
+
+	t.Run("matches current model by id among multiple models", func(t *testing.T) {
+		response := `{
+			"object": "list",
+			"data": [
+				{
+					"id": "other-model",
+					"status": {"value": "loaded", "args": ["--ctx-size", "4096"]}
+				},
+				{
+					"id": "test-model",
+					"status": {"value": "loaded", "args": ["--ctx-size", "148000"]}
+				}
+			]
+		}`
+
+		server := createMockServer(response)
+		defer server.Close()
+
+		client := NewServerInfoClient(server.URL)
+		ctxLen := client.GetModelContextLength("test-model")
+
+		if ctxLen != 148000 {
+			t.Errorf("Expected context length 148000 for test-model, got %d", ctxLen)
 		}
 	})
 
@@ -87,7 +112,7 @@ func TestServerInfoClient_GetModelContextLength(t *testing.T) {
 		defer server.Close()
 
 		client := NewServerInfoClient(server.URL)
-		ctxLen := client.GetModelContextLength()
+		ctxLen := client.GetModelContextLength("test-model")
 
 		if ctxLen != 4096 {
 			t.Errorf("Expected context length 4096 from /props, got %d", ctxLen)
@@ -104,7 +129,7 @@ func TestServerInfoClient_GetModelContextLength(t *testing.T) {
 		defer server.Close()
 
 		client := NewServerInfoClient(server.URL)
-		ctxLen := client.GetModelContextLength()
+		ctxLen := client.GetModelContextLength("test-model")
 
 		if ctxLen != -1 {
 			t.Errorf("Expected -1 on failure, got %d", ctxLen)
@@ -128,7 +153,7 @@ func TestServerInfoClient_GetModelContextLength(t *testing.T) {
 		defer server.Close()
 
 		client := NewServerInfoClient(server.URL)
-		ctxLen := client.GetModelContextLength()
+		ctxLen := client.GetModelContextLength("test-model")
 
 		// Ожидаем фоллбэк на /props который возвращает 8192
 		if ctxLen != 8192 {
@@ -147,7 +172,7 @@ func TestServerInfoClient_GetModelContextLength(t *testing.T) {
 		defer server.Close()
 
 		client := NewServerInfoClient(server.URL)
-		ctxLen := client.GetModelContextLength()
+		ctxLen := client.GetModelContextLength("test-model")
 
 		// Ожидаем фоллбэк на /props который возвращает 8192
 		if ctxLen != 8192 {
@@ -235,9 +260,7 @@ func TestLlamaServerTokenizer_ContextDetection(t *testing.T) {
 			"object": "list",
 			"data": [{
 				"id": "llama-3.1",
-				"meta": {
-					"n_ctx_train": 131072
-				}
+				"status": {"value": "loaded", "args": ["--ctx-size", "131072"]}
 			}]
 		}`
 
@@ -298,9 +321,7 @@ func TestLlamaServerTokenizer_ContextDetection(t *testing.T) {
 		response := `{
 			"object": "list",
 			"data": [{
-				"meta": {
-					"n_ctx_train": 65536
-				}
+				"status": {"value": "loaded", "args": ["--ctx-size", "65536"]}
 			}]
 		}`
 
@@ -334,13 +355,11 @@ func TestLlamaServerTokenizer_ContextDetection(t *testing.T) {
 	})
 
 	t.Run("distinguishes between configured and actual context", func(t *testing.T) {
-		// Симулируем ситуацию когда в конфиге 200k, а у модели реально 80k
+		// Симулируем ситуацию когда в конфиге 200k, а у сервера реально 80k
 		response := `{
 			"object": "list",
 			"data": [{
-				"meta": {
-					"n_ctx_train": 81920
-				}
+				"status": {"value": "loaded", "args": ["--ctx-size", "81920"]}
 			}]
 		}`
 
@@ -410,9 +429,7 @@ func TestScenarios_ContextLimitMismatch(t *testing.T) {
 			response := fmt.Sprintf(`{
 				"object": "list",
 				"data": [{
-					"meta": {
-						"n_ctx_train": %d
-					}
+					"status": {"value": "loaded", "args": ["--ctx-size", "%d"]}
 				}]
 			}`, sc.actualMax)
 
@@ -447,14 +464,62 @@ func TestScenarios_ContextLimitMismatch(t *testing.T) {
 // Debug mode tests
 // ============================================================
 
+func TestCtxSizeFromArgs(t *testing.T) {
+	t.Run("parses --ctx-size", func(t *testing.T) {
+		st := &ModelStatus{Value: "loaded", Args: []string{"--ctx-size", "148000", "--host", "127.0.0.1"}}
+		if got := ctxSizeFromArgs(st); got != 148000 {
+			t.Errorf("expected 148000, got %d", got)
+		}
+	})
+
+	t.Run("parses -c short flag", func(t *testing.T) {
+		st := &ModelStatus{Value: "loaded", Args: []string{"-c", "8192"}}
+		if got := ctxSizeFromArgs(st); got != 8192 {
+			t.Errorf("expected 8192, got %d", got)
+		}
+	})
+
+	t.Run("returns 0 when args missing", func(t *testing.T) {
+		if got := ctxSizeFromArgs(nil); got != 0 {
+			t.Errorf("expected 0 for nil status, got %d", got)
+		}
+		st := &ModelStatus{Value: "loaded", Args: []string{"--ctx-size"}}
+		if got := ctxSizeFromArgs(st); got != 0 {
+			t.Errorf("expected 0 when value missing, got %d", got)
+		}
+		st = &ModelStatus{Value: "unloaded", Args: nil}
+		if got := ctxSizeFromArgs(st); got != 0 {
+			t.Errorf("expected 0 when args empty, got %d", got)
+		}
+	})
+}
+
+func TestServerInfoClient_GetModelContextLength_MetaNCtxFallback(t *testing.T) {
+	response := `{
+		"object": "list",
+		"data": [{
+			"id": "test-model",
+			"meta": {"n_ctx": 148224, "n_ctx_train": 196608}
+		}]
+	}`
+
+	server := createMockServer(response)
+	defer server.Close()
+
+	client := NewServerInfoClient(server.URL)
+	ctxLen := client.GetModelContextLength("test-model")
+
+	if ctxLen != 148224 {
+		t.Errorf("Expected meta.n_ctx 148224 (not n_ctx_train), got %d", ctxLen)
+	}
+}
+
 func TestServerInfoClient_DebugMode(t *testing.T) {
 	t.Run("debug logs are enabled", func(t *testing.T) {
 		response := `{
 			"object": "list",
 			"data": [{
-				"meta": {
-					"n_ctx_train": 4096
-				}
+				"status": {"value": "loaded", "args": ["--ctx-size", "4096"]}
 			}]
 		}`
 
@@ -466,7 +531,7 @@ func TestServerInfoClient_DebugMode(t *testing.T) {
 		client := NewServerInfoClient(server.URL)
 		client.SetDebug(true) // Просто проверяем что не паникует
 
-		ctxLen := client.GetModelContextLength()
+		ctxLen := client.GetModelContextLength("test-model")
 		if ctxLen != 4096 {
 			t.Errorf("Expected 4096, got %d", ctxLen)
 		}
