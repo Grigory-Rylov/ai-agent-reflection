@@ -73,22 +73,25 @@ type Config struct {
 	Mode string
 	// ToolsList — список имён доступных инструментов (для подстановки в шаблон)
 	ToolsList []string
+	// SkipShellPermissionForPathless — не спрашивать разрешение для shell-команд
+	// без явных файловых операций (нет путей в аргументах и редиректов).
+	SkipShellPermissionForPathless bool
 }
 
 // DefaultConfig возвращает конфигурацию по умолчанию
 func DefaultConfig() Config {
 	return Config{
-		LlamaServerURL:                "127.0.0.1:8081",
-		Model:                         "local-model",
-		MaxTokens:                     4096,
-		Temperature:                   0.7,
-		SessionConfig:                 session.DefaultConfig(),
-		EnableLoopAlert:               true,
-		EnableTools:                   true,
-		MaxToolCalls:                  5,
-		EnableContextCompression:      true,
-		CompressionStrategy:           "summarize",
-		CompressionTokenThreshold:     6000,
+		LlamaServerURL:                 "127.0.0.1:8081",
+		Model:                          "local-model",
+		MaxTokens:                      4096,
+		Temperature:                    0.7,
+		SessionConfig:                  session.DefaultConfig(),
+		EnableLoopAlert:                true,
+		EnableTools:                    true,
+		MaxToolCalls:                   5,
+		EnableContextCompression:       true,
+		CompressionStrategy:            "summarize",
+		CompressionTokenThreshold:      6000,
 		CompressionPercentageThreshold: 0.75,
 	}
 }

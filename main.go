@@ -41,6 +41,9 @@ type Config struct {
 	PromptsDir          string                          `json:"prompts_dir"`
 	MaxReviewIterations int                             `json:"max_review_iterations"`
 	Agents              map[string]agentpolicy.AgentCfg `json:"agents"`
+	// SkipShellPermissionForPathless — не запрашивать разрешение для shell-команд
+	// без явных файловых операций (нет путей и редиректов).
+	SkipShellPermissionForPathless bool `json:"skip_shell_permission_without_paths"`
 }
 
 func resolvePrompt(prompt, baseDir string) (string, error) {
@@ -226,6 +229,7 @@ func main() {
 	loopConfig.ThinkingPeerID = config.ThinkingPeerID
 	loopConfig.EnableLogging = true
 	loopConfig.Debug = *debug
+	loopConfig.SkipShellPermissionForPathless = config.SkipShellPermissionForPathless
 
 	agentLoop, err := agentloop.NewAgentLoop(loopConfig, vkClient, toolRegistry)
 	if err != nil {

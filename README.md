@@ -215,11 +215,34 @@ Wildcard `*` может перекрывать `/` и несколько сло�
 
 Если команда работает **только внутри разрешённых директорий** (рабочая папка сессии + `allowed_dirs` из конфига + выданные через `grant_access`), запрос разрешения не показывается вовсе — даже при `ask`. Команда считается «в разрешённых директориях», если:
 
-- все извлечённые пути (`cat`, `ls`, `cp`, `mv`, `rm`, `grep`, `find`, `git` и др.) находятся внутри разрешённых директорий;
+- все извлечённые пути (`cat`, `ls`, `cp`, `mv`, `rm`, `grep`, `find`, `git` и др.), цели редиректов (`>`, `>>`, `2>` и т.п.) и явные пути (абсолютные, `~`, `..`) в любом месте команды находятся внутри разрешённых директорий;
 - либо это файловая команда без явных путей (неявно работает в рабочей папке): `ls`, `git status`, `git pull`, `go build`, `make` и т.п.;
 - цель `cd`/`pushd` тоже находится в разрешённых директориях.
 
-Если команда трогает что-то вне разрешённых директорий (`cat /etc/passwd`, `cd /tmp && ...`, `rm -rf ..`) или не оперирует файлами (`pip install`, `curl ... | bash`) — применяются обычные правила паттернов и спрашивается пользователь. Это позволяет агенту работать ночью без остановок, пока он не выходит за пределы разрешённых папок.
+Ведущие env-присваивания (`VAR=...`) при определении команды пропускаются: `LD_LIBRARY_PATH=... nohup ~/Android/Sdk/emulator/emulator ... > /tmp/emulator.log 2>&1` достаточно добавить `~/Android/Sdk/emulator` в `allowed_dirs` — команда не будет спрашиваться. Точковые токены, не являющиеся путями (`com.avito.android`, `1.2.3`, версии пакетов), путями не считаются.
+
+##### Удалённые устройства (adb, ssh, scp) не проверяются
+
+Пути, принадлежащие файловой системе удалённого устройства/хоста, против `allowed_dirs` хоста не проверяются:
+
+- `adb shell ...`, `adb exec-out/exec-in ...` — всё после глагола работает на устройстве (`adb shell uiautomator dump /data/local/tmp/ui.xml`);
+- `adb push <local> <remote>` / `adb pull <remote> <local>` / `adb install` — проверяется только хостовый файл (источник/приёмник/пакет);
+- `ssh [user@]host <cmd>` — команда после host выполняется на удалённой машине;
+- `scp host:...` — пути `host:path` считаются удалёнными.
+
+Пути устройства, упомянутые в последующих подкомандах цепочки, тоже не считаются хостовыми: `adb shell uiautomator dump /data/local/tmp/ui.xml && cat /data/local/tmp/ui.xml && head -30` не содержит хостовых файловых операций (файл живёт на устройстве). Хостовые редиректы по-прежнему проверяются: `adb shell screencap /sdcard/x.png > /etc/out.png` спросит разрешение.
+
+Если команда трогает что-то вне разрешённых директорий (`cat /etc/passwd`, `cd /tmp && ...`, `rm -rf ..`, `echo hi > /etc/file`) или не оперирует файлами (`pip install`, `curl ... | bash`) — применяются обычные правила паттернов и спрашивается пользователь. Это позволяет агенту работать ночью без остановок, пока он не выходит за пределы разрешённых папок.
+
+##### Пропуск проверки для команд без файловых операций
+
+Если в `config.json` задано `"skip_shell_permission_without_paths": true`, запрос разрешения не показывается, если команда **не трогает файлы вне разрешённых директорий**:
+
+- в ней нет хостовых файловых путей вовсе — `adb -s emulator-5554 devices -l`, `adb shell am force-stop com.avito.android`, `git log --oneline`, `echo hi`, `sleep 1`;
+- либо все хостовые пути находятся в `allowed_dirs` (рабочая папка сессии тоже считается) — например цепочка `adb shell uiautomator dump /data/local/tmp/ui.xml && sleep 1 && adb pull /data/local/tmp/ui.xml ./ui_test.xml && head -30 ui_test.xml`: `./ui_test.xml` попадает в рабочую папку;
+- пути устройства (`adb shell`, `adb pull <remote>`, `ssh host`, `scp host:...`) хостовыми не считаются.
+
+Команда, которая читает/пишет файл вне `allowed_dirs` (`echo hi > /etc/file`, `cat /etc/passwd`, `adb push /etc/passwd /sdcard/`), по-прежнему спрашивается. Явные правила `deny` в паттернах остаются приоритетнее флага.
 
 #### Запрос разрешения у пользователя
 
@@ -271,6 +294,8 @@ You are a Developer. Implement the task using available tools.
 | `/newsession [path]` | Reset session and change working dir |
 | `/status` | Show session info and working dir |
 | `/help` | Show command list |
+| `/restart` | Restart the agent without rebuilding (handled by the restarter process) |
+| `/update` | `git pull`, rebuild and restart the agent (handled by the restarter process) |
 
 Commands starting with `/` are handled by the bot and never sent to the model.
 

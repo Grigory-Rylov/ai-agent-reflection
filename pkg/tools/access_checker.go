@@ -236,8 +236,10 @@ func ShellCommandPathsAllowed(command string) bool {
 	if command == "" {
 		return true
 	}
-	for _, sub := range permission.SplitCommands(command) {
-		if !shellSubcommandPathsAllowed(sub) {
+	subs := permission.SplitCommands(command)
+	devPaths := collectDevicePaths(subs)
+	for _, sub := range subs {
+		if !shellSubcommandPathsAllowed(sub, devPaths) {
 			return false
 		}
 	}
@@ -245,23 +247,337 @@ func ShellCommandPathsAllowed(command string) bool {
 }
 
 // shellSubcommandPathsAllowed проверяет одну подкоманду.
-func shellSubcommandPathsAllowed(sub string) bool {
+func shellSubcommandPathsAllowed(sub string, devPaths map[string]bool) bool {
 	parts := strings.Fields(sub)
 	if len(parts) == 0 {
 		return true
+	}
+	rest, cmd := commandParts(parts)
+	if cwdShellCommands[cmd] {
+		return cwdTargetAllowed(rest)
+	}
+	paths := collectFilePaths(sub, devPaths)
+	if len(paths) > 0 {
+		return PathsAllAllowed(paths)
+	}
+	return fileCommands[cmd]
+}
+
+// commandParts пропускает ведущие env-присваивания вида VAR=... и возвращает
+// оставшиеся токены и имя команды (basename). Если команда состоит только
+// из env-присваиваний — возвращает исходные токены и пустое имя.
+func commandParts(parts []string) ([]string, string) {
+	i := 0
+	for i < len(parts) && isEnvAssignment(parts[i]) {
+		i++
+	}
+	rest := parts[i:]
+	if len(rest) == 0 {
+		return parts, ""
+	}
+	cmd := rest[0]
+	if slashIdx := strings.LastIndex(cmd, "/"); slashIdx >= 0 {
+		cmd = cmd[slashIdx+1:]
+	}
+	return rest, cmd
+}
+
+// isEnvAssignment возвращает true для токена вида VAR=value (имя без '/',
+// чтобы не спутать с путём, содержащим '=').
+func isEnvAssignment(token string) bool {
+	eq := strings.IndexByte(token, '=')
+	if eq <= 0 || strings.HasPrefix(token, "-") {
+		return false
+	}
+	return !strings.Contains(token[:eq], "/")
+}
+
+// isExplicitPathToken возвращает true для токена, который однозначно
+// ссылается на файловую систему: абсолютный путь, ~ или ...
+// Точковые токены вроде com.avito.android или 1.2.3 путями не считаются.
+func isExplicitPathToken(token string) bool {
+	if strings.HasPrefix(token, "-") {
+		return false
+	}
+	return isAbsolutePath(token) || strings.HasPrefix(token, "~") || token == ".."
+}
+
+// collectFilePaths собирает локальные (host) файловые пути подкоманды:
+// пути из аргументов файловых команд, цели редиректов и явные пути
+// (абсолютные, ~, ..) в любом месте подкоманды. Пути удалённого устройства
+// из devPaths (см. collectDevicePaths) не считаются хостовыми.
+func collectFilePaths(sub string, devPaths map[string]bool) []string {
+	parts := strings.Fields(sub)
+	if len(parts) == 0 {
+		return nil
+	}
+	if hostPaths, remote := remoteHostPaths(sub); remote {
+		for _, p := range redirectionTargets(sub) {
+			if !devPaths[p] {
+				hostPaths = append(hostPaths, p)
+			}
+		}
+		return hostPaths
+	}
+	var paths []string
+	for _, p := range ExtractShellPaths(sub) {
+		if !devPaths[p] {
+			paths = append(paths, p)
+		}
+	}
+	for _, p := range redirectionTargets(sub) {
+		if !devPaths[p] {
+			paths = append(paths, p)
+		}
+	}
+	rest, _ := commandParts(parts)
+	for _, tok := range rest[1:] {
+		if isExplicitPathToken(tok) && !devPaths[tok] {
+			paths = append(paths, tok)
+		}
+	}
+	return paths
+}
+
+// remoteHostPaths возвращает локальные пути для команд, работающих с удалённым
+// устройством/хостом (adb, ssh, scp). Второе значение — true, если команда
+// удалённая. Пути внутри adb shell, ssh host или scp host:... относятся к
+// чужой файловой системе и против allowed_dirs хоста не проверяются.
+func remoteHostPaths(sub string) ([]string, bool) {
+	parts := strings.Fields(sub)
+	if len(parts) == 0 {
+		return nil, false
 	}
 	cmd := parts[0]
 	if slashIdx := strings.LastIndex(cmd, "/"); slashIdx >= 0 {
 		cmd = cmd[slashIdx+1:]
 	}
-	if cwdShellCommands[cmd] {
-		return cwdTargetAllowed(parts)
+	switch cmd {
+	case "adb":
+		return adbHostPaths(parts), true
+	case "ssh":
+		return sshHostPaths(parts), true
+	case "scp":
+		return scpHostPaths(parts), true
 	}
-	paths := ExtractShellPaths(sub)
-	if len(paths) > 0 {
-		return PathsAllAllowed(paths)
+	return nil, false
+}
+
+// adbVerbIndex возвращает индекс глагола adb и аргументы после него,
+// пропуская опции устройства (-s serial, -H host, -P port, -t transport...).
+func adbVerbIndex(parts []string) (int, []string) {
+	for i := 1; i < len(parts); i++ {
+		switch parts[i] {
+		case "-s", "-H", "-P", "-t":
+			i++
+		default:
+			if strings.HasPrefix(parts[i], "-") {
+				continue
+			}
+			return i, parts[i+1:]
+		}
 	}
-	return fileCommands[cmd]
+	return -1, nil
+}
+
+// adbHostPaths возвращает хостовые файлы adb-команды: источник push,
+// приёмник pull, пакет install/sideload. Прочие adb-команды (shell и др.)
+// работают с устройством и хостовых путей не имеют.
+func adbHostPaths(parts []string) []string {
+	verbIdx, rest := adbVerbIndex(parts)
+	if verbIdx < 0 || len(rest) == 0 {
+		return []string{}
+	}
+	switch parts[verbIdx] {
+	case "push", "install", "sideload":
+		return []string{rest[0]}
+	case "pull":
+		for i := len(rest) - 1; i >= 0; i-- {
+			if isPathArgToken(rest[i]) {
+				return []string{rest[i]}
+			}
+		}
+		return []string{}
+	}
+	return []string{}
+}
+
+// isPathArgToken возвращает true для токена-аргумента, похожего на путь,
+// исключая операторы оболочки и fd-редиректы (2>&1, 1> и т.п.).
+func isPathArgToken(tok string) bool {
+	if isShellOperatorToken(tok) {
+		return false
+	}
+	if idx := strings.IndexAny(tok, "><"); idx >= 0 && idx != len(tok)-1 {
+		return false
+	}
+	return looksLikePath(tok) || isExplicitPathToken(tok)
+}
+
+// sshHostPaths возвращает хостовые файлы ssh-команды (-i key). Всё после
+// host — удалённая команда и хостовых путей не содержит.
+func sshHostPaths(parts []string) []string {
+	var host []string
+	for i := 1; i < len(parts); i++ {
+		if parts[i] == "-i" {
+			if i+1 < len(parts) {
+				host = append(host, parts[i+1])
+			}
+			i++
+			continue
+		}
+		if strings.HasPrefix(parts[i], "-") {
+			continue
+		}
+		break
+	}
+	return host
+}
+
+// scpHostPaths возвращает локальные пути scp: токены без префикса host:.
+func scpHostPaths(parts []string) []string {
+	var local []string
+	for _, tok := range parts[1:] {
+		if strings.HasPrefix(tok, "-") || isRemoteSCPToken(tok) {
+			continue
+		}
+		if looksLikePath(tok) {
+			local = append(local, tok)
+		}
+	}
+	return local
+}
+
+// isRemoteSCPToken возвращает true для токена вида [user@]host:path.
+func isRemoteSCPToken(tok string) bool {
+	idx := strings.IndexByte(tok, ':')
+	if idx <= 0 {
+		return false
+	}
+	slash := strings.IndexByte(tok, '/')
+	return slash < 0 || idx < slash
+}
+
+// collectDevicePaths собирает пути, принадлежащие файловой системе удалённого
+// устройства/хоста, из всех подкоманд. Такие пути, упомянутые в хостовых
+// подкомандах цепочки (например cat /data/local/tmp/ui.xml после adb shell
+// uiautomator dump ...), не проверяются против allowed_dirs.
+func collectDevicePaths(subs []string) map[string]bool {
+	dev := make(map[string]bool)
+	for _, sub := range subs {
+		for _, p := range devicePathsIn(sub) {
+			dev[p] = true
+		}
+	}
+	return dev
+}
+
+// devicePathsIn возвращает пути устройства/удалённого хоста в одной подкоманде.
+func devicePathsIn(sub string) []string {
+	parts := strings.Fields(sub)
+	if len(parts) == 0 {
+		return nil
+	}
+	cmd := parts[0]
+	if slashIdx := strings.LastIndex(cmd, "/"); slashIdx >= 0 {
+		cmd = cmd[slashIdx+1:]
+	}
+	switch cmd {
+	case "adb":
+		return adbDevicePaths(parts)
+	case "ssh":
+		return sshRemotePaths(parts)
+	case "scp":
+		return scpRemotePaths(parts)
+	}
+	return nil
+}
+
+// adbDevicePaths возвращает пути устройства для adb shell/exec-out/exec-in
+// (всё после глагола), push (цель) и pull (источник).
+func adbDevicePaths(parts []string) []string {
+	verbIdx, rest := adbVerbIndex(parts)
+	if verbIdx < 0 {
+		return nil
+	}
+	switch parts[verbIdx] {
+	case "shell", "exec-out", "exec-in":
+		return pathLikeTokens(rest)
+	case "push":
+		if len(rest) > 1 {
+			return []string{rest[len(rest)-1]}
+		}
+	case "pull":
+		if len(rest) > 1 {
+			return []string{rest[0]}
+		}
+	}
+	return nil
+}
+
+// sshRemotePaths возвращает пути удалённой команды ssh (всё после host).
+func sshRemotePaths(parts []string) []string {
+	var out []string
+	for i := 1; i < len(parts); i++ {
+		tok := parts[i]
+		if tok == "-i" || tok == "-p" || tok == "-o" || tok == "-L" || tok == "-R" || tok == "-D" {
+			i++
+			continue
+		}
+		if strings.HasPrefix(tok, "-") {
+			continue
+		}
+		out = append(out, pathLikeTokens(parts[i+1:])...)
+		break
+	}
+	return out
+}
+
+// scpRemotePaths возвращает пути вида host:path в scp-команде.
+func scpRemotePaths(parts []string) []string {
+	var out []string
+	for _, tok := range parts[1:] {
+		if strings.HasPrefix(tok, "-") {
+			continue
+		}
+		if isRemoteSCPToken(tok) {
+			if idx := strings.IndexByte(tok, ':'); idx >= 0 {
+				out = append(out, tok[idx+1:])
+			}
+		}
+	}
+	return out
+}
+
+// pathLikeTokens возвращает токены, похожие на пути (абсолютные, ~, ..,
+// точковые), отбрасывая флаги. Сбор останавливается на операторах оболочки
+// (> < | && ;), после которых идёт хостовый контекст, а не устройство.
+func pathLikeTokens(tokens []string) []string {
+	var out []string
+	for _, tok := range tokens {
+		if isShellOperatorToken(tok) {
+			break
+		}
+		if strings.HasPrefix(tok, "-") {
+			continue
+		}
+		if isExplicitPathToken(tok) || looksLikePath(tok) {
+			out = append(out, tok)
+		}
+	}
+	return out
+}
+
+// isShellOperatorToken возвращает true для токена-оператора оболочки.
+func isShellOperatorToken(tok string) bool {
+	if strings.HasPrefix(tok, ">") || strings.HasPrefix(tok, "<") {
+		return true
+	}
+	switch tok {
+	case "|", "||", "&&", ";", "&", "(", ")":
+		return true
+	}
+	return false
 }
 
 // cwdTargetAllowed проверяет, что цель cd/pushd находится внутри
@@ -274,6 +590,73 @@ func cwdTargetAllowed(parts []string) bool {
 		return false
 	}
 	return PathsAllAllowed(parts[1:2])
+}
+
+// redirectionTargets извлекает цели редиректов (> >> < 2> 2>> ...) из подкоманды.
+// Обрабатывает как отдельные токены оператора (> file), так и слитные (>/file).
+// fd-редиректы вида 2>&1 пропускаются.
+func redirectionTargets(sub string) []string {
+	var targets []string
+	tokens := strings.Fields(sub)
+	for i := 0; i < len(tokens); i++ {
+		idx := strings.LastIndexAny(tokens[i], "><")
+		if idx < 0 {
+			continue
+		}
+		target := strings.TrimLeft(tokens[i][idx+1:], "&0123456789")
+		if target != "" && looksLikePath(target) {
+			targets = append(targets, target)
+			continue
+		}
+		if idx == len(tokens[i])-1 && i+1 < len(tokens) && looksLikePath(tokens[i+1]) {
+			targets = append(targets, tokens[i+1])
+			i++
+		}
+	}
+	return targets
+}
+
+// ShellCommandHasFilePaths возвращает true, если shell-команда содержит явные
+// хостовые файловые операции: пути в аргументах файловых команд, цели
+// редиректов или абсолютные пути/.. /~ в любом месте команды. Пути удалённого
+// устройства (adb shell, ssh, scp) не считаются хостовыми.
+func ShellCommandHasFilePaths(command string) bool {
+	if command == "" {
+		return false
+	}
+	subs := permission.SplitCommands(command)
+	devPaths := collectDevicePaths(subs)
+	for _, sub := range subs {
+		if shellSubcommandHasFilePaths(sub, devPaths) {
+			return true
+		}
+	}
+	return false
+}
+
+// shellSubcommandHasFilePaths проверяет одну подкоманду.
+func shellSubcommandHasFilePaths(sub string, devPaths map[string]bool) bool {
+	return len(collectFilePaths(sub, devPaths)) > 0
+}
+
+// ShellCommandFilesystemSafe возвращает true, если команда не трогает файлы
+// вне разрешённых директорий: каждая подкоманда либо не имеет хостовых путей
+// (устройство adb/ssh/scp, файловая команда в рабочей папке, команда без
+// файловых операций), либо все её хостовые пути находятся в allowed_dirs.
+// Используется флагом пропуска запроса для безопасных команд.
+func ShellCommandFilesystemSafe(command string) bool {
+	if command == "" {
+		return true
+	}
+	subs := permission.SplitCommands(command)
+	devPaths := collectDevicePaths(subs)
+	for _, sub := range subs {
+		paths := collectFilePaths(sub, devPaths)
+		if len(paths) > 0 && !PathsAllAllowed(paths) {
+			return false
+		}
+	}
+	return true
 }
 
 // CheckToolArgs проверяет все пути в аргументах инструмента на доступ.

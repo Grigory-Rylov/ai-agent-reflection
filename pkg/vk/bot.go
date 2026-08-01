@@ -564,6 +564,10 @@ func CreateCommandKeyboard() map[string]interface{} {
 				{"action": map[string]interface{}{"type": "text", "label": "/test-llama"}, "color": "secondary"},
 				{"action": map[string]interface{}{"type": "text", "label": "/reset"}, "color": "negative"},
 			},
+			{
+				{"action": map[string]interface{}{"type": "text", "label": "/restart"}, "color": "primary"},
+				{"action": map[string]interface{}{"type": "text", "label": "/update"}, "color": "negative"},
+			},
 		},
 	}
 }

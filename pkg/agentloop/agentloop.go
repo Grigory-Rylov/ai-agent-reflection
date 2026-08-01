@@ -486,6 +486,7 @@ func (al *agentLoop) buildAgentConfig() agent.Config {
 		CompressionTokenThreshold:      al.config.CompressionTokenThreshold,
 		CompressionPercentageThreshold: al.config.CompressionPercentageThreshold,
 		Debug:                          al.config.Debug,
+		SkipShellPermissionForPathless: al.config.SkipShellPermissionForPathless,
 	}
 
 	// Передаём список инструментов из реестра (включая MCP) в системный промпт

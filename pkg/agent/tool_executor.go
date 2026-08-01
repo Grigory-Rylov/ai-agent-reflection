@@ -11,8 +11,6 @@ import (
 	"github.com/opencode/llama-client/pkg/tools"
 )
 
-
-
 // MaxToolResultSize — максимальный размер результата инструмента в символах
 const MaxToolResultSize = 50000
 
@@ -166,6 +164,13 @@ func (e *agentToolExecutor) checkShellPermission(ctx context.Context, checker pe
 		return true
 	}
 
+	// Опционально: команда не трогает файлы вне разрешённых директорий
+	// (нет хостовых путей или все они в allowed_dirs) — не спрашиваем (конфиг).
+	if e.agent != nil && e.agent.config.SkipShellPermissionForPathless && tools.ShellCommandFilesystemSafe(command) {
+		logger.DebugToFile("[checkPermissionAsk] shell_execute: filesystem-safe command, skip ask (config)")
+		return true
+	}
+
 	e.agent.sendThinking(peerID, fmt.Sprintf("[PERMISSION] Asking user for bash command '%s'...", command))
 	return askShellPermission(ctx, checker, scan, peerID)
 }
@@ -222,7 +227,6 @@ func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName str
 	logger.DebugToFile("[checkPermissionAsk] askUserPermission returned %v for tool=%s, args=%v", result, toolName, args)
 	return result
 }
-
 
 func (e *agentToolExecutor) checkPathAccess(ctx context.Context, toolName string, args map[string]string, peerID int64) bool {
 	paths := tools.FileToolPaths(toolName, args)
@@ -298,7 +302,6 @@ func resolveToolPath(path string) (string, error) {
 	}
 	return filepath.Clean(cleaned), nil
 }
-
 
 func (e *agentToolExecutor) getPermissionChecker() permissionChecker {
 	if e.agent == nil {
@@ -450,7 +453,6 @@ func (a *agentImpl) executeAllTools(ctx context.Context, toolCalls []ToolCall, p
 	return newAgentToolExecutor(a).ExecuteAll(ctx, toolCalls, peerID)
 }
 
-
 func extractToolPath(toolName string, args map[string]string) string {
 	if p, ok := args["path"]; ok && p != "" {
 		return p
@@ -516,33 +518,33 @@ func buildToolPermissionDetail(toolName string, args map[string]string) string {
 
 var toolAliases = map[string]string{
 	// opencode PascalCase aliases
-	"WebFetch":     "web_fetch",
-	"WebSearch":    "web_search",
-	"Glob":         "glob",
-	"Grep":         "search_code",
-	"Read":         "file_read",
-	"Edit":         "edit",
-	"Write":        "file_write",
-	"Bash":         "shell_execute",
-	"Task":         "task",
-	"TodoWrite":    "todowrite",
-	"TodoRead":     "todoread",
+	"WebFetch":  "web_fetch",
+	"WebSearch": "web_search",
+	"Glob":      "glob",
+	"Grep":      "search_code",
+	"Read":      "file_read",
+	"Edit":      "edit",
+	"Write":     "file_write",
+	"Bash":      "shell_execute",
+	"Task":      "task",
+	"TodoWrite": "todowrite",
+	"TodoRead":  "todoread",
 	// legacy aliases
-	"grep":         "search_code",
-	"grep_search":  "search_code",
-	"read_file":    "file_read",
-	"write_file":   "file_write",
-	"list_dir":     "file_list",
-	"dir_list":     "file_list",
-	"shell":        "shell_execute",
-	"bash":         "shell_execute",
-	"fetch":        "web_fetch",
-	"search":       "web_search",
-	"find_files":   "glob",
-	"calculate":    "calc",
-	"edit_file":    "edit",
-	"patch_apply":  "apply_patch",
-	"subagent":     "task",
+	"grep":        "search_code",
+	"grep_search": "search_code",
+	"read_file":   "file_read",
+	"write_file":  "file_write",
+	"list_dir":    "file_list",
+	"dir_list":    "file_list",
+	"shell":       "shell_execute",
+	"bash":        "shell_execute",
+	"fetch":       "web_fetch",
+	"search":      "web_search",
+	"find_files":  "glob",
+	"calculate":   "calc",
+	"edit_file":   "edit",
+	"patch_apply": "apply_patch",
+	"subagent":    "task",
 }
 
 func resolveToolAlias(name string) string {

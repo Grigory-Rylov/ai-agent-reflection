@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -292,6 +294,181 @@ func TestShellPathsAllAllowed(t *testing.T) {
 		allowed := ShellPathsAllAllowed([]string{"/any/path"})
 		if !allowed {
 			t.Error("expected true with nil controller")
+		}
+	})
+}
+
+func TestShellCommandHasFilePaths(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		want    bool
+	}{
+		{"adb devices has no paths", "adb -s emulator-5554 devices -l", false},
+		{"echo has no paths", "echo hello", false},
+		{"ping has no paths", "ping -c 2 192.168.1.192", false},
+		{"pip install has no paths", "pip install requests", false},
+		{"cd has no paths", "cd /tmp", true},
+		{"cat absolute path", "cat /etc/passwd", true},
+		{"ls without paths is pathless", "ls -la", false},
+		{"git status is pathless", "git status", false},
+		{"rm outside path", "rm -rf /tmp/build", true},
+		{"rm -rf .. has path", "rm -rf ..", true},
+		{"redirection with spaces", "echo hi > /etc/file", true},
+		{"redirection appended", "echo hi >> /tmp/log.txt", true},
+		{"stderr redirection", "cmd 2> /tmp/err.log", true},
+		{"redirection no space", "echo hi>/etc/file", true},
+		{"fd redirect 2>&1 is not a file", "cmd 2>&1", false},
+		{"curl output flag path", "curl http://x -o /tmp/out.bin", true},
+		{"nested subcommand path", "echo $(cat /etc/passwd)", true},
+		{"package name com.avito.android is not a path", "adb -s emulator-5554 shell am force-stop com.avito.android", false},
+		{"package name with pidof", "adb -s emulator-5554 shell pidof com.avito.android", false},
+		{"version 1.2.3 is not a path", "echo v1.2.3", false},
+		{"env prefix binary with tilde", "LD_LIBRARY_PATH=~/Android/Sdk/emulator/lib64 nohup ~/Android/Sdk/emulator/emulator -avd MyAVD", true},
+		{"env prefix plus redirection", "FOO=bar cmd > /tmp/out.log 2>&1", true},
+		{"adb shell device path is not host", "adb -s emulator-5554 shell uiautomator dump /data/local/tmp/ui.xml 2>&1", false},
+		{"adb shell chain device path excluded", "adb -s emulator-5554 shell uiautomator dump /data/local/tmp/ui.xml 2>&1 && cat /data/local/tmp/ui.xml && head -30", false},
+		{"adb push host path still checked", "adb push /etc/passwd /sdcard/", true},
+		{"ssh remote command is not host", "ssh user@host 'rm -rf /var/tmp/x'", false},
+		{"scp remote target is not host", "scp user@host:/data/ui.xml ./localfile.txt", true},
+		{"adb shell redirection to host log", "adb shell screencap /sdcard/x.png > /tmp/screen.png", true},
+		{"empty command", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ShellCommandHasFilePaths(tt.command); got != tt.want {
+				t.Errorf("ShellCommandHasFilePaths(%q) = %v, want %v", tt.command, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShellCommandPathsAllowedEnvAndRedirect(t *testing.T) {
+	t.Run("env prefix command inside allowed dir is allowed", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+		sub := filepath.Join(dir, "sub")
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cmd := "LD_LIBRARY_PATH=" + sub + "/lib64 nohup " + sub + "/app -flag value > " + dir + "/out.log 2>&1"
+		if !ShellCommandPathsAllowed(cmd) {
+			t.Error("expected true when all paths (binary, env, redirect) are inside allowed dir")
+		}
+	})
+
+	t.Run("env prefix binary outside allowed dir is denied", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+		cmd := "LD_LIBRARY_PATH=~/Android/Sdk/emulator/lib64 nohup ~/Android/Sdk/emulator/emulator -avd MyAVD"
+		if ShellCommandPathsAllowed(cmd) {
+			t.Error("expected false when binary path is outside allowed dir")
+		}
+	})
+
+	t.Run("redirection inside allowed dir is allowed", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+		if !ShellCommandPathsAllowed("echo hi > " + dir + "/out.log") {
+			t.Error("expected true for redirect inside allowed dir")
+		}
+	})
+
+	t.Run("redirection outside allowed dir is denied", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+		if ShellCommandPathsAllowed("echo hi > /etc/file") {
+			t.Error("expected false for redirect outside allowed dir")
+		}
+	})
+
+	t.Run("dotted package name is not a file op", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+		if ShellCommandPathsAllowed("adb -s emulator-5554 shell am force-stop com.avito.android") {
+			t.Error("expected false for non-file command without explicit paths")
+		}
+	})
+}
+
+func TestShellCommandPathsAllowedDeviceContext(t *testing.T) {
+	t.Run("adb shell device paths are not host operations", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+		cmd := "adb -s emulator-5554 shell uiautomator dump /data/local/tmp/ui.xml 2>&1 && cat /data/local/tmp/ui.xml && head -30"
+		if ShellCommandHasFilePaths(cmd) {
+			t.Error("expected no host file operations: device path and chained cat of device file are device-side")
+		}
+	})
+
+	t.Run("adb push host source outside allowed dir is denied", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+		if ShellCommandPathsAllowed("adb push /etc/passwd /sdcard/") {
+			t.Error("expected false: host source of push is outside allowed dir")
+		}
+	})
+
+	t.Run("adb push host source inside allowed dir is allowed", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+		cmd := "adb push " + dir + "/file.apk /sdcard/"
+		if !ShellCommandPathsAllowed(cmd) {
+			t.Error("expected true: host source of push is inside allowed dir")
+		}
+	})
+
+	t.Run("adb shell redirection to host outside is denied", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+		if ShellCommandPathsAllowed("adb shell screencap /sdcard/x.png > /etc/out.png") {
+			t.Error("expected false: redirection target is host path outside allowed dir")
+		}
+	})
+}
+
+func TestShellCommandFilesystemSafe(t *testing.T) {
+	t.Run("adb shell + pull + head chain is safe", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+		prevWD := WorkingDir
+		t.Cleanup(func() { SetWorkingDir(prevWD) })
+		SetWorkingDir(dir)
+		cmd := "adb -s emulator-5554 shell uiautomator dump /data/local/tmp/ui.xml && sleep 1 && adb -s emulator-5554 pull /data/local/tmp/ui.xml ./ui_test.xml 2>&1 && head -30 ui_test.xml"
+		if !ShellCommandFilesystemSafe(cmd) {
+			t.Error("expected true: device paths and cwd host files are safe")
+		}
+	})
+
+	t.Run("host write outside allowed dir is not safe", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+		if ShellCommandFilesystemSafe("echo hi > /etc/file") {
+			t.Error("expected false: host write outside allowed dir")
+		}
+	})
+
+	t.Run("read outside allowed dir is not safe", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+		if ShellCommandFilesystemSafe("cat /etc/passwd") {
+			t.Error("expected false: host read outside allowed dir")
+		}
+	})
+
+	t.Run("adb device paths are safe", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+		if !ShellCommandFilesystemSafe("adb shell rm -rf /data/local/tmp/x") {
+			t.Error("expected true: device paths do not touch host")
+		}
+	})
+
+	t.Run("empty command is safe", func(t *testing.T) {
+		SetAccessController(nil)
+		if !ShellCommandFilesystemSafe("") {
+			t.Error("expected true for empty command")
 		}
 	})
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/opencode/llama-client/pkg/access"
 	"github.com/opencode/llama-client/pkg/permission"
 	"github.com/opencode/llama-client/pkg/tools"
 )
@@ -245,5 +246,194 @@ func TestCheckShellPermissionDeniedSubcommand(t *testing.T) {
 	}, 12345)
 	if result {
 		t.Error("expected deny when any subcommand matches deny rule")
+	}
+}
+
+func TestCheckShellPermissionSkipsAskForPathlessWhenEnabled(t *testing.T) {
+	called := false
+	withQuestionCallback(t, func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+		called = true
+		return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
+	})
+
+	config := DefaultConfig()
+	config.SkipShellPermissionForPathless = true
+	a := NewAgent(config)
+	a.SetPermissionChecker(&rulesetChecker{P: &permission.Ruleset{
+		{Permission: "bash", Pattern: "*", Action: permission.Ask},
+	}})
+	e := newAgentToolExecutor(a)
+
+	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		"command": "adb -s emulator-5554 devices -l",
+	}, 12345)
+	if !result {
+		t.Error("expected pathless command allowed without asking")
+	}
+	if called {
+		t.Error("expected no question for pathless command when flag enabled")
+	}
+}
+
+func TestCheckShellPermissionStillAsksForFileCommandWhenEnabled(t *testing.T) {
+	called := false
+	withQuestionCallback(t, func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+		called = true
+		return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
+	})
+
+	dir := t.TempDir()
+	tools.SetAccessController(access.NewController([]string{dir}))
+	t.Cleanup(func() { tools.SetAccessController(nil) })
+
+	config := DefaultConfig()
+	config.SkipShellPermissionForPathless = true
+	a := NewAgent(config)
+	a.SetPermissionChecker(&rulesetChecker{P: &permission.Ruleset{
+		{Permission: "bash", Pattern: "*", Action: permission.Ask},
+	}})
+	e := newAgentToolExecutor(a)
+
+	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		"command": "echo hi > /etc/file",
+	}, 12345)
+	if !result {
+		t.Error("expected command with redirect outside dir to be asked and approved")
+	}
+	if !called {
+		t.Error("expected question for command with file path")
+	}
+}
+
+func TestCheckShellPermissionDenyStillBlocksWhenFlagEnabled(t *testing.T) {
+	config := DefaultConfig()
+	config.SkipShellPermissionForPathless = true
+	a := NewAgent(config)
+	a.SetPermissionChecker(&rulesetChecker{P: &permission.Ruleset{
+		{Permission: "bash", Pattern: "*", Action: permission.Deny},
+	}})
+	e := newAgentToolExecutor(a)
+
+	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		"command": "adb devices",
+	}, 12345)
+	if result {
+		t.Error("expected explicit deny to block even pathless command")
+	}
+}
+
+func TestCheckShellPermissionPathlessAsksWhenFlagDisabled(t *testing.T) {
+	called := false
+	withQuestionCallback(t, func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+		called = true
+		return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
+	})
+
+	a := newShellTestAgent(permission.Ruleset{
+		{Permission: "bash", Pattern: "*", Action: permission.Ask},
+	})
+	e := newAgentToolExecutor(a)
+
+	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		"command": "adb devices",
+	}, 12345)
+	if !result {
+		t.Error("expected allow after user approved")
+	}
+	if !called {
+		t.Error("expected question for pathless command when flag disabled")
+	}
+}
+
+func TestCheckShellPermissionSkipsAskForADBDeviceCommandWhenEnabled(t *testing.T) {
+	called := false
+	withQuestionCallback(t, func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+		called = true
+		return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
+	})
+
+	config := DefaultConfig()
+	config.SkipShellPermissionForPathless = true
+	a := NewAgent(config)
+	a.SetPermissionChecker(&rulesetChecker{P: &permission.Ruleset{
+		{Permission: "bash", Pattern: "*", Action: permission.Ask},
+	}})
+	e := newAgentToolExecutor(a)
+
+	cmd := "adb -s emulator-5554 shell uiautomator dump /data/local/tmp/ui.xml 2>&1 && cat /data/local/tmp/ui.xml && head -30"
+	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		"command": cmd,
+	}, 12345)
+	if !result {
+		t.Error("expected adb device command allowed without asking")
+	}
+	if called {
+		t.Error("expected no question: device paths are not host file operations")
+	}
+}
+
+func TestCheckShellPermissionStillAsksForADBHostPushOutsideWhenEnabled(t *testing.T) {
+	called := false
+	withQuestionCallback(t, func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+		called = true
+		return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
+	})
+
+	dir := t.TempDir()
+	tools.SetAccessController(access.NewController([]string{dir}))
+	t.Cleanup(func() { tools.SetAccessController(nil) })
+
+	config := DefaultConfig()
+	config.SkipShellPermissionForPathless = true
+	a := NewAgent(config)
+	a.SetPermissionChecker(&rulesetChecker{P: &permission.Ruleset{
+		{Permission: "bash", Pattern: "*", Action: permission.Ask},
+	}})
+	e := newAgentToolExecutor(a)
+
+	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		"command": "adb push /etc/passwd /sdcard/",
+	}, 12345)
+	if !result {
+		t.Error("expected host push to be asked and approved")
+	}
+	if !called {
+		t.Error("expected question: host source of push is outside allowed dir")
+	}
+}
+
+func TestCheckShellPermissionSkipsAskForADBPullChainWhenEnabled(t *testing.T) {
+	called := false
+	withQuestionCallback(t, func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+		called = true
+		return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
+	})
+
+	dir := t.TempDir()
+	prevWD := tools.WorkingDir
+	tools.SetWorkingDir(dir)
+	tools.SetAccessController(access.NewController([]string{dir}))
+	t.Cleanup(func() {
+		tools.SetAccessController(nil)
+		tools.SetWorkingDir(prevWD)
+	})
+
+	config := DefaultConfig()
+	config.SkipShellPermissionForPathless = true
+	a := NewAgent(config)
+	a.SetPermissionChecker(&rulesetChecker{P: &permission.Ruleset{
+		{Permission: "bash", Pattern: "*", Action: permission.Ask},
+	}})
+	e := newAgentToolExecutor(a)
+
+	cmd := "adb -s emulator-5554 shell uiautomator dump /data/local/tmp/ui.xml && sleep 1 && adb -s emulator-5554 pull /data/local/tmp/ui.xml ./ui_test.xml 2>&1 && head -30 ui_test.xml"
+	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		"command": cmd,
+	}, 12345)
+	if !result {
+		t.Error("expected adb pull chain allowed without asking")
+	}
+	if called {
+		t.Error("expected no question: only device paths and cwd host files")
 	}
 }

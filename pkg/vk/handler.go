@@ -259,6 +259,8 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 			"/test-llama - Тест соединения с llama-server\n" +
 			"/m, /models - Список доступных моделей\n" +
 			"/r [alias] - Переключить текущую модель\n" +
+			"/restart - Перезапустить агента без пересборки\n" +
+			"/update - git pull, пересобрать и перезапустить агента\n" +
 			"/agent [задача] - Запустить AI Agent для исследования проекта\n\n" +
 			"Перенаправление задачи агенту через #:\n"
 		for _, name := range knownNames {
