@@ -99,6 +99,7 @@ func DefaultConfig() Config {
 type Session struct {
 	config     Config
 	messages   []Message
+	pinned     []string // промпты /pin, переживающие компактизацию и reset
 	loopHistory []string // последние N ответов AI для обнаружения цикла
 	loopCount  int      // количество обнаруженных циклов
 	isLooped   bool     // флаг обнаруженного цикла
@@ -283,6 +284,86 @@ func (s *Session) GetHistory() []Message {
 	result := make([]Message, len(s.messages))
 	copy(result, s.messages)
 	return result
+}
+
+// ============================================================
+// Pinned промпты (/pin) — переживают компактизацию и reset
+// ============================================================
+
+// AddPinned добавляет pinned промпт, который сохраняется в начале контекста
+// даже после компактизации. Пустые промпты игнорируются.
+func (s *Session) AddPinned(content string) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.pinned = append(s.pinned, content)
+	s.updatedAt = time.Now()
+
+	if s.config.AutoSave {
+		s.saveNow()
+	}
+}
+
+// GetPinned возвращает список pinned промптов
+func (s *Session) GetPinned() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make([]string, len(s.pinned))
+	copy(result, s.pinned)
+	return result
+}
+
+// ClearPinned удаляет все pinned промпты
+func (s *Session) ClearPinned() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.pinned = nil
+	s.updatedAt = time.Now()
+
+	if s.config.AutoSave {
+		s.saveNow()
+	}
+}
+
+// GetContextMessages возвращает сообщения для API: системное сообщение,
+// затем все pinned промпты (как user), затем остальная история. Pinned
+// промпты всегда в начале контекста и переживают компактизацию.
+func (s *Session) GetContextMessages() []Message {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make([]Message, 0, len(s.messages)+len(s.pinned))
+	inserted := false
+	for _, msg := range s.messages {
+		out = append(out, msg)
+		if !inserted && msg.Role == SystemRole && len(s.pinned) > 0 {
+			for _, p := range s.pinned {
+				out = append(out, Message{
+					Role:      UserRole,
+					Content:   p,
+					Timestamp: time.Now(),
+				})
+			}
+			inserted = true
+		}
+	}
+	if !inserted && len(s.pinned) > 0 {
+		for _, p := range s.pinned {
+			out = append(out, Message{
+				Role:      UserRole,
+				Content:   p,
+				Timestamp: time.Now(),
+			})
+		}
+	}
+	return out
 }
 
 // GetLastAssistantMessage возвращает последнее сообщение ассистента
@@ -488,6 +569,8 @@ type SessionData struct {
 	LoopCount  int    `json:"loop_count"`
 	IsLooped   bool   `json:"is_looped"`
 	LastLooped string `json:"last_looped,omitempty"`
+	// Pinned промпты (/pin), переживающие компактизацию
+	Pinned []string `json:"pinned,omitempty"`
 }
 
 // MessageData — сериализуемая версия Message
@@ -577,6 +660,7 @@ func (s *Session) saveInternal() error {
 		WorkingDir: s.workingDir,
 		LoopCount:  s.loopCount,
 		IsLooped:   s.isLooped,
+		Pinned:     s.pinned,
 	}
 
 	// Сохраняем последний ответ AI если цикл обнаружен
@@ -668,6 +752,10 @@ func (s *Session) Load() error {
 	s.isLooped = session.IsLooped
 	s.createdAt = session.CreatedAt
 	s.updatedAt = session.UpdatedAt
+
+	// Восстанавливаем pinned промпты
+	s.pinned = make([]string, len(session.Pinned))
+	copy(s.pinned, session.Pinned)
 
 	// Добавляем последний ответ AI в loopHistory для корректной работы
 	if session.LastLooped != "" {

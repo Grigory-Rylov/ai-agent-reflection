@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -9,13 +10,13 @@ import (
 func (s *sqliteDB) GetSession(peerID int64) (*SessionData, error) {
 	row := s.db.QueryRow(
 		`SELECT peer_id, created_at, updated_at, working_dir,
-		        loop_count, is_looped, last_looped
+		        loop_count, is_looped, last_looped, pinned
 		 FROM sessions WHERE peer_id = ?`, peerID)
 
 	var sd SessionData
-	var createdAt, updatedAt, lastLooped string
+	var createdAt, updatedAt, lastLooped, pinned string
 	err := row.Scan(&sd.PeerID, &createdAt, &updatedAt,
-		&sd.WorkingDir, &sd.LoopCount, &sd.IsLooped, &lastLooped)
+		&sd.WorkingDir, &sd.LoopCount, &sd.IsLooped, &lastLooped, &pinned)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -29,20 +30,25 @@ func (s *sqliteDB) GetSession(peerID int64) (*SessionData, error) {
 	if lastLooped != "" {
 		sd.LastLooped = lastLooped
 	}
+	if pinned != "" {
+		_ = json.Unmarshal([]byte(pinned), &sd.Pinned)
+	}
 	return &sd, nil
 }
 
 func (s *sqliteDB) SaveSession(sd *SessionData) error {
+	pinnedJSON, _ := json.Marshal(sd.Pinned)
 	_, err := s.db.Exec(`
 		INSERT INTO sessions (peer_id, created_at, updated_at, working_dir,
-		                      loop_count, is_looped, last_looped)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		                      loop_count, is_looped, last_looped, pinned)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(peer_id) DO UPDATE SET
 			updated_at = excluded.updated_at,
 			working_dir = excluded.working_dir,
 			loop_count = excluded.loop_count,
 			is_looped = excluded.is_looped,
-			last_looped = excluded.last_looped`,
+			last_looped = excluded.last_looped,
+			pinned = excluded.pinned`,
 		sd.PeerID,
 		sd.CreatedAt.Format(time.RFC3339),
 		sd.UpdatedAt.Format(time.RFC3339),
@@ -50,6 +56,7 @@ func (s *sqliteDB) SaveSession(sd *SessionData) error {
 		sd.LoopCount,
 		boolToInt(sd.IsLooped),
 		sd.LastLooped,
+		string(pinnedJSON),
 	)
 	return err
 }

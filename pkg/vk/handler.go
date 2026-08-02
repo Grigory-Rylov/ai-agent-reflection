@@ -259,6 +259,7 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 			"/test-llama - Тест соединения с llama-server\n" +
 			"/m, /models - Список доступных моделей\n" +
 			"/r [alias] - Переключить текущую модель\n" +
+			"/pin <промпт> - Закрепить промпт (переживает компактизацию)\n" +
 			"/restart - Перезапустить агента без пересборки\n" +
 			"/update - git pull, пересобрать и перезапустить агента\n" +
 			"/agent [задача] - Запустить AI Agent для исследования проекта\n\n" +
@@ -306,6 +307,9 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 
 	case "/agent":
 		return h.handleAgentCommand(input, peerID)
+
+	case "/pin":
+		return h.handlePinCommand(input, peerID)
 
 	case "/m", "/models":
 		return h.handleModelsList()
@@ -359,6 +363,48 @@ func (h *BotHandler) handleModelSwitch(input string) string {
 
 	alias2, modelName, host := h.modelHolder.GetCurrent()
 	return fmt.Sprintf("✓ Модель переключена на: %s\n  %s (%s)", alias2, modelName, host)
+}
+
+func (h *BotHandler) handlePinCommand(input string, peerID int64) string {
+	parts := strings.SplitN(input, " ", 2)
+	content := ""
+	if len(parts) > 1 {
+		content = strings.TrimSpace(parts[1])
+	}
+
+	s := h.aiAgent.EnsureSession(peerID)
+	if s == nil {
+		return "Ошибка: не удалось получить сессию."
+	}
+
+	switch {
+	case content == "clear":
+		s.ClearPinned()
+		if h.log != nil {
+			h.log.InfoLogf("User %d cleared pinned prompts", peerID)
+		}
+		return "Pinned промпты удалены."
+
+	case content == "":
+		pinned := s.GetPinned()
+		if len(pinned) == 0 {
+			return "Pinned промптов нет. Используйте /pin <промпт> чтобы закрепить промпт, который переживёт компактизацию."
+		}
+		var b strings.Builder
+		b.WriteString("Закреплённые промпты (/pin):\n")
+		for i, p := range pinned {
+			b.WriteString(fmt.Sprintf("%d. %s\n", i+1, p))
+		}
+		b.WriteString("\n/pin <промпт> — добавить, /pin clear — удалить все.")
+		return b.String()
+
+	default:
+		s.AddPinned(content)
+		if h.log != nil {
+			h.log.InfoLogf("User %d pinned prompt: %s", peerID, truncateStr(content, 100))
+		}
+		return fmt.Sprintf("✓ Промпт закреплён: %s\n\nОн будет сохранён в начале контекста даже после компактизации.", truncateStr(content, 100))
+	}
 }
 
 func (h *BotHandler) handleAgentCommand(input string, peerID int64) string {

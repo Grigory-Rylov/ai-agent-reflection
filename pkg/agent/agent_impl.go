@@ -248,8 +248,8 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 		history = s.GetHistory()
 	}
 
-	// Формируем сообщения для API
-	apiMessages := a.convertHistoryToAPIMessages(history)
+	// Формируем сообщения для API (включая pinned промпты в начале)
+	apiMessages := a.convertHistoryToAPIMessages(s.GetContextMessages())
 
 	// Добавляем AGENTS.md/CLAUDE.md из рабочей директории (как в opencode)
 	// отдельным system-сообщением после основного системного промпта

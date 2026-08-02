@@ -21,7 +21,37 @@ func runMigrations(db *sql.DB) error {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}
+
+	if err := ensurePinnedColumn(db); err != nil {
+		return fmt.Errorf("migrate pinned column: %w", err)
+	}
+
 	return nil
+}
+
+// ensurePinnedColumn добавляет колонку pinned в sessions, если её ещё нет
+// (SQLite не поддерживает ADD COLUMN IF NOT EXISTS).
+func ensurePinnedColumn(db *sql.DB) error {
+	cols, err := db.Query(`PRAGMA table_info(sessions)`)
+	if err != nil {
+		return err
+	}
+	defer cols.Close()
+
+	for cols.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt *string
+		if err := cols.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == "pinned" {
+			return nil
+		}
+	}
+	_, err = db.Exec(`ALTER TABLE sessions ADD COLUMN pinned TEXT DEFAULT ''`)
+	return err
 }
 
 const sessionsTable = `CREATE TABLE IF NOT EXISTS sessions (
@@ -31,7 +61,8 @@ const sessionsTable = `CREATE TABLE IF NOT EXISTS sessions (
 	working_dir TEXT DEFAULT '',
 	loop_count INTEGER DEFAULT 0,
 	is_looped INTEGER DEFAULT 0,
-	last_looped TEXT DEFAULT ''
+	last_looped TEXT DEFAULT '',
+	pinned TEXT DEFAULT ''
 )`
 
 const messagesTable = `CREATE TABLE IF NOT EXISTS messages (

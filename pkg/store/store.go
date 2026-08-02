@@ -16,6 +16,7 @@ type SessionData struct {
 	LoopCount  int       `json:"loop_count"`
 	IsLooped   bool      `json:"is_looped"`
 	LastLooped string    `json:"last_looped,omitempty"`
+	Pinned     []string  `json:"pinned,omitempty"`
 }
 
 type MessageData struct {
