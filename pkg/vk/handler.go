@@ -237,14 +237,8 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 	cmd := parts[0]
 
 	switch cmd {
-	case "/reset", "/clear":
-		h.aiAgent.ResetSession(peerID)
-		h.clearHandlerSession(peerID)
-		tools.ClearGrants(peerID)
-		if h.log != nil {
-			h.log.InfoLogf("User %d reset session, grants cleared", peerID)
-		}
-		return "История диалога очищена. Напишите /newsession [path] чтобы сменить рабочую директорию."
+	case "/clear":
+		return h.handleClear(peerID)
 
 	case "/newsession", "/n":
 		return h.handleNewSession(input, peerID)
@@ -252,14 +246,14 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 	case "/help":
 		knownNames := h.agentNames()
 		helpStr := "Доступные команды:\n" +
-			"/reset - Очистить историю диалога\n" +
+			"/clear - Очистить историю диалога (рабочая директория сохраняется)\n" +
 			"/newsession [path] (/n) - Сбросить сессию и сменить рабочую директорию\n" +
 			"/help - Показать эту справку\n" +
 			"/status - Показать статус агента (сообщения, символы, токены)\n" +
 			"/test-llama - Тест соединения с llama-server\n" +
 			"/m, /models - Список доступных моделей\n" +
 			"/r [alias] - Переключить текущую модель\n" +
-			"/pin <промпт> - Закрепить промпт (переживает компактизацию)\n" +
+			"/pin <промпт> - Закрепить промпт (переживает компактизацию) и выполнить его\n" +
 			"/restart - Перезапустить агента без пересборки\n" +
 			"/update - git pull, пересобрать и перезапустить агента\n" +
 			"/agent [задача] - Запустить AI Agent для исследования проекта\n\n" +
@@ -403,7 +397,16 @@ func (h *BotHandler) handlePinCommand(input string, peerID int64) string {
 		if h.log != nil {
 			h.log.InfoLogf("User %d pinned prompt: %s", peerID, truncateStr(content, 100))
 		}
-		return fmt.Sprintf("✓ Промпт закреплён: %s\n\nОн будет сохранён в начале контекста даже после компактизации.", truncateStr(content, 100))
+
+		ctx := context.Background()
+		response, err := h.aiAgent.ProcessMessage(ctx, content, peerID)
+		if err != nil {
+			if h.log != nil {
+				h.log.ErrorLogf("AI Agent error after /pin: %v", err)
+			}
+			return fmt.Sprintf("✓ Промпт закреплён: %s\n\n❌ Ошибка при выполнении: %v", truncateStr(content, 100), err)
+		}
+		return fmt.Sprintf("✓ Промпт закреплён: %s\n\n%s", truncateStr(content, 100), response)
 	}
 }
 
@@ -457,6 +460,14 @@ func extractBaseCommand(input string) string {
 		return ""
 	}
 	return parts[0]
+}
+
+func (h *BotHandler) handleClear(peerID int64) string {
+	workingDir := ""
+	if s := h.aiAgent.GetSession(peerID); s != nil {
+		workingDir = s.GetWorkingDir()
+	}
+	return h.handleNewSession("/n "+workingDir, peerID)
 }
 
 func (h *BotHandler) handleNewSession(input string, peerID int64) string {

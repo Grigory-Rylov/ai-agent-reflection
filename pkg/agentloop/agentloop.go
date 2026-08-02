@@ -720,6 +720,7 @@ func (al *agentLoop) ResetSession(peerID int64) {
 	if val, ok := al.sessionM.Load(peerID); ok {
 		sess := val.(*session.Session)
 		sess.Reset()
+		sess.ClearPinned()
 		if al.log != nil {
 			al.log.InfoLogf("Session reset for peer %d", peerID)
 		}

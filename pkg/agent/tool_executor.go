@@ -158,16 +158,10 @@ func (e *agentToolExecutor) checkShellPermission(ctx context.Context, checker pe
 		return true
 	}
 
-	// Команда работает только внутри разрешённых директорий — не спрашиваем.
-	if tools.ShellCommandPathsAllowed(command) {
-		logger.DebugToFile("[checkPermissionAsk] shell_execute: all paths in allowed dirs, skip ask")
-		return true
-	}
-
-	// Опционально: команда не трогает файлы вне разрешённых директорий
-	// (нет хостовых путей или все они в allowed_dirs) — не спрашиваем (конфиг).
-	if e.agent != nil && e.agent.config.SkipShellPermissionForPathless && tools.ShellCommandFilesystemSafe(command) {
-		logger.DebugToFile("[checkPermissionAsk] shell_execute: filesystem-safe command, skip ask (config)")
+	// Команда не трогает файлы вне разрешённых директорий
+	// (нет хостовых путей или все они в allowed_dirs) — не спрашиваем.
+	if tools.ShellCommandFilesystemSafe(command) {
+		logger.DebugToFile("[checkPermissionAsk] shell_execute: filesystem-safe command, skip ask")
 		return true
 	}
 

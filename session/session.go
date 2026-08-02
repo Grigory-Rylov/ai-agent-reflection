@@ -334,7 +334,10 @@ func (s *Session) ClearPinned() {
 
 // GetContextMessages возвращает сообщения для API: системное сообщение,
 // затем все pinned промпты (как user), затем остальная история. Pinned
-// промпты всегда в начале контекста и переживают компактизацию.
+// промпт не дублируется: если его контент уже есть в истории (например,
+// сразу после /pin, когда промпт отправлен как обычное сообщение), он
+// не вставляется повторно и появляется в контексте только после
+// компактизации/reset, когда исходное сообщение очищено.
 func (s *Session) GetContextMessages() []Message {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -345,6 +348,9 @@ func (s *Session) GetContextMessages() []Message {
 		out = append(out, msg)
 		if !inserted && msg.Role == SystemRole && len(s.pinned) > 0 {
 			for _, p := range s.pinned {
+				if s.hasUserMessageContentLocked(p) {
+					continue
+				}
 				out = append(out, Message{
 					Role:      UserRole,
 					Content:   p,
@@ -356,6 +362,9 @@ func (s *Session) GetContextMessages() []Message {
 	}
 	if !inserted && len(s.pinned) > 0 {
 		for _, p := range s.pinned {
+			if s.hasUserMessageContentLocked(p) {
+				continue
+			}
 			out = append(out, Message{
 				Role:      UserRole,
 				Content:   p,
@@ -364,6 +373,17 @@ func (s *Session) GetContextMessages() []Message {
 		}
 	}
 	return out
+}
+
+// hasUserMessageContentLocked возвращает true, если в истории уже есть
+// user-сообщение с таким же контентом. Вызывается только из locked-контекста.
+func (s *Session) hasUserMessageContentLocked(content string) bool {
+	for _, msg := range s.messages {
+		if msg.Role == UserRole && strings.TrimSpace(msg.Content) == strings.TrimSpace(content) {
+			return true
+		}
+	}
+	return false
 }
 
 // GetLastAssistantMessage возвращает последнее сообщение ассистента

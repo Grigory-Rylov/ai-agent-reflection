@@ -290,7 +290,7 @@ You are a Developer. Implement the task using available tools.
 
 | Command | Description |
 |---------|-------------|
-| `/reset` | Clear conversation history |
+| `/clear` | Clear conversation history (working dir is preserved) |
 | `/newsession [path]` | Reset session and change working dir |
 | `/status` | Show session info and working dir |
 | `/help` | Show command list |

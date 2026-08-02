@@ -485,6 +485,55 @@ func TestContextMessagesIncludePinned(t *testing.T) {
 	}
 }
 
+func TestContextMessagesDoNotDuplicatePinned(t *testing.T) {
+	config := DefaultConfig()
+	config.PeerID = 12345
+	config.SystemPrompt = "You are helpful."
+	s := NewSession(config)
+
+	// Симуляция /pin <промпт>: промпт закреплён и сразу отправлен как сообщение
+	s.AddPinned("Always answer in Russian")
+	s.AddUserMessage("Always answer in Russian")
+	s.AddUserMessage("Hello")
+
+	msgs := s.GetContextMessages()
+
+	// system, "Always answer in Russian" (из истории), "Hello"
+	// pinned НЕ дублируется, т.к. контент уже в истории
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 context messages, got %d: %v", len(msgs), msgs)
+	}
+	if msgs[1].Role != UserRole || msgs[1].Content != "Always answer in Russian" {
+		t.Errorf("expected history user message at index 1, got %v", msgs[1])
+	}
+	if msgs[2].Content != "Hello" {
+		t.Errorf("expected 'Hello' at index 2, got %v", msgs[2])
+	}
+}
+
+func TestContextMessagesIncludePinnedAfterReset(t *testing.T) {
+	config := DefaultConfig()
+	config.PeerID = 12345
+	config.SystemPrompt = "You are helpful."
+	s := NewSession(config)
+
+	// Симуляция /pin <промпт> и последующей компактизации/reset
+	s.AddPinned("Always answer in Russian")
+	s.AddUserMessage("Always answer in Russian")
+	s.AddUserMessage("Hello")
+	s.Reset()
+
+	msgs := s.GetContextMessages()
+
+	// system, pinned — исходное сообщение очищено, pinned вставляется
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 context messages after reset, got %d: %v", len(msgs), msgs)
+	}
+	if msgs[1].Role != UserRole || msgs[1].Content != "Always answer in Russian" {
+		t.Errorf("expected pinned prompt after reset, got %v", msgs[1])
+	}
+}
+
 func TestPinnedPromptsPersistence(t *testing.T) {
 	testDir, err := os.MkdirTemp("", "session_pinned_test_*")
 	if err != nil {

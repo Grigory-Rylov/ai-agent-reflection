@@ -193,7 +193,21 @@ func TestShellExecutePermissionAsksForUnmatched(t *testing.T) {
 		},
 	}
 
-	t.Run("shell ping asks when bash permission unresolved", func(t *testing.T) {
+	allowedDir, err := os.MkdirTemp("", "shell_perm_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(allowedDir)
+
+	oldWorkingDir := tools.WorkingDir
+	tools.WorkingDir = allowedDir
+	defer func() { tools.WorkingDir = oldWorkingDir }()
+
+	ctrl := access.NewController([]string{allowedDir})
+	tools.SetAccessController(ctrl)
+	defer tools.SetAccessController(nil)
+
+	t.Run("shell cat /etc/passwd asks when path outside allowed dirs", func(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(askChecker)
 		e := newAgentToolExecutor(a)
@@ -206,18 +220,42 @@ func TestShellExecutePermissionAsksForUnmatched(t *testing.T) {
 		defer tools.SetQuestionCallback(nil)
 
 		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
-			"command": "ping -c 3 -W 2 192.168.1.192",
+			"command": "cat /etc/passwd",
 		}, 12345)
 
 		if !result {
-			t.Error("expected allow after user approved ping")
+			t.Error("expected allow after user approved")
 		}
 		if !asked {
-			t.Error("expected permission ask for ping when bash permission is ask")
+			t.Error("expected permission ask for path outside allowed dirs")
 		}
 	})
 
-	t.Run("shell echo asks when bash permission unresolved", func(t *testing.T) {
+	t.Run("shell redirect outside allowed dirs asks", func(t *testing.T) {
+		a := NewAgent(config)
+		a.SetPermissionChecker(askChecker)
+		e := newAgentToolExecutor(a)
+
+		asked := false
+		tools.SetQuestionCallback(func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+			asked = true
+			return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
+		})
+		defer tools.SetQuestionCallback(nil)
+
+		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+			"command": "echo hello > /tmp/outside",
+		}, 12345)
+
+		if !result {
+			t.Error("expected allow after user approved")
+		}
+		if !asked {
+			t.Error("expected permission ask for redirect outside allowed dirs")
+		}
+	})
+
+	t.Run("filesystem-safe command skips ask", func(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(askChecker)
 		e := newAgentToolExecutor(a)
@@ -234,14 +272,14 @@ func TestShellExecutePermissionAsksForUnmatched(t *testing.T) {
 		}, 12345)
 
 		if !result {
-			t.Error("expected allow after user approved echo")
+			t.Error("expected allow for filesystem-safe command")
 		}
-		if !asked {
-			t.Error("expected permission ask for echo when bash permission is ask")
+		if asked {
+			t.Error("expected NO permission ask for filesystem-safe command")
 		}
 	})
 
-	t.Run("shell whoami asks when bash permission unresolved", func(t *testing.T) {
+	t.Run("docker ps skips ask", func(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(askChecker)
 		e := newAgentToolExecutor(a)
@@ -254,38 +292,14 @@ func TestShellExecutePermissionAsksForUnmatched(t *testing.T) {
 		defer tools.SetQuestionCallback(nil)
 
 		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
-			"command": "whoami",
+			"command": "docker ps",
 		}, 12345)
 
 		if !result {
-			t.Error("expected allow after user approved whoami")
+			t.Error("expected allow for filesystem-safe command")
 		}
-		if !asked {
-			t.Error("expected permission ask for whoami when bash permission is ask")
-		}
-	})
-
-	t.Run("shell curl asks when bash permission unresolved", func(t *testing.T) {
-		a := NewAgent(config)
-		a.SetPermissionChecker(askChecker)
-		e := newAgentToolExecutor(a)
-
-		asked := false
-		tools.SetQuestionCallback(func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
-			asked = true
-			return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
-		})
-		defer tools.SetQuestionCallback(nil)
-
-		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
-			"command": "curl https://example.com",
-		}, 12345)
-
-		if !result {
-			t.Error("expected allow after user approved curl")
-		}
-		if !asked {
-			t.Error("expected permission ask for curl when bash permission is ask")
+		if asked {
+			t.Error("expected NO permission ask for filesystem-safe command")
 		}
 	})
 }

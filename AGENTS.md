@@ -37,6 +37,11 @@
 - Go: camelCase for vars, PascalCase for exports
 - Tests: descriptive names, single assertion per scenario
 
+### Build & binaries
+- Do NOT create new binary names — only `agent` and `agent-restarter` exist
+- Rebuild binaries ONLY via `build.sh`, never with custom `go build -o <name>` flags
+- Do not add new entries to `.gitignore` for binaries
+
 ### Error handling
 - Return errors, don't panic
 - Wrap errors with context: `fmt.Errorf("context: %w", err)`

@@ -161,6 +161,29 @@ func TestAgentLoopResetSession(t *testing.T) {
 	loop.ResetSession(123)
 }
 
+func TestAgentLoopResetSessionClearsPinned(t *testing.T) {
+	vk := &mockVKClient{}
+	reg := newMockToolRegistry()
+	config := DefaultLoopConfig()
+	config.ModelHolder = testHolder()
+
+	loop, err := NewAgentLoop(config, vk, reg)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	sess := loop.EnsureSession(123)
+	sess.AddPinned("Always answer in Russian")
+	sess.AddUserMessage("Hello")
+
+	loop.ResetSession(123)
+
+	got := loop.GetSession(123).GetPinned()
+	if len(got) != 0 {
+		t.Errorf("expected pinned cleared after ResetSession, got %v", got)
+	}
+}
+
 func TestEventDispatcherIntegration(t *testing.T) {
 	dispatcher := NewEventDispatcher()
 	events := []Event{}

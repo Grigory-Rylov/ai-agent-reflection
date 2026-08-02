@@ -152,7 +152,6 @@ func TestCommandsDoNotReachModel(t *testing.T) {
 		name    string
 		message string
 	}{
-		{"reset command", "/reset"},
 		{"clear command", "/clear"},
 		{"help command", "/help"},
 		{"status command", "/status"},
@@ -221,7 +220,6 @@ func TestCommandResponseFormats(t *testing.T) {
 		message    string
 		expectResp bool
 	}{
-		{"reset", "/reset", true},
 		{"clear", "/clear", true},
 		{"help", "/help", true},
 		{"status", "/status", true},
@@ -274,11 +272,11 @@ func TestPinCommand(t *testing.T) {
 		}
 	})
 
-	t.Run("does not send pinned prompt to model", func(t *testing.T) {
+	t.Run("sends pinned prompt to model", func(t *testing.T) {
 		mock.lastMessage = ""
 		handler.ProcessMessage("/pin Some prompt", peerID)
-		if mock.lastMessage != "" {
-			t.Errorf("command should not reach model, got %q", mock.lastMessage)
+		if mock.lastMessage != "Some prompt" {
+			t.Errorf("expected pinned prompt to reach model, got %q", mock.lastMessage)
 		}
 	})
 
@@ -596,6 +594,34 @@ func TestParseAgentHashMention(t *testing.T) {
 // ============================================================
 // Tests for handleNewSession (/n command)
 // ============================================================
+
+func TestClearKeepsWorkingDir(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+	handler := NewBotHandler(nil, mock, log)
+
+	handler.ProcessMessage("/n /tmp", 12345)
+	sess := mock.GetSession(12345)
+	if sess == nil {
+		t.Fatal("Expected session to exist")
+	}
+	if sess.GetWorkingDir() == "" {
+		t.Fatal("Expected working dir to be set")
+	}
+	expectedWD := sess.GetWorkingDir()
+
+	handler.ProcessMessage("/clear", 12345)
+	sess = mock.GetSession(12345)
+	if sess == nil {
+		t.Fatal("Expected session to exist after /clear")
+	}
+	if got := sess.GetWorkingDir(); got != expectedWD {
+		t.Errorf("Expected working dir %q to be preserved, got %q", expectedWD, got)
+	}
+	if got := sess.GetPinned(); len(got) != 0 {
+		t.Errorf("Expected pinned prompts cleared after /clear, got %v", got)
+	}
+}
 
 func TestHandleNewSession(t *testing.T) {
 	log, _ := logger.New(logger.DefaultConfig())

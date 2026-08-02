@@ -75,6 +75,15 @@ func TestCheckShellPermissionDeniesMatching(t *testing.T) {
 }
 
 func TestCheckShellPermissionAsksForUnmatched(t *testing.T) {
+	dir := t.TempDir()
+	prevWD := tools.WorkingDir
+	tools.SetWorkingDir(dir)
+	tools.SetAccessController(access.NewController([]string{dir}))
+	t.Cleanup(func() {
+		tools.SetAccessController(nil)
+		tools.SetWorkingDir(prevWD)
+	})
+
 	called := false
 	withQuestionCallback(t, func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
 		called = true
@@ -89,7 +98,7 @@ func TestCheckShellPermissionAsksForUnmatched(t *testing.T) {
 	e := newAgentToolExecutor(a)
 
 	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
-		"command": "curl http://example.com",
+		"command": "cat /etc/passwd",
 	}, 12345)
 	if !result {
 		t.Error("expected allow after user approved one-time")
@@ -100,6 +109,15 @@ func TestCheckShellPermissionAsksForUnmatched(t *testing.T) {
 }
 
 func TestCheckShellPermissionDeniesWhenUserRejects(t *testing.T) {
+	dir := t.TempDir()
+	prevWD := tools.WorkingDir
+	tools.SetWorkingDir(dir)
+	tools.SetAccessController(access.NewController([]string{dir}))
+	t.Cleanup(func() {
+		tools.SetAccessController(nil)
+		tools.SetWorkingDir(prevWD)
+	})
+
 	withQuestionCallback(t, func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
 		return map[string]interface{}{
 			"selected": []interface{}{"❌ Deny"},
@@ -112,7 +130,7 @@ func TestCheckShellPermissionDeniesWhenUserRejects(t *testing.T) {
 	e := newAgentToolExecutor(a)
 
 	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
-		"command": "curl http://example.com",
+		"command": "cat /etc/passwd",
 	}, 12345)
 	if result {
 		t.Error("expected deny after user rejected")
@@ -169,6 +187,15 @@ func TestCheckShellPermissionCdOnly(t *testing.T) {
 }
 
 func TestCheckShellPermissionAlwaysUsesPrefixOnly(t *testing.T) {
+	dir := t.TempDir()
+	prevWD := tools.WorkingDir
+	tools.SetWorkingDir(dir)
+	tools.SetAccessController(access.NewController([]string{dir}))
+	t.Cleanup(func() {
+		tools.SetAccessController(nil)
+		tools.SetWorkingDir(prevWD)
+	})
+
 	withQuestionCallback(t, func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
 		return map[string]interface{}{
 			"selected": []interface{}{"✅ Always allow"},
@@ -184,17 +211,17 @@ func TestCheckShellPermissionAlwaysUsesPrefixOnly(t *testing.T) {
 	e := newAgentToolExecutor(a)
 
 	_ = e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
-		"command": "npm run dev",
+		"command": "cat /etc/passwd",
 	}, 12345)
 
 	found := false
 	for _, rule := range *checker.P {
-		if rule.Pattern == "npm run dev *" && rule.Action == permission.Allow {
+		if rule.Pattern == "cat *" && rule.Action == permission.Allow {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected 'npm run dev *' allow rule, got %v", *checker.P)
+		t.Errorf("expected 'cat *' allow rule, got %v", *checker.P)
 	}
 }
 
@@ -323,7 +350,7 @@ func TestCheckShellPermissionDenyStillBlocksWhenFlagEnabled(t *testing.T) {
 	}
 }
 
-func TestCheckShellPermissionPathlessAsksWhenFlagDisabled(t *testing.T) {
+func TestCheckShellPermissionPathlessSkipsAsk(t *testing.T) {
 	called := false
 	withQuestionCallback(t, func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
 		called = true
@@ -339,10 +366,10 @@ func TestCheckShellPermissionPathlessAsksWhenFlagDisabled(t *testing.T) {
 		"command": "adb devices",
 	}, 12345)
 	if !result {
-		t.Error("expected allow after user approved")
+		t.Error("expected allow for filesystem-safe command")
 	}
-	if !called {
-		t.Error("expected question for pathless command when flag disabled")
+	if called {
+		t.Error("expected NO question for filesystem-safe command (no paths outside allowed dirs)")
 	}
 }
 
