@@ -382,3 +382,100 @@ func (m *mockWorkingDirStore) GetDistinctGrantSessions() ([]string, error) { ret
 func (m *mockWorkingDirStore) SavePermission(sessionID, toolName, resource, decision string) error { return nil }
 func (m *mockWorkingDirStore) ClearPermissions(sessionID string) error { return nil }
 func (m *mockWorkingDirStore) Close() error { return nil }
+
+// ============================================================
+// Тесты enforceHistoryLimit — сохранение пар tool_call
+// ============================================================
+
+func toolCallMessage() Message {
+	return Message{
+		Role:      AssistantRole,
+		Content:   "",
+		ToolCalls: []MsgToolCall{{ID: "call_1", Function: MsgToolCallFunc{Name: "tool", Arguments: "{}"}}},
+	}
+}
+
+func toolResultMessage(id, name, content string) Message {
+	return Message{
+		Role:       ToolRole,
+		ToolCallID: id,
+		Name:       name,
+		Content:    content,
+	}
+}
+
+// hasOrphanedTool возвращает индекс tool-сообщения, которому не предшествует
+// assistant-сообщение с tool_calls (допускаются идущие подряд tool-ответы).
+func hasOrphanedTool(msgs []Message) (int, string) {
+	assistantWithToolCalls := false
+	for i := 0; i < len(msgs); i++ {
+		switch msgs[i].Role {
+		case AssistantRole:
+			assistantWithToolCalls = len(msgs[i].ToolCalls) > 0
+		case ToolRole:
+			if !assistantWithToolCalls {
+				return i, "prev role=" + string(msgs[i-1].Role) + " toolcalls=0"
+			}
+		default:
+			assistantWithToolCalls = false
+		}
+	}
+	return -1, ""
+}
+
+func TestEnforceHistoryLimitKeepsToolPairing(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxHistory = 3
+	cfg.SystemPrompt = ""
+	s := NewSession(cfg)
+
+	// Пары user -> assistant(tool_calls) -> tool -> tool
+	for i := 0; i < 10; i++ {
+		s.AddUserMessage("question")
+		s.messages = append(s.messages, toolCallMessage())
+		s.messages = append(s.messages,
+			toolResultMessage("call_1", "tool", "result 1"),
+			toolResultMessage("call_1", "tool", "result 2"),
+		)
+	}
+	s.enforceHistoryLimit()
+
+	if i, why := hasOrphanedTool(s.messages); i >= 0 {
+		t.Fatalf("orphaned tool message at %d (%s)", i, why)
+	}
+}
+
+func TestEnforceHistoryLimitSingleRemovalKeepsPair(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxHistory = 3
+	cfg.SystemPrompt = ""
+	s := NewSession(cfg)
+
+	// [assistant(tool), tool, tool] — 3 сообщения, лимит не превышен
+	s.messages = append(s.messages,
+		toolCallMessage(),
+		toolResultMessage("call_1", "tool", "r1"),
+		toolResultMessage("call_1", "tool", "r2"),
+	)
+
+	// Добавляем user — лимит 3 превышен, должна удалиться целая пара,
+	// а не разорванная (assistant без tool-ответов).
+	s.AddUserMessage("u1")
+	s.enforceHistoryLimit()
+
+	if i, why := hasOrphanedTool(s.messages); i >= 0 {
+		t.Fatalf("orphaned tool message at %d (%s)\nroles: %v", i, why, roles(s.messages))
+	}
+}
+
+func roles(msgs []Message) []string {
+	var r []string
+	for _, m := range msgs {
+		s := string(m.Role)
+		if m.Role == AssistantRole && len(m.ToolCalls) > 0 {
+			s += "(tool)"
+		}
+		r = append(r, s)
+	}
+	return r
+}

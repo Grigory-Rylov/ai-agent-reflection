@@ -449,7 +449,11 @@ func similarity(a, b string) float64 {
 // Управление историей
 // ============================================================
 
-// enforceHistoryLimit удаляет старые сообщения при превышении лимита
+// enforceHistoryLimit удаляет старые сообщения при превышении лимита.
+// Пары "assistant с tool_calls + следующие tool-ответы" удаляются целиком,
+// чтобы не оставлять tool-сообщения без предшествующего assistant (иначе
+// llama-server отвечает ошибкой "Message has tool role, but there was no
+// previous assistant message with a tool call!").
 func (s *Session) enforceHistoryLimit() {
 	if s.config.MaxHistory <= 0 {
 		return
@@ -461,11 +465,36 @@ func (s *Session) enforceHistoryLimit() {
 	}
 
 	for len(s.messages)-systemOffset > s.config.MaxHistory {
+		removed := false
 		for i := systemOffset; i < len(s.messages); i++ {
-			if s.messages[i].Role != SystemRole {
-				s.messages = append(s.messages[:i], s.messages[i+1:]...)
+			msgRole := s.messages[i].Role
+
+			if msgRole == SystemRole {
+				continue
+			}
+
+			// Assistant с tool_calls удаляем вместе со всеми следующими tool-ответами.
+			if msgRole == AssistantRole && len(s.messages[i].ToolCalls) > 0 {
+				end := i + 1
+				for end < len(s.messages) && s.messages[end].Role == ToolRole {
+					end++
+				}
+				s.messages = append(s.messages[:i], s.messages[end:]...)
+				removed = true
 				break
 			}
+
+			// Обычное сообщение (не перед tool-ответом) — безопасно удалить одно.
+			nextIsToolResponse := (i+1 < len(s.messages)) && s.messages[i+1].Role == ToolRole
+			if !nextIsToolResponse {
+				s.messages = append(s.messages[:i], s.messages[i+1:]...)
+				removed = true
+				break
+			}
+		}
+		if !removed {
+			// Нечего удалить безопасно — выходим, чтобы не зациклиться.
+			break
 		}
 	}
 }
