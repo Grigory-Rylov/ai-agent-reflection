@@ -498,6 +498,38 @@ func TestShellCommandFilesystemSafe(t *testing.T) {
 		}
 	})
 
+	t.Run("nohup with interpreter and script inside allowed dir is safe", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+		script := filepath.Join(dir, "run.sh")
+		if err := os.WriteFile(script, []byte("#!/bin/bash\nsleep 1\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cmd := "nohup /bin/bash " + script + " > " + filepath.Join(dir, "run.log") + " 2>&1 &"
+		if !ShellCommandFilesystemSafe(cmd) {
+			t.Error("expected true: /bin/bash is the interpreter, script and log in allowed dir")
+		}
+	})
+
+	t.Run("env wrapper with interpreter is safe", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+		script := filepath.Join(dir, "run.sh")
+		cmd := "env FOO=1 /bin/bash " + script
+		if !ShellCommandFilesystemSafe(cmd) {
+			t.Error("expected true: interpreter after env is not a file op")
+		}
+	})
+
+	t.Run("time wrapper with user binary outside allowed dir is not safe", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+		cmd := "time /home/orangepi/Android/Sdk/emulator/emulator -avd MyAVD > " + filepath.Join(dir, "emulator.log") + " 2>&1"
+		if ShellCommandFilesystemSafe(cmd) {
+			t.Error("expected false: wrapped binary path is outside allowed dir")
+		}
+	})
+
 	t.Run("empty command is safe", func(t *testing.T) {
 		SetAccessController(nil)
 		if !ShellCommandFilesystemSafe("") {

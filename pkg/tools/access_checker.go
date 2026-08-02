@@ -292,6 +292,55 @@ func isEnvAssignment(token string) bool {
 	return !strings.Contains(token[:eq], "/")
 }
 
+// wrapperCommands — команды, которые запускают другую программу/интерпретатор
+// первым аргументом (nohup bash script, time cmd, env cmd). Путь такой
+// программы-интерпретатора файловой операцией не считается.
+var wrapperCommands = map[string]bool{
+	"nohup": true, "time": true, "env": true, "sudo": true,
+	"xargs": true, "nice": true, "ionice": true, "stdbuf": true,
+	"setsid": true, "timeout": true, "command": true, "exec": true,
+}
+
+// wrapperInterpreterToken возвращает токен программы, которую wrapper-команда
+// запускает первым аргументом (nohup /bin/bash script), пропуская env-префиксы
+// (VAR=x) и флаги. Возвращает "" если команда не wrapper или программа
+// интерпретатором не является.
+func wrapperInterpreterToken(rest []string, cmd string) string {
+	if !wrapperCommands[cmd] {
+		return ""
+	}
+	i := 1
+	for i < len(rest) && (isEnvAssignment(rest[i]) || strings.HasPrefix(rest[i], "-")) {
+		i++
+	}
+	if i >= len(rest) {
+		return ""
+	}
+	prog := rest[i]
+	if isKnownInterpreter(prog) {
+		return prog
+	}
+	return ""
+}
+
+// knownInterpreterBasenames — общеизвестные интерпретаторы, запускаемые через
+// wrapper-команды (nohup bash ..., env python3 ..., time node ...).
+var knownInterpreterBasenames = map[string]bool{
+	"bash": true, "sh": true, "dash": true, "zsh": true, "ksh": true,
+	"python": true, "python2": true, "python3": true, "perl": true,
+	"ruby": true, "node": true, "php": true, "lua": true, "pwsh": true,
+}
+
+// isKnownInterpreter возвращает true, если токен — путь или имя известного
+// интерпретатора (bash, python3, node и т.п.).
+func isKnownInterpreter(token string) bool {
+	name := token
+	if idx := strings.LastIndex(name, "/"); idx >= 0 {
+		name = name[idx+1:]
+	}
+	return knownInterpreterBasenames[name]
+}
+
 // isExplicitPathToken возвращает true для токена, который однозначно
 // ссылается на файловую систему: абсолютный путь, ~ или ...
 // Точковые токены вроде com.avito.android или 1.2.3 путями не считаются.
@@ -338,8 +387,12 @@ func collectFilePaths(sub string, devPaths map[string]bool) []string {
 			paths = append(paths, p)
 		}
 	}
-	rest, _ := commandParts(parts)
+	rest, cmd := commandParts(parts)
+	skipInterpreter := wrapperInterpreterToken(rest, cmd)
 	for _, tok := range rest[1:] {
+		if tok == skipInterpreter {
+			continue
+		}
 		if isExplicitPathToken(tok) && !devPaths[tok] && !isDiscardPath(tok) {
 			paths = append(paths, tok)
 		}
