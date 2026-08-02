@@ -384,3 +384,133 @@ func (m *mockWorkingDirStore) SavePermission(sessionID, toolName, resource, deci
 }
 func (m *mockWorkingDirStore) ClearPermissions(sessionID string) error { return nil }
 func (m *mockWorkingDirStore) Close() error                            { return nil }
+
+// ============================================================
+// Тесты Pinned промптов (/pin)
+// ============================================================
+
+func TestPinnedPrompts(t *testing.T) {
+	config := DefaultConfig()
+	config.PeerID = 12345
+	s := NewSession(config)
+
+	t.Run("initially empty", func(t *testing.T) {
+		if got := s.GetPinned(); len(got) != 0 {
+			t.Errorf("expected no pinned prompts, got %v", got)
+		}
+	})
+
+	t.Run("adds pinned prompt", func(t *testing.T) {
+		s.AddPinned("Always answer in Russian")
+		got := s.GetPinned()
+		if len(got) != 1 || got[0] != "Always answer in Russian" {
+			t.Errorf("expected 1 pinned prompt, got %v", got)
+		}
+	})
+
+	t.Run("adds multiple pinned prompts", func(t *testing.T) {
+		s.AddPinned("Use tabs for indentation")
+		got := s.GetPinned()
+		if len(got) != 2 {
+			t.Errorf("expected 2 pinned prompts, got %d", len(got))
+		}
+	})
+
+	t.Run("ignores empty pinned prompt", func(t *testing.T) {
+		s.AddPinned("   ")
+		if got := s.GetPinned(); len(got) != 2 {
+			t.Errorf("expected still 2 pinned prompts, got %d", len(got))
+		}
+	})
+}
+
+func TestPinnedPromptsSurviveReset(t *testing.T) {
+	config := DefaultConfig()
+	config.PeerID = 12345
+	s := NewSession(config)
+
+	s.AddPinned("Never forget the goal")
+	s.AddUserMessage("Message 1")
+	s.AddAssistantMessage("Reply 1")
+
+	s.Reset()
+
+	if got := s.GetPinned(); len(got) != 1 || got[0] != "Never forget the goal" {
+		t.Errorf("pinned prompts should survive reset, got %v", got)
+	}
+}
+
+func TestPinnedPromptsCleared(t *testing.T) {
+	config := DefaultConfig()
+	config.PeerID = 12345
+	s := NewSession(config)
+
+	s.AddPinned("Prompt A")
+	s.AddPinned("Prompt B")
+
+	s.ClearPinned()
+
+	if got := s.GetPinned(); len(got) != 0 {
+		t.Errorf("expected no pinned prompts after clear, got %v", got)
+	}
+}
+
+func TestContextMessagesIncludePinned(t *testing.T) {
+	config := DefaultConfig()
+	config.PeerID = 12345
+	config.SystemPrompt = "You are helpful."
+	s := NewSession(config)
+
+	s.AddPinned("Pin one")
+	s.AddPinned("Pin two")
+	s.AddUserMessage("Hello")
+
+	msgs := s.GetContextMessages()
+
+	// system, pin one, pin two, hello
+	if len(msgs) != 4 {
+		t.Fatalf("expected 4 context messages, got %d: %v", len(msgs), msgs)
+	}
+	if msgs[0].Role != SystemRole {
+		t.Errorf("first message should be system, got %s", msgs[0].Role)
+	}
+	if msgs[1].Role != UserRole || msgs[1].Content != "Pin one" {
+		t.Errorf("expected pinned 'Pin one' at index 1, got %v", msgs[1])
+	}
+	if msgs[2].Role != UserRole || msgs[2].Content != "Pin two" {
+		t.Errorf("expected pinned 'Pin two' at index 2, got %v", msgs[2])
+	}
+	if msgs[3].Content != "Hello" {
+		t.Errorf("expected 'Hello' at index 3, got %v", msgs[3])
+	}
+}
+
+func TestPinnedPromptsPersistence(t *testing.T) {
+	testDir, err := os.MkdirTemp("", "session_pinned_test_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(testDir)
+
+	sessionFile := filepath.Join(testDir, "session.json")
+
+	config1 := DefaultConfig()
+	config1.PeerID = 12345
+	config1.SessionFile = sessionFile
+	s1 := NewSession(config1)
+	s1.AddPinned("Pin persisted one")
+	s1.AddPinned("Pin persisted two")
+	if err := s1.Save(); err != nil {
+		t.Fatalf("failed to save session: %v", err)
+	}
+
+	config2 := DefaultConfig()
+	config2.PeerID = 12345
+	config2.SessionFile = sessionFile
+	s2 := NewSession(config2)
+
+	got := s2.GetPinned()
+	if len(got) != 2 || got[0] != "Pin persisted one" || got[1] != "Pin persisted two" {
+		t.Errorf("pinned prompts should persist, got %v", got)
+	}
+}

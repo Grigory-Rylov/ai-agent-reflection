@@ -341,7 +341,7 @@ func similarity(a, b string) float64 {
 }
 
 func (al *agentLoop) buildAPIMessages(sess *session.Session) []agent.Message {
-	history := sess.GetHistory()
+	history := sess.GetContextMessages()
 	messages := make([]agent.Message, len(history))
 
 	for i, msg := range history {

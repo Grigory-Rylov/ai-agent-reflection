@@ -20,6 +20,8 @@ func (s *Session) loadFromStore(st store.Store) error {
 	s.createdAt = sd.CreatedAt
 	s.updatedAt = sd.UpdatedAt
 	s.workingDir = sd.WorkingDir
+	s.pinned = make([]string, len(sd.Pinned))
+	copy(s.pinned, sd.Pinned)
 
 	if sd.WorkingDir != "" {
 		s.config.WorkingDir = sd.WorkingDir
@@ -59,6 +61,7 @@ func (s *Session) saveToStore(st store.Store) error {
 		WorkingDir: s.workingDir,
 		LoopCount:  s.loopCount,
 		IsLooped:   s.isLooped,
+		Pinned:     s.pinned,
 	}
 
 	if s.isLooped {

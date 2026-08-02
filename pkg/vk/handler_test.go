@@ -243,6 +243,67 @@ func TestCommandResponseFormats(t *testing.T) {
 // Тесты для /status - проверка бага с сообщениями и токенами
 // ============================================================
 
+func TestPinCommand(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+	handler := NewBotHandler(nil, mock, log)
+
+	peerID := int64(12345)
+
+	t.Run("pins a prompt", func(t *testing.T) {
+		response := handler.ProcessMessage("/pin Always answer in Russian", peerID)
+		if response == "" {
+			t.Error("expected non-empty response for /pin")
+		}
+		sess := mock.GetSession(peerID)
+		if sess == nil {
+			t.Fatal("session should exist")
+		}
+		pinned := sess.GetPinned()
+		if len(pinned) != 1 || pinned[0] != "Always answer in Russian" {
+			t.Errorf("expected 1 pinned prompt, got %v", pinned)
+		}
+	})
+
+	t.Run("pins multiple prompts", func(t *testing.T) {
+		handler.ProcessMessage("/pin Use tabs for indentation", peerID)
+		sess := mock.GetSession(peerID)
+		pinned := sess.GetPinned()
+		if len(pinned) != 2 {
+			t.Errorf("expected 2 pinned prompts, got %d", len(pinned))
+		}
+	})
+
+	t.Run("does not send pinned prompt to model", func(t *testing.T) {
+		mock.lastMessage = ""
+		handler.ProcessMessage("/pin Some prompt", peerID)
+		if mock.lastMessage != "" {
+			t.Errorf("command should not reach model, got %q", mock.lastMessage)
+		}
+	})
+
+	t.Run("lists pinned prompts", func(t *testing.T) {
+		response := handler.ProcessMessage("/pin", peerID)
+		if !strings.Contains(response, "Always answer in Russian") {
+			t.Errorf("expected list to contain pinned prompt, got: %s", response)
+		}
+		if !strings.Contains(response, "Use tabs for indentation") {
+			t.Errorf("expected list to contain second pinned prompt, got: %s", response)
+		}
+	})
+
+	t.Run("clears pinned prompts", func(t *testing.T) {
+		response := handler.ProcessMessage("/pin clear", peerID)
+		if response == "" {
+			t.Error("expected non-empty response for /pin clear")
+		}
+		sess := mock.GetSession(peerID)
+		if len(sess.GetPinned()) != 0 {
+			t.Errorf("expected 0 pinned prompts after clear, got %v", sess.GetPinned())
+		}
+	})
+}
+
 func TestStatusShowsCorrectMessageCount(t *testing.T) {
 	log, _ := logger.New(logger.DefaultConfig())
 	mock := newMockAgentLoop()
