@@ -2,6 +2,7 @@ package compress
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -220,10 +221,10 @@ func TestBuildSummaryPrompt(t *testing.T) {
 			{Role: "assistant", Content: "world"},
 		}
 		prompt := BuildSummaryPrompt("", head)
-		if !contains(prompt, "hello") || !contains(prompt, "world") {
+		if !strings.Contains(prompt, "hello") || !strings.Contains(prompt, "world") {
 			t.Error("prompt should include conversation history")
 		}
-		if !contains(prompt, "Goal") {
+		if !strings.Contains(prompt, "Goal") {
 			t.Error("prompt should include SUMMARY_TEMPLATE")
 		}
 	})
@@ -233,10 +234,10 @@ func TestBuildSummaryPrompt(t *testing.T) {
 			{Role: "user", Content: "continue"},
 		}
 		prompt := BuildSummaryPrompt("Previous summary here", head)
-		if !contains(prompt, "Previous summary here") {
+		if !strings.Contains(prompt, "Previous summary here") {
 			t.Error("prompt should include previous summary")
 		}
-		if !contains(prompt, "Update the anchored summary") {
+		if !strings.Contains(prompt, "Update the anchored summary") {
 			t.Error("update prompt should be used for existing summary")
 		}
 	})
@@ -246,7 +247,7 @@ func TestBuildSummaryPrompt(t *testing.T) {
 			{Role: "user", Content: "start"},
 		}
 		prompt := BuildSummaryPrompt("", head)
-		if !contains(prompt, "Create a new anchored summary") {
+		if !strings.Contains(prompt, "Create a new anchored summary") {
 			t.Error("new prompt should be used for first compaction")
 		}
 	})
@@ -278,8 +279,7 @@ func (m *mockLLMCompressor) Compress(ctx context.Context, req *CompressionReques
 
 func TestCompactWithOpenCode(t *testing.T) {
 	t.Run("returns error without LLM compressor", func(t *testing.T) {
-		config := DefaultCompactionConfig()
-		compactor := NewCompactor(config, nil, nil)
+		compactor := NewCompactor(nil)
 		msgs := []tokenizers.Message{
 			{Role: "user", Content: "hello"},
 		}
@@ -290,9 +290,8 @@ func TestCompactWithOpenCode(t *testing.T) {
 	})
 
 	t.Run("produces summary and tail with mock LLM", func(t *testing.T) {
-		config := DefaultCompactionConfig()
 		mockLLM := &mockLLMCompressor{}
-		compactor := NewCompactor(config, mockLLM, nil)
+		compactor := NewCompactor(mockLLM)
 
 		msgs := []tokenizers.Message{
 			{Role: "user", Content: "old turn"},
@@ -323,9 +322,8 @@ func TestCompactWithOpenCode(t *testing.T) {
 	})
 
 	t.Run("tokens decrease after compaction", func(t *testing.T) {
-		config := DefaultCompactionConfig()
 		mockLLM := &mockLLMCompressor{}
-		compactor := NewCompactor(config, mockLLM, nil)
+		compactor := NewCompactor(mockLLM)
 
 		msgs := make([]tokenizers.Message, 20)
 		for i := 0; i < 20; i++ {
@@ -422,8 +420,7 @@ func TestFilterCompacted(t *testing.T) {
 
 func TestOpenCodeFullFlow(t *testing.T) {
 	mockLLM := &mockLLMCompressor{}
-	config := DefaultCompactionConfig()
-	compactor := NewCompactor(config, mockLLM, nil)
+	compactor := NewCompactor(mockLLM)
 
 	msgs := []tokenizers.Message{
 		{Role: "system", Content: "You are helpful"},

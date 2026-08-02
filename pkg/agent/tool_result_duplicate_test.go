@@ -51,7 +51,6 @@ func TestProcessToolResults_AllDuplicates_ReturnsContent(t *testing.T) {
 		SessionConfig:  session.DefaultConfig(),
 	}
 	config.SessionConfig.PeerID = 99921
-	config.SessionConfig.MaxHistory = 100
 
 	a, executor := newTestAgentWithStub(t, config)
 
@@ -132,7 +131,6 @@ func TestProcessToolResults_JSON_AllDuplicates_ReturnsContent(t *testing.T) {
 		SessionConfig:  session.DefaultConfig(),
 	}
 	config.SessionConfig.PeerID = 99922
-	config.SessionConfig.MaxHistory = 100
 
 	a, executor := newTestAgentWithStub(t, config)
 
@@ -200,7 +198,6 @@ func TestReasoningLeakInToolResults(t *testing.T) {
 		MaxToolCalls:   5,
 	}
 	config.SessionConfig.PeerID = 99980
-	config.SessionConfig.MaxHistory = 100
 
 	a, executor := newTestAgentWithStub(t, config)
 
@@ -271,7 +268,6 @@ func TestReasoningOnlyResponse(t *testing.T) {
 		MaxToolCalls:   5,
 	}
 	config.SessionConfig.PeerID = 99981
-	config.SessionConfig.MaxHistory = 100
 
 	a, _ := newTestAgentWithStub(t, config)
 
@@ -333,7 +329,6 @@ func TestReasoningLeakInProcessStreaming(t *testing.T) {
 		EnableTools:    false,  // Без инструментов
 	}
 	config.SessionConfig.PeerID = 99982
-	config.SessionConfig.MaxHistory = 100
 
 	a := NewAgent(config)
 
@@ -395,7 +390,6 @@ func TestReasoningNotAddedToSession(t *testing.T) {
 		MaxToolCalls:   5,
 	}
 	config.SessionConfig.PeerID = 99983
-	config.SessionConfig.MaxHistory = 100
 
 	a, _ := newTestAgentWithStub(t, config)
 
@@ -483,7 +477,6 @@ func TestThinkingTagsNotLeaked(t *testing.T) {
 		MaxToolCalls:   5,
 	}
 	config.SessionConfig.PeerID = 99990
-	config.SessionConfig.MaxHistory = 100
 
 	a, _ := newTestAgentWithStub(t, config)
 

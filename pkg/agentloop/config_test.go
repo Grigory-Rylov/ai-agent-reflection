@@ -3,8 +3,6 @@ package agentloop
 import (
 	"testing"
 	"time"
-
-	"github.com/opencode/llama-client/pkg/compress"
 )
 
 func TestDefaultLoopConfig(t *testing.T) {
@@ -46,14 +44,11 @@ func TestDefaultLoopConfig(t *testing.T) {
 	if !config.EnableCompression {
 		t.Error("expected EnableCompression to be true")
 	}
-	if config.CompressionStrategy != compress.SummarizeStrategy {
-		t.Errorf("expected CompressionStrategy SummarizeStrategy, got %s", config.CompressionStrategy)
+	if config.TailTurns != 2 {
+		t.Errorf("expected TailTurns 2, got %d", config.TailTurns)
 	}
-	if config.CompressionTokenThreshold != 6000 {
-		t.Errorf("expected CompressionTokenThreshold 6000, got %d", config.CompressionTokenThreshold)
-	}
-	if config.CompressionPercentageThreshold != 0.75 {
-		t.Errorf("expected CompressionPercentageThreshold 0.75, got %f", config.CompressionPercentageThreshold)
+	if !config.EnablePruning {
+		t.Error("expected EnablePruning to be true")
 	}
 }
 

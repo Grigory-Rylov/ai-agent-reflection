@@ -253,7 +253,6 @@ func main() {
 		SessionConfig: session.Config{
 			AutoSave:    false,
 			SessionFile: "",
-			MaxHistory:  100,
 		},
 	}
 	toolRegistry.Register(&agentloop.SubAgentTool{

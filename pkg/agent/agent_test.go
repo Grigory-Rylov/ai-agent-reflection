@@ -189,7 +189,6 @@ func TestProcessMessage_InjectsAGENTSMD(t *testing.T) {
 	config.EnableTools = true
 	config.SessionConfig = session.Config{
 		WorkingDir: dir,
-		MaxHistory: 100,
 	}
 
 	a := NewAgent(config)
@@ -248,7 +247,6 @@ func TestProcessMessageAddsUserWithOrchestratorLikeConfig(t *testing.T) {
 		EnableTools:                true,
 		MaxToolCalls:               10,
 		EnableLoopAlert:            false,
-		EnableContextCompression:   false,
 		Debug:                      false,
 		SystemPromptFile:           "nonexistent_file.txt",
 		SessionConfig: session.Config{
@@ -361,25 +359,23 @@ func TestAgentSessionPersistence(t *testing.T) {
 	}
 }
 
-func TestAgentMaxHistoryLimit(t *testing.T) {
+func TestAgentPreservesSessionHistory(t *testing.T) {
 	config := DefaultConfig()
 	config.LlamaServerURL = "127.0.0.1:8080"
 	config.Model = "test-model"
-	config.SessionConfig.MaxHistory = 5
 
 	agent := NewAgent(config)
 
 	ctx := context.Background()
 
-	// Добавляем много сообщений
+	// Сообщения добавляются без жёсткого лимита (управление токенами — компакция)
 	for i := 0; i < 20; i++ {
 		agent.ProcessMessage(ctx, "Message "+string(rune('A'+i%26)), 12345)
 	}
 
-	// Сессия должна ограничить историю
 	s := agent.GetSession(12345)
-	if s.HistoryLength() > 5 {
-		t.Errorf("expected max 5 messages, got %d", s.HistoryLength())
+	if s.HistoryLength() == 0 {
+		t.Error("expected messages to be preserved in session")
 	}
 }
 

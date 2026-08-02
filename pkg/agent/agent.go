@@ -55,14 +55,16 @@ type Config struct {
 	EnableTools bool
 	// MaxToolCalls — максимальное количество вызовов инструментов за один запрос
 	MaxToolCalls int
-	// EnableContextCompression — включать автоматическое сжатие контекста
-	EnableContextCompression bool
-	// CompressionStrategy — стратегия сжатия (summarize, truncate, hybrid)
-	CompressionStrategy string
-	// CompressionTokenThreshold — порог в токенах для сжатия
-	CompressionTokenThreshold int
-	// CompressionPercentageThreshold — порог в процентах (0.0-1.0)
-	CompressionPercentageThreshold float64
+	// EnableCompression — включать opencode-style компакцию контекста
+	EnableCompression bool
+	// TailTurns — сколько последних user-оборотов сохранять при компакции
+	TailTurns int
+	// PreserveRecentTokens — бюджет для сохранения последних сообщений
+	PreserveRecentTokens *int
+	// CompactionReserved — резерв токенов для компакции
+	CompactionReserved *int
+	// EnablePruning — вычищать большие tool-выводы
+	EnablePruning bool
 	// Debug — режим отладки (сохранять промпт в debug_prompt.txt)
 	Debug bool
 	// AgentName — имя агента для логов (coordinator, worker, qa и т.д.)
@@ -81,17 +83,16 @@ type Config struct {
 // DefaultConfig возвращает конфигурацию по умолчанию
 func DefaultConfig() Config {
 	return Config{
-		LlamaServerURL:                 "127.0.0.1:8081",
-		Model:                          "local-model",
-		MaxTokens:                      4096,
-		Temperature:                    0.7,
-		SessionConfig:                  session.DefaultConfig(),
-		EnableLoopAlert:                true,
-		EnableTools:                    true,
-		MaxToolCalls:                   5,
-		EnableContextCompression:       true,
-		CompressionStrategy:            "summarize",
-		CompressionTokenThreshold:      6000,
-		CompressionPercentageThreshold: 0.75,
+		LlamaServerURL:    "127.0.0.1:8081",
+		Model:             "local-model",
+		MaxTokens:         4096,
+		Temperature:       0.7,
+		SessionConfig:     session.DefaultConfig(),
+		EnableLoopAlert:   true,
+		EnableTools:       true,
+		MaxToolCalls:      5,
+		EnableCompression: true,
+		TailTurns:         2,
+		EnablePruning:     true,
 	}
 }

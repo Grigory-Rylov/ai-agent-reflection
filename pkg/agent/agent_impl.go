@@ -43,19 +43,18 @@ type ThinkingCallback func(peerID int64, content string) error
 
 // agentImpl реализует интерфейс AI агента с подключением к llama-server
 type agentImpl struct {
-	config          Config
-	sessions        map[int64]*session.Session
-	toolsRegistry   *tools.Registry
-	mu              sync.RWMutex
-	client          *http.Client
-	contextManager  *compress.ContextManager
-	tokenizer       tokenizers.Tokenizer
-	systemPrompt    string            // системный промпт из файла или дефолтный
-	thinkingCallback ThinkingCallback  // callback для отправки thinking сообщений
-	toolSchemas     []map[string]interface{} // схемы инструментов, переданные извне
-	toolExecutor    ToolExecutor       // кастомный executor (для тестов через StubToolExecutor)
-	debugLog        debug.Logger       // логгер для отладочных сообщений
-	permissionChecker PermissionChecker  // проверка разрешений для инструментов
+	config            Config
+	sessions          map[int64]*session.Session
+	toolsRegistry     *tools.Registry
+	mu                sync.RWMutex
+	client            *http.Client
+	compactor         *compress.Compactor
+	systemPrompt      string                   // системный промпт из файла или дефолтный
+	thinkingCallback  ThinkingCallback         // callback для отправки thinking сообщений
+	toolSchemas       []map[string]interface{} // схемы инструментов, переданные извне
+	toolExecutor      ToolExecutor             // кастомный executor (для тестов через StubToolExecutor)
+	debugLog          debug.Logger             // логгер для отладочных сообщений
+	permissionChecker PermissionChecker        // проверка разрешений для инструментов
 }
 
 // PermissionChecker проверяет разрешения на выполнение инструментов
@@ -91,9 +90,9 @@ func NewAgent(config Config) *agentImpl {
 		agent.registerDefaultTools()
 	}
 
-	// Инициализируем ContextManager если включено сжатие
-	if config.EnableContextCompression {
-		agent.initContextManager()
+	// Инициализируем компактор для opencode-style компакции
+	if config.EnableCompression {
+		agent.initCompactor()
 	}
 
 	return agent
@@ -169,22 +168,10 @@ func (a *agentImpl) GetSystemPrompt() string {
 	return a.systemPrompt
 }
 
-// initContextManager инициализирует менеджер контекста
-func (a *agentImpl) initContextManager() {
-	// Создаём токенайзер
-	a.tokenizer = tokenizers.NewLlamaServerTokenizer(a.config.LlamaServerURL, a.config.Model, a.config.MaxTokens)
-
-	// Создаём компрессор
+// initCompactor инициализирует компактор для opencode-style компакции
+func (a *agentImpl) initCompactor() {
 	compressor := compress.NewLLMCompressor(a.config.LlamaServerURL, a.config.Model, a.config.Temperature)
-
-	// Создаём триггер
-	trigger := compress.CompressionTrigger{
-		TokenThreshold:        a.config.CompressionTokenThreshold,
-		PercentageThreshold:   a.config.CompressionPercentageThreshold,
-	}
-
-	// Создаём менеджер контекста
-	a.contextManager = compress.NewContextManager(compressor, a.tokenizer, trigger)
+	a.compactor = compress.NewCompactor(compressor)
 }
 
 // registerDefaultTools регистрирует инструменты по умолчанию
@@ -255,21 +242,10 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 		history = s.GetHistory()
 	}
 
-	// Проверяем и при необходимости сжимаем контекст
-	if a.contextManager != nil {
-		// Конвертируем историю в формат tokenizers.Message
-		var tokenizerMessages []tokenizers.Message
-		for _, msg := range history {
-			tokenizerMessages = append(tokenizerMessages, tokenizers.Message{
-				Role:    string(msg.Role),
-				Content: msg.Content,
-			})
-		}
-		err := a.contextManager.CheckAndCompress(ctx, peerID, tokenizerMessages, a.config.MaxTokens)
-		if err != nil {
-			// Если сжатие не удалось — продолжаем без него
-			a.debugLog.Warn("Compression skipped: %v", err)
-		}
+	// Проверяем и при необходимости сжимаем контекст (opencode-style)
+	if a.compactor != nil {
+		a.compactIfNeeded(ctx, s)
+		history = s.GetHistory()
 	}
 
 	// Формируем сообщения для API
@@ -295,6 +271,57 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 
 	// Обычный streaming запрос без инструментов
 	return a.processStreaming(ctx, apiMessages, s)
+}
+
+// compactIfNeeded выполняет opencode-style компакцию при переполнении контекста
+func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session) {
+	history := s.GetHistory()
+	messages := a.convertSessionHistory(history)
+
+	tokensBefore := compress.EstimateMessagesTokensSimple(messages)
+	if !compress.IsOverflow(tokensBefore, a.config.MaxTokens, a.config.CompactionReserved) {
+		return
+	}
+
+	tailTurns := a.config.TailTurns
+	if tailTurns <= 0 {
+		tailTurns = 2
+	}
+
+	result, err := a.compactor.CompactWithOpenCode(ctx, messages, a.config.MaxTokens, tailTurns, a.config.PreserveRecentTokens)
+	if err != nil {
+		a.debugLog.Warn("Compaction skipped: %v", err)
+		return
+	}
+
+	s.Reset()
+	if result.SummaryMsg.Content != "" {
+		s.AddAssistantMessage("<<CONVERSATION CHECKPOINT>>\n" + result.SummaryMsg.Content)
+	}
+	for _, msg := range result.KeptTail {
+		switch msg.Role {
+		case "system":
+			s.UpdateSystemPrompt(msg.Content)
+		case "user":
+			s.AddUserMessage(msg.Content)
+		case "assistant":
+			s.AddAssistantMessage(msg.Content)
+		case "tool":
+			s.AddUserMessage(msg.Content)
+		}
+	}
+}
+
+// convertSessionHistory конвертирует историю сессии в tokenizers.Message
+func (a *agentImpl) convertSessionHistory(history []session.Message) []tokenizers.Message {
+	messages := make([]tokenizers.Message, len(history))
+	for i, msg := range history {
+		messages[i] = tokenizers.Message{
+			Role:    string(msg.Role),
+			Content: msg.Content,
+		}
+	}
+	return messages
 }
 
 // ResetSession сбрасывает сессию пользователя

@@ -55,7 +55,7 @@ func runScenario(t *testing.T, scenarioName string) {
 
 	orchestrator := NewOrchestrator(OrchestratorConfig{
 		ModelHolder:     modelHolder,
-		MaxTokens:       100,
+		MaxTokens:       8192,
 		Temperature:     0.7,
 		ToolRegistry:    reg,
 		Debug:           false,

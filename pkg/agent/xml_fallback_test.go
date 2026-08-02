@@ -154,7 +154,6 @@ func TestXMLFallback_Integration(t *testing.T) {
 		SessionConfig:  session.DefaultConfig(),
 	}
 	config.SessionConfig.PeerID = 99910
-	config.SessionConfig.MaxHistory = 100
 
 	a, executor := newTestAgentWithStub(t, config)
 
@@ -210,7 +209,6 @@ func TestXMLFallback_MultipleXMLToolCalls(t *testing.T) {
 		SessionConfig:  session.DefaultConfig(),
 	}
 	config.SessionConfig.PeerID = 99912
-	config.SessionConfig.MaxHistory = 100
 
 	a, executor := newTestAgentWithStub(t, config)
 
@@ -297,7 +295,6 @@ func TestProcessWithTools_XMLFallback(t *testing.T) {
 		SessionConfig:  session.DefaultConfig(),
 	}
 	config.SessionConfig.PeerID = 99913
-	config.SessionConfig.MaxHistory = 100
 
 	a, executor := newTestAgentWithStub(t, config)
 
@@ -356,7 +353,6 @@ func TestProcessWithTools_XMLAndTextFallback(t *testing.T) {
 		SessionConfig:  session.DefaultConfig(),
 	}
 	config.SessionConfig.PeerID = 99914
-	config.SessionConfig.MaxHistory = 100
 
 	a, executor := newTestAgentWithStub(t, config)
 
@@ -568,7 +564,6 @@ func TestProcessXMLToolResults_ChainedToolCalls(t *testing.T) {
 		SessionConfig:  session.DefaultConfig(),
 	}
 	config.SessionConfig.PeerID = 99920
-	config.SessionConfig.MaxHistory = 100
 
 	a, executor := newTestAgentWithStub(t, config)
 
@@ -639,7 +634,6 @@ func TestProcessMessage_InvalidXMLToolCall_ShouldNotForwardToUser(t *testing.T) 
 		SessionConfig:  session.DefaultConfig(),
 	}
 	config.SessionConfig.PeerID = 99930
-	config.SessionConfig.MaxHistory = 100
 
 	a, executor := newTestAgentWithStub(t, config)
 
@@ -710,7 +704,6 @@ func TestProcessToolResults_DeduplicateSameToolAcrossRecursion(t *testing.T) {
 		SessionConfig:  session.DefaultConfig(),
 	}
 	config.SessionConfig.PeerID = 99920
-	config.SessionConfig.MaxHistory = 100
 
 	a, executor := newTestAgentWithStub(t, config)
 
@@ -771,7 +764,6 @@ func TestProcessToolResults_InvalidXMLToolCall(t *testing.T) {
 		SessionConfig:  session.DefaultConfig(),
 	}
 	config.SessionConfig.PeerID = 99940
-	config.SessionConfig.MaxHistory = 100
 
 	a, executor := newTestAgentWithStub(t, config)
 
@@ -853,7 +845,6 @@ func TestProcessMessage_Integration_NativeToolCallsThenXMLInToolResults(t *testi
 		SessionConfig:  session.DefaultConfig(),
 	}
 	config.SessionConfig.PeerID = 99950
-	config.SessionConfig.MaxHistory = 100
 
 	a, executor := newTestAgentWithStub(t, config)
 
@@ -925,7 +916,6 @@ func TestReasoningSentToThinkingInToolCallsFlow(t *testing.T) {
 		SessionConfig:  session.DefaultConfig(),
 	}
 	config.SessionConfig.PeerID = 99980
-	config.SessionConfig.MaxHistory = 100
 
 	a, executor := newTestAgentWithStub(t, config)
 	a.SetThinkingCallback(func(peerID int64, content string) error {
@@ -993,7 +983,6 @@ func TestReasoningNotLeakedToResponse(t *testing.T) {
 		SessionConfig:  session.DefaultConfig(),
 	}
 	config.SessionConfig.PeerID = 99970
-	config.SessionConfig.MaxHistory = 100
 
 	a, _ := newTestAgentWithStub(t, config)
 
@@ -1043,7 +1032,6 @@ func TestMalformedXMLInReasoning_NotSilentlyReturned(t *testing.T) {
 		SessionConfig:  session.DefaultConfig(),
 	}
 	config.SessionConfig.PeerID = 99960
-	config.SessionConfig.MaxHistory = 100
 
 	a, _ := newTestAgentWithStub(t, config)
 
@@ -1095,7 +1083,6 @@ func TestEmptyToolCallInReasoning_SendsCorrectiveFeedback(t *testing.T) {
 		SessionConfig:  session.DefaultConfig(),
 	}
 	config.SessionConfig.PeerID = 99982
-	config.SessionConfig.MaxHistory = 100
 
 	a, _ := newTestAgentWithStub(t, config)
 
@@ -1156,7 +1143,6 @@ func TestProcessWithTools_XMLInResponseText_LongerReasoning(t *testing.T) {
 		SessionConfig:  session.DefaultConfig(),
 	}
 	config.SessionConfig.PeerID = 99970
-	config.SessionConfig.MaxHistory = 100
 
 	a, executor := newTestAgentWithStub(t, config)
 
@@ -1214,7 +1200,6 @@ func TestTruncatedStream_NoCorrectiveFeedback(t *testing.T) {
 		SessionConfig:  session.DefaultConfig(),
 	}
 	config.SessionConfig.PeerID = 99980
-	config.SessionConfig.MaxHistory = 100
 
 	a, _ := newTestAgentWithStub(t, config)
 
@@ -1262,7 +1247,6 @@ func TestMalformedXMLInReasoning_WithFinishStop(t *testing.T) {
 		SessionConfig:  session.DefaultConfig(),
 	}
 	config.SessionConfig.PeerID = 99990
-	config.SessionConfig.MaxHistory = 100
 
 	a, _ := newTestAgentWithStub(t, config)
 

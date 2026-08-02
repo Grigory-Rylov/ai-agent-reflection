@@ -16,8 +16,7 @@ import (
 // Scenario 1: Long conversation with code discussion
 func TestScenario_CodeDiscussion(t *testing.T) {
 	mockLLM := &mockLLMCompressor{}
-	config := DefaultCompactionConfig()
-	compactor := NewCompactor(config, mockLLM, nil)
+	compactor := NewCompactor(mockLLM)
 
 	// Симулируем долгий разговор о рефакторинге
 	msgs := []tokenizers.Message{
@@ -82,8 +81,7 @@ func TestScenario_MultipleCompactionCycles(t *testing.T) {
 			}, nil
 		},
 	}
-	config := DefaultCompactionConfig()
-	compactor := NewCompactor(config, mockLLM, nil)
+	compactor := NewCompactor(mockLLM)
 
 	// Первая компакшн
 	msgs1 := createConversation(20, 1000)
@@ -379,8 +377,7 @@ func TestScenario_SplitTurn(t *testing.T) {
 // Scenario 11: Empty/null message handling
 func TestScenario_EmptyMessages(t *testing.T) {
 	mockLLM := &mockLLMCompressor{}
-	config := DefaultCompactionConfig()
-	compactor := NewCompactor(config, mockLLM, nil)
+	compactor := NewCompactor(mockLLM)
 
 	tests := []struct {
 		name      string
@@ -390,7 +387,7 @@ func TestScenario_EmptyMessages(t *testing.T) {
 	}{
 		{"nil messages", nil, 2, true},
 		{"empty messages", []tokenizers.Message{}, 2, true},
-		{"single user", []tokenizers.Message{{Role: "user", Content: "hi"}}, 2, true}, // head empty, no previous summary
+		{"single user", []tokenizers.Message{{Role: "user", Content: "hi"}}, 2, true},                 // head empty, no previous summary
 		{"only system", []tokenizers.Message{{Role: "system", Content: "You are helpful"}}, 2, false}, // system messages go to head
 		{"two user messages with tail 1", []tokenizers.Message{
 			{Role: "user", Content: "old"},
@@ -445,9 +442,8 @@ func TestScenario_SummaryTemplateValidation(t *testing.T) {
 
 // Scenario 13: Auto-continue after compaction
 func TestScenario_AutoContinueAfterCompact(t *testing.T) {
-	config := DefaultCompactionConfig()
 	mockLLM := &mockLLMCompressor{}
-	compactor := NewCompactor(config, mockLLM, nil)
+	compactor := NewCompactor(mockLLM)
 
 	msgs := []tokenizers.Message{
 		{Role: "user", Content: "old request"},
@@ -486,9 +482,8 @@ func TestScenario_AutoContinueAfterCompact(t *testing.T) {
 
 // Scenario 14: Context with only summary (no head to compress)
 func TestScenario_OnlySummaryNoHead(t *testing.T) {
-	config := DefaultCompactionConfig()
 	mockLLM := &mockLLMCompressor{}
-	compactor := NewCompactor(config, mockLLM, nil)
+	compactor := NewCompactor(mockLLM)
 
 	// Уже сжатый контекст
 	msgs := []tokenizers.Message{

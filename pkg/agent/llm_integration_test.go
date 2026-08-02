@@ -81,14 +81,13 @@ func setupTestAgent(t *testing.T) (*agentImpl, string) {
 	reg.Register(&tools.WebSearchTool{})
 
 	config := Config{
-		LlamaServerURL:           serverURL,
-		Model:                    model,
-		MaxTokens:                maxTokens,
-		Temperature:              temperature,
-		SessionConfig:            session.DefaultConfig(),
-		EnableTools:              true,
-		MaxToolCalls:             3,
-		EnableContextCompression: false,
+		LlamaServerURL: serverURL,
+		Model:          model,
+		MaxTokens:      maxTokens,
+		Temperature:    temperature,
+		SessionConfig:  session.DefaultConfig(),
+		EnableTools:    true,
+		MaxToolCalls:   3,
 	}
 
 	a := NewAgent(config)

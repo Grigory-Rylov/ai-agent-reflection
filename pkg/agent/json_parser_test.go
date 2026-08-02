@@ -300,7 +300,6 @@ func TestJSONFallback_Integration(t *testing.T) {
 		SessionConfig:  session.DefaultConfig(),
 	}
 	config.SessionConfig.PeerID = 99920
-	config.SessionConfig.MaxHistory = 100
 
 	a, executor := newTestAgentWithStub(t, config)
 

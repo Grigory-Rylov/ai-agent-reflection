@@ -47,7 +47,7 @@ func (c *LLMCompressor) Compress(ctx context.Context, req *CompressionRequest) (
 
 	// Формируем промпт для сжатия
 	systemPrompt := c.buildCompressionSystemPrompt(req)
-	userPrompt := c.buildCompressionUserPrompt(req.Messages, req.Strategy, req.TargetTokens)
+	userPrompt := c.buildCompressionUserPrompt(req.Messages, req.TargetTokens)
 
 	// Отправляем запрос на сжатие
 	compressedText, summary, err := c.sendCompressionRequest(ctx, systemPrompt, userPrompt, req.TargetTokens)
@@ -58,23 +58,16 @@ func (c *LLMCompressor) Compress(ctx context.Context, req *CompressionRequest) (
 	// Считаем токены после сжатия
 	compressedTokens, _ := c.countTextTokens(compressedText)
 
-	// Создаём сжатые сообщения
-	var compressedMessages []tokenizers.Message
-	if req.Strategy == SummarizeStrategy {
-		// Если суммаризация — добавляем резюме как системное сообщение
-		compressedMessages = []tokenizers.Message{
-			{
-				Role:    "system",
-				Content: fmt.Sprintf("[SUMMARY] %s", summary),
-			},
-			{
-				Role:    "user",
-				Content: compressedText,
-			},
-		}
-	} else {
-		// Если обрезка — оставляем только последние сообщения
-		compressedMessages = c.truncateMessages(req.Messages, req.TargetTokens)
+	// Суммаризация — добавляем резюме и сжатый текст
+	compressedMessages := []tokenizers.Message{
+		{
+			Role:    "system",
+			Content: fmt.Sprintf("[SUMMARY] %s", summary),
+		},
+		{
+			Role:    "user",
+			Content: compressedText,
+		},
 	}
 
 	ratio := CalculateCompressionRatio(originalTokens, compressedTokens)
@@ -91,29 +84,19 @@ func (c *LLMCompressor) Compress(ctx context.Context, req *CompressionRequest) (
 
 // buildCompressionSystemPrompt формирует системный промпт для сжатия
 func (c *LLMCompressor) buildCompressionSystemPrompt(req *CompressionRequest) string {
-	strategyHint := ""
-	switch req.Strategy {
-	case SummarizeStrategy:
-		strategyHint = "Please provide a concise summary of the conversation."
-	case TruncateStrategy:
-		strategyHint = "Keep only the most important parts of the conversation."
-	case HybridStrategy:
-		strategyHint = "Summarize the key points and keep only essential information."
-	}
-
 	return fmt.Sprintf(`You are a context compression assistant. Your task is to compress conversation history while preserving essential information.
 
-%s
+Please provide a concise summary of the conversation.
 
 Important:
 - Preserve key facts, decisions, and context
 - Remove redundant or repetitive information
 - Maintain the flow and meaning of the conversation
-- Keep the response concise and focused`, strategyHint)
+- Keep the response concise and focused`)
 }
 
 // buildCompressionUserPrompt формирует пользовательский промпт для сжатия
-func (c *LLMCompressor) buildCompressionUserPrompt(messages []tokenizers.Message, strategy CompressionStrategy, targetTokens int) string {
+func (c *LLMCompressor) buildCompressionUserPrompt(messages []tokenizers.Message, targetTokens int) string {
 	var sb strings.Builder
 	sb.WriteString("Please compress the following conversation:\n\n")
 
@@ -121,12 +104,7 @@ func (c *LLMCompressor) buildCompressionUserPrompt(messages []tokenizers.Message
 		sb.WriteString(fmt.Sprintf("[%s]: %s\n\n", msg.Role, msg.Content))
 	}
 
-	if strategy == SummarizeStrategy {
-		sb.WriteString("Provide a concise summary that captures the essence of this conversation.\n")
-	} else {
-		sb.WriteString("Keep only the most essential parts of this conversation.\n")
-	}
-
+	sb.WriteString("Provide a concise summary that captures the essence of this conversation.\n")
 	sb.WriteString(fmt.Sprintf("Target: approximately %d tokens maximum.\n", targetTokens))
 
 	return sb.String()
@@ -207,29 +185,4 @@ func (c *LLMCompressor) simpleCountTokens(messages []tokenizers.Message) int {
 func (c *LLMCompressor) countTextTokens(text string) (int, error) {
 	tokenizer := tokenizers.NewLlamaServerTokenizer(c.serverURL, c.model, 8192)
 	return tokenizer.CountTokens(text)
-}
-
-// truncateMessages обрезает сообщения до целевого размера
-func (c *LLMCompressor) truncateMessages(messages []tokenizers.Message, targetTokens int) []tokenizers.Message {
-	if len(messages) <= 2 {
-		return messages
-	}
-
-	// Сохраняем первые 2 и последние N сообщений
-	keepLast := 4
-	if len(messages) > keepLast+2 {
-		return append(messages[:2], messages[len(messages)-keepLast:]...)
-	}
-
-	return messages
-}
-
-// CheckTrigger проверяет нужно ли сжимать контекст
-func (c *LLMCompressor) CheckTrigger(currentTokens, maxTokens int) bool {
-	return ShouldCompress(currentTokens, maxTokens, DefaultCompressionTrigger())
-}
-
-// Name возвращает имя компрессора
-func (c *LLMCompressor) Name() string {
-	return "llm-compressor"
 }

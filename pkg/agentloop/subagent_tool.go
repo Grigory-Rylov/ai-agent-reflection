@@ -293,10 +293,9 @@ func (t *SubAgentTool) createAgent(name, systemPrompt string) agent.Agent {
 	cfg.SessionConfig = session.Config{
 		AutoSave:    false,
 		SessionFile: "",
-		MaxHistory:  100,
 	}
 	cfg.EnableLoopAlert = false
-	cfg.EnableContextCompression = true
+	cfg.EnableCompression = true
 	cfg.MaxToolCalls = 10
 	cfg.AgentName = name
 

@@ -194,10 +194,9 @@ func (o *Orchestrator) makeSubAgent(name, systemPrompt string, peerID int64) age
 	cfg.SessionConfig = session.Config{
 		AutoSave:    false,
 		SessionFile: "",
-		MaxHistory:  100,
 	}
 	cfg.EnableLoopAlert = false
-	cfg.EnableContextCompression = true
+	cfg.EnableCompression = true
 	cfg.MaxToolCalls = 10
 	cfg.AgentName = name
 
@@ -243,21 +242,19 @@ func (o *Orchestrator) makeAgentConfig() agent.Config {
 		maxTokens = ctx
 	}
 	return agent.Config{
-		LlamaServerURL:           llamaURL,
-		Model:                    modelName,
-		MaxTokens:                maxTokens,
-		Temperature:              o.config.Temperature,
-		SystemPromptFile:         o.systemPromptDir() + "/coordinator.txt",
-		EnableTools:              true,
-		MaxToolCalls:             10,
-		EnableLoopAlert:          false,
-		EnableContextCompression: false,
-		Debug:                    o.config.Debug,
-		AgentName:                "coordinator",
+		LlamaServerURL:   llamaURL,
+		Model:            modelName,
+		MaxTokens:        maxTokens,
+		Temperature:      o.config.Temperature,
+		SystemPromptFile: o.systemPromptDir() + "/coordinator.txt",
+		EnableTools:      true,
+		MaxToolCalls:     10,
+		EnableLoopAlert:  false,
+		Debug:            o.config.Debug,
+		AgentName:        "coordinator",
 		SessionConfig: session.Config{
 			AutoSave:    false,
 			SessionFile: "",
-			MaxHistory:  100,
 		},
 	}
 }

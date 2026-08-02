@@ -59,8 +59,6 @@ type Config struct {
 	PeerID int64
 	// SessionFile — путь к файлу для сохранения сессии
 	SessionFile string
-	// MaxHistory — максимальное количество сообщений в истории
-	MaxHistory int
 	// MaxLoopHistory — сколько последних ответов AI отслеживать для обнаружения цикла
 	MaxLoopHistory int
 	// LoopSimilarityThreshold — порог схожести для обнаружения цикла (0.0-1.0)
@@ -84,7 +82,6 @@ func DefaultConfig() Config {
 	return Config{
 		PeerID:                  0,
 		SessionFile:             "",
-		MaxHistory:              100,
 		MaxLoopHistory:          5,
 		LoopSimilarityThreshold: 0.85,
 		AutoSave:                false,
@@ -211,7 +208,6 @@ func (s *Session) AddUserMessage(content string) {
 		Timestamp: time.Now(),
 	}
 	s.messages = append(s.messages, msg)
-	s.enforceHistoryLimit()
 	s.updatedAt = time.Now()
 
 	if s.config.AutoSave {
@@ -230,7 +226,6 @@ func (s *Session) AddAssistantMessage(content string) {
 		Timestamp: time.Now(),
 	}
 	s.messages = append(s.messages, msg)
-	s.enforceHistoryLimit()
 	s.updatedAt = time.Now()
 
 	// Проверка на зацикливание
@@ -253,7 +248,6 @@ func (s *Session) AddAssistantMessageWithToolCalls(content string, toolCalls []M
 		Timestamp: time.Now(),
 	}
 	s.messages = append(s.messages, msg)
-	s.enforceHistoryLimit()
 	s.updatedAt = time.Now()
 
 	if s.config.AutoSave {
@@ -274,7 +268,6 @@ func (s *Session) AddToolMessage(toolCallID, toolName, content string) {
 		Timestamp:  time.Now(),
 	}
 	s.messages = append(s.messages, msg)
-	s.enforceHistoryLimit()
 	s.updatedAt = time.Now()
 
 	if s.config.AutoSave {
@@ -448,56 +441,6 @@ func similarity(a, b string) float64 {
 // ============================================================
 // Управление историей
 // ============================================================
-
-// enforceHistoryLimit удаляет старые сообщения при превышении лимита.
-// Пары "assistant с tool_calls + следующие tool-ответы" удаляются целиком,
-// чтобы не оставлять tool-сообщения без предшествующего assistant (иначе
-// llama-server отвечает ошибкой "Message has tool role, but there was no
-// previous assistant message with a tool call!").
-func (s *Session) enforceHistoryLimit() {
-	if s.config.MaxHistory <= 0 {
-		return
-	}
-
-	systemOffset := 0
-	if s.config.SystemPrompt != "" {
-		systemOffset = 1
-	}
-
-	for len(s.messages)-systemOffset > s.config.MaxHistory {
-		removed := false
-		for i := systemOffset; i < len(s.messages); i++ {
-			msgRole := s.messages[i].Role
-
-			if msgRole == SystemRole {
-				continue
-			}
-
-			// Assistant с tool_calls удаляем вместе со всеми следующими tool-ответами.
-			if msgRole == AssistantRole && len(s.messages[i].ToolCalls) > 0 {
-				end := i + 1
-				for end < len(s.messages) && s.messages[end].Role == ToolRole {
-					end++
-				}
-				s.messages = append(s.messages[:i], s.messages[end:]...)
-				removed = true
-				break
-			}
-
-			// Обычное сообщение (не перед tool-ответом) — безопасно удалить одно.
-			nextIsToolResponse := (i+1 < len(s.messages)) && s.messages[i+1].Role == ToolRole
-			if !nextIsToolResponse {
-				s.messages = append(s.messages[:i], s.messages[i+1:]...)
-				removed = true
-				break
-			}
-		}
-		if !removed {
-			// Нечего удалить безопасно — выходим, чтобы не зациклиться.
-			break
-		}
-	}
-}
 
 // ============================================================
 // Reset и Clear

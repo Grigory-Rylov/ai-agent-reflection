@@ -3,7 +3,6 @@ package agentloop
 import (
 	"time"
 
-	"github.com/opencode/llama-client/pkg/compress"
 	"github.com/opencode/llama-client/pkg/modelsconfig"
 	"github.com/opencode/llama-client/pkg/tools"
 	"github.com/opencode/llama-client/session"
@@ -27,17 +26,10 @@ type LoopConfig struct {
 	Logger                         Logger
 	Debug                          bool
 	EnableCompression              bool
-	CompressionStrategy            compress.CompressionStrategy
-	CompressionTokenThreshold      int
-	CompressionPercentageThreshold float64
-	CompactionConfig               compress.CompactionConfig
-	EnableOpenCodeCompaction       bool
 	TailTurns                      int
 	PreserveRecentTokens           *int
 	CompactionReserved             *int
 	EnablePruning                  bool
-	AutoContinueAfterCompact       bool
-	ArtifactStorePath              string
 	SkipShellPermissionForPathless bool
 }
 
@@ -55,17 +47,11 @@ func DefaultLoopConfig() LoopConfig {
 		EnableThinking:                 false,
 		EnableLogging:                  true,
 		EnableCompression:              true,
-		CompressionStrategy:            compress.SummarizeStrategy,
-		CompressionTokenThreshold:      6000,
-		CompressionPercentageThreshold: 0.75,
-		CompactionConfig:               compress.DefaultCompactionConfig(),
-		EnableOpenCodeCompaction:       true,
 		TailTurns:                      2,
 		PreserveRecentTokens:           nil,
 		CompactionReserved:             nil,
 		EnablePruning:                  true,
-		AutoContinueAfterCompact:       true,
-		ArtifactStorePath:              "./artifacts",
+		SkipShellPermissionForPathless: false,
 	}
 }
 

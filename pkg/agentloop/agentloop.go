@@ -37,9 +37,7 @@ type agentLoop struct {
 	sessionM         sync.Map
 	vk               VKClient
 	registry         ToolRegistry
-	contextMgr       *compress.ContextManager
 	compactor        *compress.Compactor
-	artifactStore    *compress.FileArtifactStore
 	tokenizer        tokenizers.Tokenizer
 	dispatcher       *EventDispatcher
 	stopCh           chan struct{}
@@ -49,8 +47,6 @@ type agentLoop struct {
 	aiHistory        []string
 	historyMu        sync.Mutex
 	thinkingCallback func(peerID int64, content string) error
-	contextState     map[int64]*compress.ContextState
-	stateMu          sync.RWMutex
 }
 
 func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentLoop, error) {
@@ -102,49 +98,21 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 	}
 
 	llmCompressor := compress.NewLLMCompressor(llamaURL, modelName, config.Temperature)
-	compactor := compress.NewCompactor(config.CompactionConfig, llmCompressor, nil)
-
-	var artifactStore *compress.FileArtifactStore
-	if config.ArtifactStorePath != "" {
-		var err error
-		artifactStore, err = compress.NewFileArtifactStore(config.ArtifactStorePath)
-		if err != nil && l != nil {
-			l.WarnLogf("Failed to create artifact store: %v", err)
-		}
-	}
-
-	var contextMgr *compress.ContextManager
-	if config.EnableCompression {
-		compressor := compress.NewLLMCompressor(llamaURL, modelName, config.Temperature)
-		if config.CompressionTokenThreshold <= 0 {
-			config.CompressionTokenThreshold = 6000
-		}
-		if config.CompressionPercentageThreshold <= 0 {
-			config.CompressionPercentageThreshold = 0.75
-		}
-		trigger := compress.CompressionTrigger{
-			TokenThreshold:      config.CompressionTokenThreshold,
-			PercentageThreshold: config.CompressionPercentageThreshold,
-		}
-		contextMgr = compress.NewContextManager(compressor, tokenizer, trigger)
-	}
+	compactor := compress.NewCompactor(llmCompressor)
 
 	if l != nil {
 		l.InfoLogf("AgentLoop initialized: model=%s host=%s maxTokens=%d", modelName, llamaURL, config.MaxTokens)
 	}
 
 	return &agentLoop{
-		config:        config,
-		vk:            vk,
-		registry:      registry,
-		contextMgr:    contextMgr,
-		compactor:     compactor,
-		artifactStore: artifactStore,
-		tokenizer:     tokenizer,
-		stopCh:        make(chan struct{}),
-		dispatcher:    NewEventDispatcher(),
-		log:           l,
-		contextState:  make(map[int64]*compress.ContextState),
+		config:     config,
+		vk:         vk,
+		registry:   registry,
+		compactor:  compactor,
+		tokenizer:  tokenizer,
+		stopCh:     make(chan struct{}),
+		dispatcher: NewEventDispatcher(),
+		log:        l,
 	}, nil
 }
 
@@ -204,11 +172,7 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 	sess.AddUserMessage(prompt)
 
 	if al.config.EnableCompression {
-		if al.config.EnableOpenCodeCompaction {
-			al.checkAndCompressOpenCode(ctx, sess, peerID)
-		} else {
-			al.checkAndCompress(ctx, sess, peerID)
-		}
+		al.checkAndCompressOpenCode(ctx, sess, peerID)
 	}
 
 	messages := al.buildAPIMessages(sess)
@@ -221,7 +185,7 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 		return "", fmt.Errorf("LLM request failed: %w", err)
 	}
 
-	if al.config.EnableOpenCodeCompaction && al.config.EnablePruning {
+	if al.config.EnablePruning {
 		al.runPruning(sess)
 	}
 
@@ -472,9 +436,6 @@ func (al *agentLoop) buildAgentConfig() agent.Config {
 		SystemPromptFile:               al.config.SystemPromptFile,
 		EnableTools:                    al.config.EnableTools,
 		MaxToolCalls:                   al.config.MaxToolCalls,
-		EnableContextCompression:       false,
-		CompressionTokenThreshold:      al.config.CompressionTokenThreshold,
-		CompressionPercentageThreshold: al.config.CompressionPercentageThreshold,
 		Debug:                          al.config.Debug,
 		SkipShellPermissionForPathless: al.config.SkipShellPermissionForPathless,
 	}
@@ -607,35 +568,6 @@ func getStringField(m map[string]interface{}, key string) string {
 	return ""
 }
 
-func (al *agentLoop) checkAndCompress(ctx context.Context, sess *session.Session, peerID int64) {
-	if al.compactor != nil {
-		al.checkAndCompactNew(ctx, sess, peerID)
-		return
-	}
-
-	if al.contextMgr == nil {
-		return
-	}
-
-	history := sess.GetHistory()
-	var tokenizerMessages []tokenizers.Message
-	for _, msg := range history {
-		tokenizerMessages = append(tokenizerMessages, tokenizers.Message{
-			Role:    string(msg.Role),
-			Content: msg.Content,
-		})
-	}
-
-	err := al.contextMgr.CheckAndCompress(ctx, peerID, tokenizerMessages, al.config.MaxTokens)
-	if err != nil {
-		if al.log != nil {
-			al.log.WarnLogf("Context compression skipped: %v", err)
-		}
-	} else if al.log != nil {
-		al.log.InfoLogf("Context compressed for peer %d", peerID)
-	}
-}
-
 func (al *agentLoop) checkAndCompressOpenCode(ctx context.Context, sess *session.Session, peerID int64) {
 	history := sess.GetHistory()
 
@@ -743,69 +675,6 @@ func (al *agentLoop) runPruning(sess *session.Session) {
 	}
 }
 
-func (al *agentLoop) checkAndCompactNew(ctx context.Context, sess *session.Session, peerID int64) {
-	history := sess.GetHistory()
-
-	messages := al.convertHistoryToMessages(history)
-
-	tokensBefore := compress.EstimateMessagesTokensSimple(messages)
-
-	if al.log != nil {
-		al.log.DebugLogf("[COMPACTION] Peer %d: %d messages, ~%d tokens",
-			peerID, len(messages), tokensBefore)
-	}
-
-	result, err := al.compactor.CheckAndCompact(ctx, messages, al.config.MaxTokens)
-	if err != nil {
-		if al.log != nil {
-			al.log.WarnLogf("[COMPACTION] Failed: %v", err)
-		}
-		return
-	}
-
-	if result == nil {
-		if al.log != nil {
-			al.log.DebugLogf("[COMPACTION] Peer %d: No compression needed", peerID)
-		}
-		return
-	}
-
-	if al.log != nil {
-		al.log.InfoLogf("[COMPACTION] Peer %d: %d -> %d tokens (%.1f%% reduction), level=%v",
-			peerID, result.TokensBefore, result.TokensAfter,
-			(1-result.CompressionRatio())*100, result.Level)
-	}
-
-	if al.log != nil && result.State != nil {
-		al.log.DebugLogf("[COMPACTION] State extracted: goal='%s', decisions=%d, memory=%d, artifacts=%d",
-			result.State.Goal, len(result.State.Decisions),
-			len(result.State.WorkingMemory), len(result.State.Artifacts))
-
-		if len(result.State.Decisions) > 0 {
-			for i, d := range result.State.Decisions {
-				al.log.DebugLogf("[COMPACTION]   Decision %d: %s", i+1, d)
-			}
-		}
-
-		if len(result.State.Artifacts) > 0 {
-			for i, a := range result.State.Artifacts {
-				al.log.DebugLogf("[COMPACTION]   Artifact %d: %s (%s)", i+1, a.Path, a.Description)
-			}
-		}
-	}
-
-	if al.log != nil {
-		al.log.DebugLogf("[COMPACTION] Kept %d messages, summarized %d",
-			len(result.KeptMessages), result.SummarizedCount)
-	}
-
-	if result.State != nil {
-		al.saveContextState(peerID, result.State)
-	}
-
-	al.updateSessionAfterCompaction(sess, result)
-}
-
 func (al *agentLoop) convertHistoryToMessages(history []session.Message) []tokenizers.Message {
 	messages := make([]tokenizers.Message, len(history))
 	for i, msg := range history {
@@ -815,39 +684,6 @@ func (al *agentLoop) convertHistoryToMessages(history []session.Message) []token
 		}
 	}
 	return messages
-}
-
-func (al *agentLoop) saveContextState(peerID int64, state *compress.ContextState) {
-	al.stateMu.Lock()
-	defer al.stateMu.Unlock()
-	al.contextState[peerID] = state
-}
-
-func (al *agentLoop) getContextState(peerID int64) *compress.ContextState {
-	al.stateMu.RLock()
-	defer al.stateMu.RUnlock()
-	return al.contextState[peerID]
-}
-
-func (al *agentLoop) updateSessionAfterCompaction(sess *session.Session, result *compress.CompactionResult) {
-	if len(result.KeptMessages) == 0 {
-		return
-	}
-
-	sess.Reset()
-
-	for _, msg := range result.KeptMessages {
-		switch msg.Role {
-		case "system":
-			sess.UpdateSystemPrompt(msg.Content)
-		case "user":
-			sess.AddUserMessage(msg.Content)
-		case "assistant":
-			sess.AddAssistantMessage(msg.Content)
-		case "tool":
-			sess.AddUserMessage(msg.Content)
-		}
-	}
 }
 
 func (al *agentLoop) Start(ctx context.Context) {
