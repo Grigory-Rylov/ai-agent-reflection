@@ -4,39 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
-
-	"github.com/opencode/llama-client/pkg/logger"
 )
-
-func (a *agentImpl) collectStreamResponse(chunkChan <-chan StreamChunkEvent) (string, string, int, int, error) {
-	logger.DebugToFile(a.agentPrefix()+"[LLM RESPONSE] Starting to collect stream response...")
-	var fullResponse strings.Builder
-	var fullReasoning strings.Builder
-	var promptTokens, completionTokens int
-
-	for event := range chunkChan {
-		if event.IsError {
-			logger.DebugToFile(a.agentPrefix()+"[LLM RESPONSE] Stream error: %s", event.Content)
-			return "", "", 0, 0, fmt.Errorf("API error: %s (code: %s)", event.Content, event.ErrorCode)
-		}
-		if event.IsDone {
-			promptTokens = event.PromptTokens
-			completionTokens = event.CompletionTokens
-			break
-		}
-		if event.Content != "" {
-			fullResponse.WriteString(event.Content)
-		}
-		if event.ReasoningContent != "" {
-			fullReasoning.WriteString(event.ReasoningContent)
-		}
-	}
-
-	response := fullResponse.String()
-	reasoning := fullReasoning.String()
-	logger.DebugToFile(a.agentPrefix()+"[LLM RESPONSE] Collected: content=%d chars, reasoning=%d chars, in=%d, out=%d", len(response), len(reasoning), promptTokens, completionTokens)
-	return response, reasoning, promptTokens, completionTokens, nil
-}
 
 func (a *agentImpl) collectStreamResponseWithToolCalls(chunkChan <-chan StreamChunkEvent) (string, string, string, []ToolCall, int, int, error) {
 	var fullResponse strings.Builder

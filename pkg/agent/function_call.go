@@ -81,12 +81,7 @@ func (a *agentImpl) collectStreamAndLog(ctx context.Context, messages []Message)
 	toolsSchema := a.toolsRegistry.ToOpenAISchema()
 	streamConfig := a.buildToolsStreamConfig(toolsSchema)
 
-	chunkChan, err := a.streamingRequest(ctx, streamConfig, messages)
-	if err != nil {
-		return "", "", "", nil, 0, 0, fmt.Errorf("streaming request: %w", err)
-	}
-
-	responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.collectStreamResponseWithToolCalls(chunkChan)
+	responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.streamAndCollect(ctx, streamConfig, messages)
 	if err != nil {
 		return "", "", "", nil, 0, 0, err
 	}
