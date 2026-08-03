@@ -272,12 +272,14 @@ func (t *SubAgentTool) loadSystemPrompt(name string) (string, error) {
 			return info.Prompt, nil
 		}
 	}
-	promptPath := filepath.Join(t.SystemPromptDir, name+".txt")
-	data, err := os.ReadFile(promptPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to load system prompt for %q from %s: %v", name, promptPath, err)
+	for _, ext := range []string{".txt", ".md"} {
+		promptPath := filepath.Join(t.SystemPromptDir, name+ext)
+		data, err := os.ReadFile(promptPath)
+		if err == nil {
+			return string(data), nil
+		}
 	}
-	return string(data), nil
+	return "", fmt.Errorf("failed to load system prompt for %q from %s", name, t.SystemPromptDir)
 }
 
 func (t *SubAgentTool) createAgent(name, systemPrompt string) agent.Agent {

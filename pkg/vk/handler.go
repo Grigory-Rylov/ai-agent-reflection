@@ -46,6 +46,8 @@ type BotHandler struct {
 	mainPeerID     int64
 	thinkingPeerID int64
 	modelHolder    *modelsconfig.Holder
+	cancelFuncs    map[int64]context.CancelFunc
+	cancelMu       sync.RWMutex
 }
 
 func NewBotHandler(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger.Logger) *BotHandler {

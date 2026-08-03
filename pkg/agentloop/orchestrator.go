@@ -219,12 +219,14 @@ func (o *Orchestrator) loadSystemPrompt(name string) (string, error) {
 			return info.Prompt, nil
 		}
 	}
-	path := filepath.Join(o.systemPromptDir(), name+".txt")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("failed to load prompt for %q: %v", name, err)
+	for _, ext := range []string{".txt", ".md"} {
+		path := filepath.Join(o.systemPromptDir(), name+ext)
+		data, err := os.ReadFile(path)
+		if err == nil {
+			return string(data), nil
+		}
 	}
-	return string(data), nil
+	return "", fmt.Errorf("failed to load prompt for %q from %s", name, o.systemPromptDir())
 }
 
 func (o *Orchestrator) systemPromptDir() string {

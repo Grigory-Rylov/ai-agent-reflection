@@ -22,13 +22,27 @@ type LongPollServerResponse struct {
 	Ts     int64  `json:"ts"`
 }
 
+// VKAttachment — аттач в сообщении VK
+type VKAttachment struct {
+	Type string                 `json:"type"`
+	Raw  map[string]interface{} `json:"-"`
+}
+
+// DownloadedAttachment — результат скачанного аттача
+type DownloadedAttachment struct {
+	Type     string
+	Path     string
+	Filename string
+}
+
 // VKMessage — сообщение из VK Long Poll
 type VKMessage struct {
-	ID     int64  `json:"id"`
-	PeerID int64  `json:"peer_id"`
-	FromID int64  `json:"from_id"`
-	Date   int64  `json:"date"`
-	Text   string `json:"text"`
+	ID          int64            `json:"id"`
+	PeerID      int64            `json:"peer_id"`
+	FromID      int64            `json:"from_id"`
+	Date        int64            `json:"date"`
+	Text        string           `json:"text"`
+	Attachments []VKAttachment   `json:"attachments,omitempty"`
 }
 
 // APIErrorResponse — ошибка VK API

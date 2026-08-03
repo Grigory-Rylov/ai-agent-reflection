@@ -38,6 +38,7 @@ func TestShellPermissionNonFileCommandSkipsAsk(t *testing.T) {
 	}{
 		{"docker ps", "docker ps"},
 		{"docker ps && grep pattern", "docker ps && grep android-emulator"},
+		{"docker ps && grep glob pattern", "docker ps && grep android-emulator?"},
 		{"curl http://example.com", "curl http://example.com"},
 		{"echo hello", "echo hello"},
 		{"adb devices", "adb devices"},

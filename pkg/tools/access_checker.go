@@ -119,12 +119,17 @@ func isAbsolutePath(s string) bool {
 }
 
 // looksLikePath проверяет, похож ли токен на путь к файлу.
-// Исключает флаги, IP-адреса, URL, хосты, цитируемые строки и опции.
+// Исключает флаги, IP-адреса, URL, хосты, цитируемые строки, опции
+// и токены с glob-символами (?, *, [, ]).
 func looksLikePath(token string) bool {
 	if strings.HasPrefix(token, "-") {
 		return false
 	}
 	if len(token) > 0 && (token[0] == '\'' || token[0] == '"' || token[0] == '`') {
+		return false
+	}
+	// Glob-символы → не путь
+	if strings.ContainsAny(token, "?*[]!") {
 		return false
 	}
 	if isAbsolutePath(token) {
