@@ -3,13 +3,16 @@ package agentloop
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/opencode/llama-client/pkg/agent"
 	"github.com/opencode/llama-client/pkg/agentpolicy"
 	"github.com/opencode/llama-client/pkg/modelsconfig"
+	"github.com/opencode/llama-client/pkg/store"
 	"github.com/opencode/llama-client/pkg/tools"
 	"github.com/opencode/llama-client/session"
 )
@@ -28,6 +31,10 @@ type SubAgentTool struct {
 	Debug           bool
 	ModelHolder     *modelsconfig.Holder
 	SetActiveAgent  func(name string)
+	Store           store.Store       // SQLite store для сессий сабагентов
+	ParentSessionID string            // UUID родительской сессии
+	AgentSessionID  string            // UUID текущей сессии сабагента
+	Chain           []string          // Цепочка вызовов (список UUID от корня до текущего)
 }
 
 func (t *SubAgentTool) Name() string {
@@ -74,7 +81,7 @@ func (t *SubAgentTool) availableAgents() []agentpolicy.AgentInfo {
 	var result []agentpolicy.AgentInfo
 	for _, a := range all {
 		if a.Mode == agentpolicy.ModeSubagent || a.Mode == agentpolicy.ModeAll {
-			if !a.Hidden {
+			if !a.Hidden && !a.Internal {
 				result = append(result, a)
 			}
 		}
@@ -183,7 +190,14 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 
 	response, err := a.ProcessMessage(ctx, task, t.PeerID)
 	if err != nil {
+		if t.Store != nil {
+			t.cancelAgentSession()
+		}
 		return tools.ToolResult{Success: false, Error: fmt.Sprintf("sub-agent %q failed: %v", name, err)}, nil
+	}
+
+	if t.Store != nil {
+		t.completeAgentSession()
 	}
 
 	return tools.ToolResult{
@@ -303,6 +317,31 @@ func (t *SubAgentTool) createAgent(name, systemPrompt string) agent.Agent {
 
 	a := agent.NewAgent(cfg)
 	a.GetSession(t.PeerID).UpdateSystemPrompt(systemPrompt)
+
+	// Генерируем UUID для сессии сабагента и сохраняем в БД
+	if t.Store != nil {
+		sessionID := t.generateUUID()
+		t.AgentSessionID = sessionID
+
+		// Строим цепочку: родительская цепочка + текущая сессия
+		chain := make([]string, len(t.Chain))
+		copy(chain, t.Chain)
+		chain = append(chain, sessionID)
+
+		// Сохраняем сессию
+		t.Store.SaveAgentSession(&store.AgentSessionData{
+			ID:           sessionID,
+			ParentID:     t.ParentSessionID,
+			AgentName:    name,
+			PeerID:       t.PeerID,
+			SystemPrompt: systemPrompt,
+			Status:       "active",
+		})
+
+		// Сохраняем цепочку
+		t.Store.SaveAgentChain(t.PeerID, chain)
+	}
+
 	return a
 }
 
@@ -357,6 +396,9 @@ func (t *SubAgentTool) registerSubAgentTool(name string, a agent.Agent) {
 		Debug:           t.Debug,
 		ModelHolder:     t.ModelHolder,
 		SetActiveAgent:  t.SetActiveAgent,
+		Store:           t.Store,
+		ParentSessionID: t.AgentSessionID,
+		Chain:           t.Chain,
 	})
 	if inserter, ok := a.(toolInserter); ok {
 		inserter.RegisterTools(subReg)
@@ -407,4 +449,28 @@ func (t *SubAgentTool) makeThinkingCallback(agentName string) func(peerID int64,
 		}
 		return nil
 	}
+}
+
+// generateUUID создаёт уникальный идентификатор для сессии
+func (t *SubAgentTool) generateUUID() string {
+	h := fnv.New128a()
+	h.Write([]byte(fmt.Sprintf("%s-%d-%d-%d", t.ParentSessionID, t.CurrentDepth, time.Now().UnixNano(), t.PeerID)))
+	sum := h.Sum(nil)
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", sum[:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
+}
+
+// completeAgentSession помечает сессию как завершённую
+func (t *SubAgentTool) completeAgentSession() {
+	if t.Store == nil || t.AgentSessionID == "" {
+		return
+	}
+	t.Store.CompleteAgentSession(t.AgentSessionID)
+}
+
+// cancelAgentSession помечает сессию как отменённую
+func (t *SubAgentTool) cancelAgentSession() {
+	if t.Store == nil || t.AgentSessionID == "" {
+		return
+	}
+	t.Store.CancelAgentSession(t.AgentSessionID)
 }

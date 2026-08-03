@@ -28,6 +28,39 @@ type VKAttachment struct {
 	Raw  map[string]interface{} `json:"-"`
 }
 
+// UnmarshalJSON implements custom JSON unmarshaling for VKAttachment.
+// Extracts "type" and stores all other fields in Raw.
+func (a *VKAttachment) UnmarshalJSON(data []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("unmarshal attachment: %w", err)
+	}
+
+	if typ, ok := raw["type"].(string); ok {
+		a.Type = typ
+	}
+
+	// Copy all fields except "type" into Raw
+	a.Raw = make(map[string]interface{})
+	for k, v := range raw {
+		if k != "type" {
+			a.Raw[k] = v
+		}
+	}
+
+	return nil
+}
+
+// ToRaw reconstructs the raw map with type + all Raw fields.
+func (a *VKAttachment) ToRaw() map[string]interface{} {
+	result := make(map[string]interface{})
+	result["type"] = a.Type
+	for k, v := range a.Raw {
+		result[k] = v
+	}
+	return result
+}
+
 // DownloadedAttachment — результат скачанного аттача
 type DownloadedAttachment struct {
 	Type     string

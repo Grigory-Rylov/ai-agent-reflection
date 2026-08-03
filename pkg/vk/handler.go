@@ -34,6 +34,8 @@ type AgentOrchestrator interface {
 	RunAgent(ctx context.Context, agentName, task string, peerID int64) (string, error)
 	ListAgentNames() []string
 	GetCurrentAgent() string
+	GetActiveAgentSessions(peerID int64) (string, error)
+	ClearActiveSessions(peerID int64)
 }
 
 type BotHandler struct {
@@ -48,27 +50,32 @@ type BotHandler struct {
 	modelHolder    *modelsconfig.Holder
 	cancelFuncs    map[int64]context.CancelFunc
 	cancelMu       sync.RWMutex
+	attachmentsDir string
 }
 
 func NewBotHandler(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger.Logger) *BotHandler {
 	return &BotHandler{
-		vkClient: vkClient,
-		aiAgent:  aiAgent,
-		log:      log,
-		sessions: make(map[int64]*session.Session),
+		vkClient:       vkClient,
+		aiAgent:        aiAgent,
+		log:            log,
+		sessions:       make(map[int64]*session.Session),
+		cancelFuncs:    make(map[int64]context.CancelFunc),
+		attachmentsDir: "./attachments",
 	}
 }
 
 func NewBotHandlerWithPeerID(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger.Logger, mainPeerID, thinkingPeerID int64, orchestrator AgentOrchestrator, modelHolder *modelsconfig.Holder) *BotHandler {
 	return &BotHandler{
-		vkClient:      vkClient,
-		aiAgent:       aiAgent,
-		orchestrator:  orchestrator,
-		log:           log,
-		sessions:      make(map[int64]*session.Session),
-		mainPeerID:    mainPeerID,
+		vkClient:       vkClient,
+		aiAgent:        aiAgent,
+		orchestrator:   orchestrator,
+		log:            log,
+		sessions:       make(map[int64]*session.Session),
+		mainPeerID:     mainPeerID,
 		thinkingPeerID: thinkingPeerID,
-		modelHolder:   modelHolder,
+		modelHolder:    modelHolder,
+		cancelFuncs:    make(map[int64]context.CancelFunc),
+		attachmentsDir: "./attachments",
 	}
 }
 
@@ -128,7 +135,9 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 		}
 
 		if h.orchestrator != nil {
-			ctx := context.Background()
+			ctx, cancel := context.WithCancel(context.Background())
+			h.setCancelFunc(peerID, cancel)
+			defer h.clearCancelFunc(peerID)
 			response, err := h.orchestrator.RunAgent(ctx, agentName, task, peerID)
 			if err != nil {
 				if h.log != nil {
@@ -161,7 +170,9 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 		}
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	h.setCancelFunc(peerID, cancel)
+	defer h.clearCancelFunc(peerID)
 	response, err := h.aiAgent.ProcessMessage(ctx, message, peerID)
 	if err != nil {
 		if h.log != nil {
@@ -189,7 +200,8 @@ func extractCommand(message string) string {
 
 func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, timeout time.Duration) string {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
+	h.setCancelFunc(peerID, cancel)
+	defer h.clearCancelFunc(peerID)
 
 	h.ensureSession(peerID)
 
@@ -241,6 +253,9 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 	switch cmd {
 	case "/clear":
 		return h.handleClear(peerID)
+
+	case "/sessions":
+		return h.handleSessions(peerID)
 
 	case "/newsession", "/n":
 		return h.handleNewSession(input, peerID)
@@ -464,6 +479,17 @@ func extractBaseCommand(input string) string {
 	return parts[0]
 }
 
+func (h *BotHandler) handleSessions(peerID int64) string {
+	if h.orchestrator == nil {
+		return "Orchestrator not configured."
+	}
+	sessions, err := h.orchestrator.GetActiveAgentSessions(peerID)
+	if err != nil {
+		return fmt.Sprintf("Error getting sessions: %v", err)
+	}
+	return sessions
+}
+
 func (h *BotHandler) handleClear(peerID int64) string {
 	workingDir := ""
 	if s := h.aiAgent.GetSession(peerID); s != nil {
@@ -499,8 +525,12 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 		return fmt.Sprintf("Ошибка: не удалось получить абсолютный путь: %v", err)
 	}
 
+	h.cancelActiveRequest(peerID)
 	h.aiAgent.ResetSession(peerID)
 	tools.ClearGrants(peerID)
+	if h.orchestrator != nil {
+		h.orchestrator.ClearActiveSessions(peerID)
+	}
 
 	if s := h.aiAgent.GetSession(peerID); s != nil {
 		s.SetWorkingDir(absPath)
@@ -549,6 +579,31 @@ func (h *BotHandler) clearHandlerSession(peerID int64) {
 	h.sessionMu.Lock()
 	defer h.sessionMu.Unlock()
 	delete(h.sessions, peerID)
+}
+
+func (h *BotHandler) cancelActiveRequest(peerID int64) {
+	h.cancelMu.Lock()
+	defer h.cancelMu.Unlock()
+	if cancel, ok := h.cancelFuncs[peerID]; ok {
+		cancel()
+		delete(h.cancelFuncs, peerID)
+		logger.DebugToFile("[cancelActiveRequest] Cancelled active request for peer %d", peerID)
+	}
+}
+
+func (h *BotHandler) setCancelFunc(peerID int64, cancel context.CancelFunc) {
+	h.cancelMu.Lock()
+	defer h.cancelMu.Unlock()
+	if cancel, ok := h.cancelFuncs[peerID]; ok {
+		cancel()
+	}
+	h.cancelFuncs[peerID] = cancel
+}
+
+func (h *BotHandler) clearCancelFunc(peerID int64) {
+	h.cancelMu.Lock()
+	defer h.cancelMu.Unlock()
+	delete(h.cancelFuncs, peerID)
 }
 
 func (h *BotHandler) ensureSession(peerID int64) {
@@ -615,42 +670,87 @@ func (h *BotHandler) runLongPoll(ctx context.Context, server, key string, ts int
 			}
 
 			ts = newTs
+			fullMsgMap := h.fetchFullMessages(messages)
 
 			for _, msg := range messages {
 				if h.thinkingPeerID > 0 && msg.PeerID == h.thinkingPeerID {
-					if h.log != nil {
-						h.log.DebugLogf("Ignoring message from thinking_peer_id %d", msg.PeerID)
-					}
 					continue
 				}
-
-				if h.log != nil {
-					textPreview := msg.Text
-					if len(textPreview) > 100 {
-						textPreview = textPreview[:100] + "..."
-					}
-					h.log.InfoLogf("Received message from peer %d: %s", msg.PeerID, textPreview)
-				}
-
 				replyPeerID := msg.PeerID
 				if h.mainPeerID > 0 {
 					replyPeerID = h.mainPeerID
 				}
-
-				go func(messageText string, peerID int64, targetPeer int64) {
-					tools.SetQuestionPeerID(peerID)
-					logger.DebugToFile("[handler] goroutine: peerID=%d, targetPeer=%d, text=%s", peerID, targetPeer, truncateStr(messageText, 100))
-					response := h.ProcessMessage(messageText, peerID)
-					logger.DebugToFile("[handler] goroutine: ProcessMessage returned response=%q (len=%d)", response, len(response))
-					if response == "" {
-						return
-					}
-					_, err := h.vkClient.SendMessage(targetPeer, response)
-					if err != nil && h.log != nil {
-						h.log.ErrorLogf("Failed to send response to peer %d: %v", targetPeer, err)
-					}
-				}(msg.Text, msg.PeerID, replyPeerID)
+				go h.handleIncomingMessage(msg, replyPeerID, fullMsgMap)
 			}
 		}
 	}
+}
+
+func (h *BotHandler) fetchFullMessages(messages []VKMessage) map[int64]VKMessage {
+	if len(messages) == 0 {
+		return nil
+	}
+	ids := make([]int64, len(messages))
+	for i, m := range messages {
+		ids[i] = m.ID
+	}
+	full, err := h.vkClient.GetMessagesByID(ids)
+	if err != nil {
+		if h.log != nil {
+			h.log.WarnLogf("Failed to fetch full messages: %v", err)
+		}
+		return nil
+	}
+	result := make(map[int64]VKMessage, len(full))
+	for _, m := range full {
+		result[m.ID] = m
+	}
+	return result
+}
+
+func (h *BotHandler) handleIncomingMessage(
+	msg VKMessage,
+	targetPeer int64,
+	fullMsgMap map[int64]VKMessage,
+) {
+	tools.SetQuestionPeerID(msg.PeerID)
+	fullText := h.buildFullText(&msg, fullMsgMap)
+	logger.DebugToFile("[handler] goroutine: peerID=%d, targetPeer=%d, text=%s",
+		msg.PeerID, targetPeer, truncateStr(fullText, 100))
+	response := h.ProcessMessage(fullText, msg.PeerID)
+	if response == "" {
+		return
+	}
+	_, err := h.vkClient.SendMessage(targetPeer, response)
+	if err != nil && h.log != nil {
+		h.log.ErrorLogf("Failed to send response to peer %d: %v", targetPeer, err)
+	}
+}
+
+func (h *BotHandler) buildFullText(msg *VKMessage, fullMsgMap map[int64]VKMessage) string {
+	full, found := fullMsgMap[msg.ID]
+	if !found || len(full.Attachments) == 0 {
+		return msg.Text
+	}
+	rawAttachments := toRawAttachments(full.Attachments)
+	downloaded, err := DownloadAttachments(rawAttachments, h.attachmentsDir)
+	if err != nil {
+		if h.log != nil {
+			h.log.WarnLogf("Failed to download attachments: %v", err)
+		}
+		return msg.Text
+	}
+	info := FormatAttachmentInfo(downloaded)
+	if info == "" {
+		return msg.Text
+	}
+	return msg.Text + "\n\n" + info
+}
+
+func toRawAttachments(attachments []VKAttachment) []map[string]interface{} {
+	result := make([]map[string]interface{}, len(attachments))
+	for i, a := range attachments {
+		result[i] = a.ToRaw()
+	}
+	return result
 }

@@ -47,6 +47,26 @@ type PermissionRecord struct {
 	Resource  string `json:"resource,omitempty"`
 }
 
+type AgentSessionData struct {
+	ID           string    `json:"id"`
+	ParentID     string    `json:"parent_id,omitempty"`
+	AgentName    string    `json:"agent_name"`
+	PeerID       int64     `json:"peer_id"`
+	SystemPrompt string    `json:"system_prompt"`
+	LastPrompt   string    `json:"last_prompt,omitempty"`
+	LastToolCall string    `json:"last_tool_call,omitempty"`
+	Status       string    `json:"status"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Messages     string    `json:"messages,omitempty"` // JSON array of messages
+}
+
+type AgentChainData struct {
+	PeerID    int64     `json:"peer_id"`
+	Chain     []string  `json:"chain"` // ordered list of session IDs from root to current
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type Store interface {
 	Close() error
 
@@ -66,6 +86,17 @@ type Store interface {
 	GetDistinctGrantSessions() ([]string, error)
 	SavePermission(sessionID, toolName, resource, decision string) error
 	ClearPermissions(sessionID string) error
+
+	// Agent sessions
+	SaveAgentSession(s *AgentSessionData) error
+	GetAgentSession(id string) (*AgentSessionData, error)
+	GetActiveAgentSessions(peerID int64) ([]AgentSessionData, error)
+	CompleteAgentSession(id string) error
+	CancelAgentSession(id string) error
+	GetAgentChain(peerID int64) (*AgentChainData, error)
+	SaveAgentChain(peerID int64, chain []string) error
+	ClearAgentChain(peerID int64) error
+	GetAllActiveChains() ([]AgentChainData, error)
 }
 
 type sqliteDB struct {

@@ -18,6 +18,7 @@ type AgentInfo struct {
 	Mode        AgentMode                `json:"mode"`
 	Native      bool                     `json:"native"`
 	Hidden      bool                     `json:"hidden"`
+	Internal    bool                     `json:"internal"`
 	Leaf        bool                     `json:"leaf"`
 	Review      bool                     `json:"review"`
 	Coordinator bool                   `json:"coordinator"`
@@ -246,6 +247,7 @@ func (am *AgentManager) LoadFromConfig(cfg map[string]AgentCfg) {
 			Description: ac.Description,
 			Mode:        mode,
 			Hidden:      ac.Hidden,
+			Internal:    ac.Internal,
 			Leaf:        ac.Leaf,
 			Review:      ac.Review,
 			Coordinator: ac.Coordinator,
@@ -261,6 +263,7 @@ type AgentCfg struct {
 	Description string     `json:"description"`
 	Prompt      string     `json:"prompt"`
 	Hidden      bool       `json:"hidden"`
+	Internal    bool       `json:"internal"`
 	Leaf        bool       `json:"leaf"`
 	Review      bool       `json:"review"`
 	Coordinator bool       `json:"coordinator"`

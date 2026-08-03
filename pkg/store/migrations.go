@@ -11,9 +11,13 @@ func runMigrations(db *sql.DB) error {
 		messagesTable,
 		todosTable,
 		permissionsTable,
+		agentSessionsTable,
+		agentChainTable,
 		messagesIndex,
 		todosIndex,
 		permissionsIndex,
+		agentSessionsIndex,
+		agentChainIndex,
 	}
 
 	for _, q := range queries {
@@ -99,3 +103,28 @@ const permissionsTable = `CREATE TABLE IF NOT EXISTS permissions (
 const messagesIndex = `CREATE INDEX IF NOT EXISTS idx_messages_peer_id ON messages(peer_id)`
 const todosIndex = `CREATE INDEX IF NOT EXISTS idx_todos_session ON todos(session_id)`
 const permissionsIndex = `CREATE INDEX IF NOT EXISTS idx_permissions_session ON permissions(session_id)`
+
+// agent_sessions — сессии сабагентов с UUID
+const agentSessionsTable = `CREATE TABLE IF NOT EXISTS agent_sessions (
+	id TEXT PRIMARY KEY,
+	parent_id TEXT DEFAULT '',
+	agent_name TEXT NOT NULL,
+	peer_id INTEGER NOT NULL,
+	system_prompt TEXT NOT NULL DEFAULT '',
+	last_prompt TEXT DEFAULT '',
+	last_tool_call TEXT DEFAULT '',
+	status TEXT NOT NULL DEFAULT 'active',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	messages TEXT DEFAULT ''
+)`
+
+// active_agent_chain — активные цепочки вызовов агентов
+const agentChainTable = `CREATE TABLE IF NOT EXISTS active_agent_chain (
+	peer_id INTEGER PRIMARY KEY,
+	chain TEXT NOT NULL DEFAULT '',
+	updated_at TEXT NOT NULL
+)`
+
+const agentSessionsIndex = `CREATE INDEX IF NOT EXISTS idx_agent_sessions_peer_id ON agent_sessions(peer_id)`
+const agentChainIndex = `CREATE INDEX IF NOT EXISTS idx_agent_chain_updated ON active_agent_chain(updated_at)`

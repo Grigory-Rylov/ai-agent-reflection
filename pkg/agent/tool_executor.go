@@ -585,7 +585,24 @@ func briefToolCall(toolName string, args map[string]string) string {
 		}
 	case "time_get":
 		return "time_get()"
-	case "subagent":
+	case "todo":
+		op := args["operation"]
+		task := args["task"]
+		status := args["status"]
+		id := args["id"]
+		switch op {
+		case "add":
+			return fmt.Sprintf("todo add(%q, agent=%q)", truncateStr(task, 60), args["agent"])
+		case "update":
+			return fmt.Sprintf("todo update(id=%s, status=%q, agent=%q)", id, status, args["agent"])
+		case "list":
+			return "todo list()"
+		default:
+			return fmt.Sprintf("todo(%q)", op)
+		}
+	case "todowrite", "todoread":
+		return toolName
+	case "task", "subagent":
 		ag := args["subagent_type"]
 		if ag == "" {
 			ag = args["name"]

@@ -261,7 +261,7 @@ func main() {
 		SystemPromptDir: sysPromptDir,
 		AgentManager:    agentManager,
 		CurrentDepth:    0,
-		MaxDepth:        2,
+		MaxDepth:        4,
 		PeerID:          config.PeerID,
 		ThinkingPeerID:  config.ThinkingPeerID,
 		VKClient:        vkClient,
@@ -269,6 +269,7 @@ func main() {
 		Debug:           *debug,
 		ModelHolder:     modelHolder,
 		SetActiveAgent:  func(name string) {},
+		Store:           dbStore,
 	})
 
 	orchestrator := agentloop.NewOrchestrator(agentloop.OrchestratorConfig{
@@ -283,6 +284,7 @@ func main() {
 		SystemPromptDir:     sysPromptDir,
 		AgentManager:        agentManager,
 		MaxReviewIterations: config.MaxReviewIterations,
+		Store:               dbStore,
 	})
 
 	botHandler := vk.NewBotHandlerWithPeerID(vkClient, agentLoop, log,

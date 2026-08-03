@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/opencode/llama-client/pkg/agent"
 	"github.com/opencode/llama-client/pkg/agentpolicy"
 	"github.com/opencode/llama-client/pkg/modelsconfig"
+	"github.com/opencode/llama-client/pkg/store"
 	"github.com/opencode/llama-client/pkg/tools"
 	"github.com/opencode/llama-client/session"
 )
@@ -27,6 +29,7 @@ type OrchestratorConfig struct {
 	SystemPromptDir     string
 	MaxReviewIterations int
 	AgentManager        *agentpolicy.AgentManager
+	Store               store.Store
 }
 
 type Orchestrator struct {
@@ -133,6 +136,49 @@ func (o *Orchestrator) ListAgentNames() []string {
 		return o.config.AgentManager.ListAgentNames()
 	}
 	return nil
+}
+
+func (o *Orchestrator) GetActiveAgentSessions(peerID int64) (string, error) {
+	if o.config.Store == nil {
+		return "No store configured", nil
+	}
+
+	sessions, err := o.config.Store.GetActiveAgentSessions(peerID)
+	if err != nil {
+		return "", err
+	}
+
+	chainData, err := o.config.Store.GetAgentChain(peerID)
+	if err != nil {
+		chainData = nil
+	}
+
+	var b strings.Builder
+	if len(sessions) == 0 {
+		b.WriteString("No active agent sessions.")
+		return b.String(), nil
+	}
+
+	b.WriteString("Active agent sessions:\n\n")
+	for _, s := range sessions {
+		arrow := "  "
+		for i, id := range chainData.Chain {
+			if id == s.ID {
+				arrow = strings.Repeat("  ", i) + "→ "
+				break
+			}
+		}
+		b.WriteString(fmt.Sprintf("%s[%s] %s (id: %s)\n", arrow, s.Status, s.AgentName, s.ID))
+	}
+
+	return b.String(), nil
+}
+
+func (o *Orchestrator) ClearActiveSessions(peerID int64) {
+	if o.config.Store == nil {
+		return
+	}
+	o.config.Store.ClearAgentChain(peerID)
 }
 
 func (o *Orchestrator) isLeafAgent(name string) bool {
@@ -314,7 +360,7 @@ func (o *Orchestrator) registerSubAgentTool(name string, a agent.Agent, peerID i
 		SystemPromptDir: o.systemPromptDir(),
 		AgentManager:    o.config.AgentManager,
 		CurrentDepth:    0,
-		MaxDepth:        2,
+		MaxDepth:        4,
 		PeerID:          peerID,
 		ThinkingPeerID:  o.thoughtPeer,
 		VKClient:        o.config.VKClient,
@@ -322,6 +368,7 @@ func (o *Orchestrator) registerSubAgentTool(name string, a agent.Agent, peerID i
 		Debug:           o.config.Debug,
 		ModelHolder:     o.config.ModelHolder,
 		SetActiveAgent:  func(n string) { o.setActiveAgent(n) },
+		Store:           o.config.Store,
 	})
 	if inserter, ok := a.(toolInserter); ok {
 		inserter.RegisterTools(subReg)
