@@ -24,6 +24,16 @@ type LLMCompressor struct {
 	temperature float64
 }
 
+// Model возвращает имя модели, с которой работает компрессор.
+func (c *LLMCompressor) Model() string {
+	return c.model
+}
+
+// ServerURL возвращает адрес llama-server, на который настроен компрессор.
+func (c *LLMCompressor) ServerURL() string {
+	return c.serverURL
+}
+
 // NewLLMCompressor создаёт новый компрессор через llama-server
 func NewLLMCompressor(serverURL, model string, temperature float64) *LLMCompressor {
 	return &LLMCompressor{
@@ -113,7 +123,7 @@ func (c *LLMCompressor) buildCompressionUserPrompt(messages []tokenizers.Message
 // sendCompressionRequest отправляет запрос на сжатие к модели
 func (c *LLMCompressor) sendCompressionRequest(ctx context.Context, systemPrompt, userPrompt string, targetTokens int) (string, string, error) {
 	reqBody := map[string]interface{}{
-		"model":      c.model,
+		"model": c.model,
 		"messages": []map[string]string{
 			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": userPrompt},

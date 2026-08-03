@@ -31,6 +31,11 @@ func NewCompactor(llm LLMCompressorInterface) *Compactor {
 	}
 }
 
+// LLM возвращает внутренний LLM-компрессор (для диагностики и тестов).
+func (c *Compactor) LLM() LLMCompressorInterface {
+	return c.llm
+}
+
 // CompactorInterface — интерфейс компакции, используемый в agentloop.
 type CompactorInterface interface {
 	CompactWithOpenCode(ctx context.Context, messages []tokenizers.Message, maxTokens int, tailTurns int, preserveRecentTokens *int) (*OpenCodeCompactResult, error)

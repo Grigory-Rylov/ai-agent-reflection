@@ -47,6 +47,8 @@ type agentLoop struct {
 	aiHistory        []string
 	historyMu        sync.Mutex
 	thinkingCallback func(peerID int64, content string) error
+	currentAlias     string
+	modelMu          sync.Mutex
 }
 
 func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentLoop, error) {
@@ -71,9 +73,7 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 	// 2) иначе — реальный контекст с сервера (аргумент --ctx-size/-c),
 	// 3) иначе — config.MaxTokens.
 	modelCtx := config.ModelHolder.GetModelContext(alias)
-	if modelCtx > 0 {
-		config.MaxTokens = modelCtx
-	}
+	config.MaxTokens = resolveMaxTokens(config.ModelHolder, alias, config.MaxTokens)
 
 	tokenizer := tokenizers.NewLlamaServerTokenizer(llamaURL, modelName, config.MaxTokens)
 	if config.EnableLogging {
@@ -105,19 +105,69 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 	}
 
 	return &agentLoop{
-		config:     config,
-		vk:         vk,
-		registry:   registry,
-		compactor:  compactor,
-		tokenizer:  tokenizer,
-		stopCh:     make(chan struct{}),
-		dispatcher: NewEventDispatcher(),
-		log:        l,
+		config:       config,
+		vk:           vk,
+		registry:     registry,
+		compactor:    compactor,
+		tokenizer:    tokenizer,
+		stopCh:       make(chan struct{}),
+		dispatcher:   NewEventDispatcher(),
+		log:          l,
+		currentAlias: alias,
 	}, nil
 }
 
 func (al *agentLoop) GetModelHolder() *modelsconfig.Holder {
 	return al.config.ModelHolder
+}
+
+// resolveMaxTokens возвращает лимит контекста модели: из models.json (поле context),
+// если задан, иначе fallback.
+func resolveMaxTokens(h *modelsconfig.Holder, alias string, fallback int) int {
+	if h == nil {
+		return fallback
+	}
+	if ctx := h.GetModelContext(alias); ctx > 0 {
+		return ctx
+	}
+	return fallback
+}
+
+// syncCurrentModel пересоздаёт токенайзер и компрессор при смене текущей модели.
+// Вызывается перед обработкой каждого промпта, поэтому после /r <alias> агент
+// начинает использовать новую модель/сервер для токенизации и компакции.
+func (al *agentLoop) syncCurrentModel() {
+	al.modelMu.Lock()
+	defer al.modelMu.Unlock()
+
+	if al.config.ModelHolder == nil {
+		return
+	}
+
+	alias, modelName, llamaURL := al.config.ModelHolder.GetCurrent()
+	if llamaURL == "" {
+		llamaURL = "http://127.0.0.1:8081"
+	}
+	if modelName == "" {
+		modelName = "local-model"
+	}
+	if alias == al.currentAlias {
+		return
+	}
+
+	al.currentAlias = alias
+	al.config.MaxTokens = resolveMaxTokens(al.config.ModelHolder, alias, al.config.MaxTokens)
+
+	tok := tokenizers.NewLlamaServerTokenizer(llamaURL, modelName, al.config.MaxTokens)
+	if al.config.EnableLogging {
+		tok.SetDebug(al.config.Debug)
+	}
+	al.tokenizer = tok
+	al.compactor = compress.NewCompactor(compress.NewLLMCompressor(llamaURL, modelName, al.config.Temperature))
+
+	if al.log != nil {
+		al.log.InfoLogf("Model switched: %s (%s) at %s, maxTokens=%d", alias, modelName, llamaURL, al.config.MaxTokens)
+	}
 }
 
 func (al *agentLoop) GetContextStats(peerID int64) (charCount int, tokenCount int, err error) {
@@ -161,6 +211,7 @@ func (al *agentLoop) ProcessMessage(ctx context.Context, prompt string, peerID i
 }
 
 func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID int64) (string, error) {
+	al.syncCurrentModel()
 	sess := al.getOrCreateSession(peerID)
 
 	if al.log != nil {
