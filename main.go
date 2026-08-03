@@ -262,6 +262,7 @@ func main() {
 		AgentManager:    agentManager,
 		CurrentDepth:    0,
 		MaxDepth:        2,
+		PeerID:          config.PeerID,
 		ThinkingPeerID:  config.ThinkingPeerID,
 		VKClient:        vkClient,
 		Log:             log,
@@ -401,12 +402,18 @@ func handleQuestion(vkClient interface {
 	SendMessage(int64, string) (int64, error)
 	SendMessageWithKeyboard(int64, string, map[string]interface{}) (int64, error)
 }, peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+	if peerID <= 0 {
+		logger.DebugToFile("[handleQuestion] invalid peerID=%d, cannot ask question", peerID)
+		return nil, fmt.Errorf("invalid peerID: %d", peerID)
+	}
+
 	text := buildQuestionText(q)
 
 	ch := tools.RegisterPendingQuestion(peerID)
 	defer tools.UnregisterPendingQuestion(peerID)
 
 	options := extractQuestionOptions(q)
+	sendFailed := false
 	if len(options) > 0 {
 		header, _ := q["header"].(string)
 		qText, _ := q["question"].(string)
@@ -414,14 +421,20 @@ func handleQuestion(vkClient interface {
 		logger.DebugToFile("[handleQuestion] Sending question to peer %d: %s", peerID, text)
 		if _, err := vkClient.SendMessageWithKeyboard(peerID, text, keyboard); err != nil {
 			logger.DebugToFile("[handleQuestion] SendMessageWithKeyboard failed: %v", err)
-			vkClient.SendMessage(peerID, fmt.Sprintf("\u26a0\ufe0f %s\n\n%s", "Keyboard unavailable, reply with text:", text))
-		} else {
-			logger.DebugToFile("[handleQuestion] Keyboard sent successfully to peer %d", peerID)
+			if _, err2 := vkClient.SendMessage(peerID, fmt.Sprintf("\u26a0\ufe0f %s\n\n%s", "Keyboard unavailable, reply with text:", text)); err2 != nil {
+				logger.DebugToFile("[handleQuestion] fallback SendMessage also failed: %v", err2)
+				sendFailed = true
+			}
 		}
 	} else {
 		if _, err := vkClient.SendMessage(peerID, text); err != nil {
-			return nil, fmt.Errorf("send question: %w", err)
+			logger.DebugToFile("[handleQuestion] SendMessage failed: %v", err)
+			sendFailed = true
 		}
+	}
+
+	if sendFailed {
+		return nil, fmt.Errorf("failed to send question to peer %d", peerID)
 	}
 
 	logger.DebugToFile("[handleQuestion] Waiting for answer from peer %d...", peerID)
