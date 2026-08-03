@@ -2,6 +2,7 @@ package agentloop
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"os"
@@ -31,10 +32,11 @@ type SubAgentTool struct {
 	Debug           bool
 	ModelHolder     *modelsconfig.Holder
 	SetActiveAgent  func(name string)
-	Store           store.Store       // SQLite store для сессий сабагентов
-	ParentSessionID string            // UUID родительской сессии
-	AgentSessionID  string            // UUID текущей сессии сабагента
-	Chain           []string          // Цепочка вызовов (список UUID от корня до текущего)
+	Store           store.Store // SQLite store для сессий сабагентов
+	ParentSessionID string      // UUID родительской сессии
+	ParentAgent     agent.Agent // агент-родитель (для сохранения истории перед запуском ребёнка)
+	AgentSessionID  string      // UUID текущей сессии сабагента
+	Chain           []string    // Цепочка вызовов (список UUID от корня до текущего)
 }
 
 func (t *SubAgentTool) Name() string {
@@ -169,7 +171,13 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 		return tools.ToolResult{Success: false, Error: err.Error()}, nil
 	}
 
-	a := t.createAgent(name, systemPrompt)
+	a := t.createAgent(name, systemPrompt, task)
+
+	// Сохраняем историю родителя ДО запуска ребёнка — чтобы при краше
+	// посреди выполнения сабагента цепочка могла быть восстановлена.
+	if t.Store != nil {
+		t.saveParentHistory()
+	}
 
 	t.applyAgentPermissions(name, a)
 
@@ -191,12 +199,14 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 	response, err := a.ProcessMessage(ctx, task, t.PeerID)
 	if err != nil {
 		if t.Store != nil {
+			t.saveSessionHistory(a, t.AgentSessionID, task)
 			t.cancelAgentSession()
 		}
 		return tools.ToolResult{Success: false, Error: fmt.Sprintf("sub-agent %q failed: %v", name, err)}, nil
 	}
 
 	if t.Store != nil {
+		t.saveSessionHistory(a, t.AgentSessionID, task)
 		t.completeAgentSession()
 	}
 
@@ -296,7 +306,7 @@ func (t *SubAgentTool) loadSystemPrompt(name string) (string, error) {
 	return "", fmt.Errorf("failed to load system prompt for %q from %s", name, t.SystemPromptDir)
 }
 
-func (t *SubAgentTool) createAgent(name, systemPrompt string) agent.Agent {
+func (t *SubAgentTool) createAgent(name, systemPrompt, task string) agent.Agent {
 	cfg := t.AgentConfig
 
 	if t.ModelHolder != nil {
@@ -327,6 +337,7 @@ func (t *SubAgentTool) createAgent(name, systemPrompt string) agent.Agent {
 		chain := make([]string, len(t.Chain))
 		copy(chain, t.Chain)
 		chain = append(chain, sessionID)
+		t.Chain = chain
 
 		// Сохраняем сессию
 		t.Store.SaveAgentSession(&store.AgentSessionData{
@@ -335,6 +346,7 @@ func (t *SubAgentTool) createAgent(name, systemPrompt string) agent.Agent {
 			AgentName:    name,
 			PeerID:       t.PeerID,
 			SystemPrompt: systemPrompt,
+			LastPrompt:   task,
 			Status:       "active",
 		})
 
@@ -398,6 +410,7 @@ func (t *SubAgentTool) registerSubAgentTool(name string, a agent.Agent) {
 		SetActiveAgent:  t.SetActiveAgent,
 		Store:           t.Store,
 		ParentSessionID: t.AgentSessionID,
+		ParentAgent:     a,
 		Chain:           t.Chain,
 	})
 	if inserter, ok := a.(toolInserter); ok {
@@ -459,18 +472,71 @@ func (t *SubAgentTool) generateUUID() string {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", sum[:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
-// completeAgentSession помечает сессию как завершённую
+// saveSessionHistory сохраняет историю сообщений сессии агента в БД
+func (t *SubAgentTool) saveSessionHistory(a agent.Agent, sessionID, task string) {
+	if t.Store == nil || sessionID == "" || a == nil {
+		return
+	}
+	data, err := json.Marshal(a.GetSession(t.PeerID).GetHistory())
+	if err != nil {
+		if t.Log != nil {
+			t.Log.DebugLogf("[SUBAGENT] save history marshal failed: %v", err)
+		}
+		return
+	}
+	if err := t.Store.UpdateAgentSession(sessionID, task, string(data)); err != nil {
+		if t.Log != nil {
+			t.Log.DebugLogf("[SUBAGENT] save history failed: %v", err)
+		}
+	}
+}
+
+// saveParentHistory сохраняет историю родительского агента перед запуском ребёнка
+func (t *SubAgentTool) saveParentHistory() {
+	if t.Store == nil || t.ParentAgent == nil || t.ParentSessionID == "" {
+		return
+	}
+	data, err := json.Marshal(t.ParentAgent.GetSession(t.PeerID).GetHistory())
+	if err != nil {
+		if t.Log != nil {
+			t.Log.DebugLogf("[SUBAGENT] save parent history marshal failed: %v", err)
+		}
+		return
+	}
+	lastPrompt := ""
+	if sd, err := t.Store.GetAgentSession(t.ParentSessionID); err == nil && sd != nil {
+		lastPrompt = sd.LastPrompt
+	}
+	if err := t.Store.UpdateAgentSession(t.ParentSessionID, lastPrompt, string(data)); err != nil {
+		if t.Log != nil {
+			t.Log.DebugLogf("[SUBAGENT] save parent history failed: %v", err)
+		}
+	}
+}
+
+// completeAgentSession удаляет сессию и «всплывает» цепочку к родителю
 func (t *SubAgentTool) completeAgentSession() {
 	if t.Store == nil || t.AgentSessionID == "" {
 		return
 	}
-	t.Store.CompleteAgentSession(t.AgentSessionID)
+	t.Store.DeleteAgentSession(t.AgentSessionID)
+	t.popChain()
 }
 
-// cancelAgentSession помечает сессию как отменённую
+// cancelAgentSession удаляет сессию и «всплывает» цепочку к родителю
 func (t *SubAgentTool) cancelAgentSession() {
 	if t.Store == nil || t.AgentSessionID == "" {
 		return
 	}
-	t.Store.CancelAgentSession(t.AgentSessionID)
+	t.Store.DeleteAgentSession(t.AgentSessionID)
+	t.popChain()
+}
+
+// popChain удаляет текущую сессию из активной цепочки (возврат к родителю)
+func (t *SubAgentTool) popChain() {
+	parent := t.Chain
+	if len(parent) > 0 {
+		parent = parent[:len(parent)-1]
+	}
+	t.Store.SaveAgentChain(t.PeerID, parent)
 }

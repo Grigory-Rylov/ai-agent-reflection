@@ -93,6 +93,8 @@ type Store interface {
 	GetActiveAgentSessions(peerID int64) ([]AgentSessionData, error)
 	CompleteAgentSession(id string) error
 	CancelAgentSession(id string) error
+	DeleteAgentSession(id string) error
+	UpdateAgentSession(id, lastPrompt, messages string) error
 	GetAgentChain(peerID int64) (*AgentChainData, error)
 	SaveAgentChain(peerID int64, chain []string) error
 	ClearAgentChain(peerID int64) error

@@ -293,6 +293,17 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Восстанавливаем незавершённые цепочки сабагентов после рестарта
+	if dbStore != nil {
+		go func() {
+			resumeCtx, resumeCancel := context.WithTimeout(ctx, 30*time.Minute)
+			defer resumeCancel()
+			if err := orchestrator.ResumeActiveChains(resumeCtx); err != nil {
+				log.WarnLogf("Resume active agent chains: %v", err)
+			}
+		}()
+	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
