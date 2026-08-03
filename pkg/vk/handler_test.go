@@ -139,6 +139,12 @@ func (m *mockOrchestrator) GetCurrentAgent() string {
 	return "mock-agent"
 }
 
+func (m *mockOrchestrator) ClearActiveSessions(peerID int64) {}
+
+func (m *mockOrchestrator) GetActiveAgentSessions(peerID int64) (string, error) {
+	return "", nil
+}
+
 // ============================================================
 // Тесты обработки команд
 // ============================================================

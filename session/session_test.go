@@ -383,7 +383,20 @@ func (m *mockWorkingDirStore) SavePermission(sessionID, toolName, resource, deci
 	return nil
 }
 func (m *mockWorkingDirStore) ClearPermissions(sessionID string) error { return nil }
-func (m *mockWorkingDirStore) Close() error                            { return nil }
+func (m *mockWorkingDirStore) Close() error                                                    { return nil }
+func (m *mockWorkingDirStore) SaveAgentSession(s *store.AgentSessionData) error                 { return nil }
+func (m *mockWorkingDirStore) GetAgentSession(id string) (*store.AgentSessionData, error)       { return nil, nil }
+func (m *mockWorkingDirStore) GetActiveAgentSessions(peerID int64) ([]store.AgentSessionData, error) {
+	return nil, nil
+}
+func (m *mockWorkingDirStore) CompleteAgentSession(id string) error   { return nil }
+func (m *mockWorkingDirStore) CancelAgentSession(id string) error     { return nil }
+func (m *mockWorkingDirStore) GetAgentChain(peerID int64) (*store.AgentChainData, error) {
+	return nil, nil
+}
+func (m *mockWorkingDirStore) SaveAgentChain(peerID int64, chain []string) error    { return nil }
+func (m *mockWorkingDirStore) ClearAgentChain(peerID int64) error                  { return nil }
+func (m *mockWorkingDirStore) GetAllActiveChains() ([]store.AgentChainData, error)  { return nil, nil }
 
 // ============================================================
 // Тесты Pinned промптов (/pin)

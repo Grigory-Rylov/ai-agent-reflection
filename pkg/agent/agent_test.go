@@ -436,9 +436,20 @@ func (m *mockStoreWorkingDir) ClearPermissions(sessionID string) error {
 	return nil
 }
 
-func (m *mockStoreWorkingDir) Close() error {
-	return nil
+func (m *mockStoreWorkingDir) Close() error                                                    { return nil }
+func (m *mockStoreWorkingDir) SaveAgentSession(s *store.AgentSessionData) error                 { return nil }
+func (m *mockStoreWorkingDir) GetAgentSession(id string) (*store.AgentSessionData, error)       { return nil, nil }
+func (m *mockStoreWorkingDir) GetActiveAgentSessions(peerID int64) ([]store.AgentSessionData, error) {
+	return nil, nil
 }
+func (m *mockStoreWorkingDir) CompleteAgentSession(id string) error   { return nil }
+func (m *mockStoreWorkingDir) CancelAgentSession(id string) error     { return nil }
+func (m *mockStoreWorkingDir) GetAgentChain(peerID int64) (*store.AgentChainData, error) {
+	return nil, nil
+}
+func (m *mockStoreWorkingDir) SaveAgentChain(peerID int64, chain []string) error    { return nil }
+func (m *mockStoreWorkingDir) ClearAgentChain(peerID int64) error                  { return nil }
+func (m *mockStoreWorkingDir) GetAllActiveChains() ([]store.AgentChainData, error)  { return nil, nil }
 
 func TestWorkingDirRestoredFromStore(t *testing.T) {
 	savedDir, err := os.MkdirTemp("", "wd_test_*")
