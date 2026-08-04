@@ -19,7 +19,7 @@ func (s *sqliteDB) SaveAgentSession(sd *AgentSessionData) error {
 		sd.Status = "active"
 	}
 
-	messagesJSON, _ := json.Marshal(sd.Messages)
+	messagesJSON := sd.Messages
 
 	_, err := s.db.Exec(`
 		INSERT INTO agent_sessions (id, parent_id, agent_name, peer_id, system_prompt, last_prompt, last_tool_call, status, created_at, updated_at, messages)
@@ -103,6 +103,17 @@ func (s *sqliteDB) CompleteAgentSession(id string) error {
 func (s *sqliteDB) CancelAgentSession(id string) error {
 	_, err := s.db.Exec(`UPDATE agent_sessions SET status = 'cancelled', updated_at = ? WHERE id = ?`,
 		time.Now().UTC().Format(time.RFC3339), id)
+	return err
+}
+
+func (s *sqliteDB) DeleteAgentSession(id string) error {
+	_, err := s.db.Exec(`DELETE FROM agent_sessions WHERE id = ?`, id)
+	return err
+}
+
+func (s *sqliteDB) UpdateAgentSession(id, lastPrompt, messages string) error {
+	_, err := s.db.Exec(`UPDATE agent_sessions SET last_prompt = ?, messages = ?, updated_at = ? WHERE id = ?`,
+		lastPrompt, messages, time.Now().UTC().Format(time.RFC3339), id)
 	return err
 }
 

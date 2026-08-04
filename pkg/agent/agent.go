@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"time"
 
 	"github.com/opencode/llama-client/session"
 )
@@ -78,6 +79,10 @@ type Config struct {
 	// SkipShellPermissionForPathless — не спрашивать разрешение для shell-команд
 	// без явных файловых операций (нет путей в аргументах и редиректов).
 	SkipShellPermissionForPathless bool
+	// RetryDelay — пауза между бесконечными ретраями LLM-запроса
+	// при серверных ошибках (недоступность, HTTP 5xx, оборванный стрим).
+	// Если <= 0 — используется значение по умолчанию (5 сек).
+	RetryDelay time.Duration
 }
 
 // DefaultConfig возвращает конфигурацию по умолчанию
@@ -94,5 +99,6 @@ func DefaultConfig() Config {
 		EnableCompression: true,
 		TailTurns:         2,
 		EnablePruning:     true,
+		RetryDelay:        5 * time.Second,
 	}
 }

@@ -229,6 +229,43 @@ func TestHolderContext(t *testing.T) {
 	}
 }
 
+func TestHolderVision(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "models.json")
+	content := `{
+		"default": "gemma",
+		"models": {
+			"gemma": {"name": "gemma-4.gguf", "host": "127.0.0.1:8081", "vision": true},
+			"llama": {"name": "llama-3.gguf", "host": "192.168.1.1:8081"}
+		}
+	}`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	holder, err := NewHolder(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := holder.GetCurrentVision(); got != true {
+		t.Errorf("GetCurrentVision: got %v, want true", got)
+	}
+	if got := holder.GetModelVision("gemma"); got != true {
+		t.Errorf("GetModelVision(gemma): got %v, want true", got)
+	}
+	if got := holder.GetModelVision("llama"); got != false {
+		t.Errorf("GetModelVision(llama): got %v, want false (not set)", got)
+	}
+
+	if err := holder.Switch("llama"); err != nil {
+		t.Fatal(err)
+	}
+	if got := holder.GetCurrentVision(); got != false {
+		t.Errorf("GetCurrentVision after switch: got %v, want false", got)
+	}
+}
+
 func TestHolderSwitchUnknown(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "models.json")

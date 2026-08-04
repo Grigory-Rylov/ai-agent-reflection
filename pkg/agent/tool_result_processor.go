@@ -82,13 +82,8 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		Stream:      true,
 	}
 
-	chunkChan, err := a.streamingRequest(ctx, streamConfig, messages)
-	if err != nil {
-		return "", fmt.Errorf("streaming request for tool results: %w", err)
-	}
-
-	// Собираем ответ с проверкой на tool_calls
-	responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.collectStreamResponseWithToolCalls(chunkChan)
+	// Собираем ответ с проверкой на tool_calls (с бесконечным ретраем серверных ошибок)
+	responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.streamAndCollect(ctx, streamConfig, messages)
 	if err != nil {
 		return "", err
 	}

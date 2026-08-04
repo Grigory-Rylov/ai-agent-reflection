@@ -13,6 +13,7 @@ type ModelEntry struct {
 	Name    string `json:"name"`
 	Host    string `json:"host"`
 	Context int    `json:"context,omitempty"` // Лимит контекста модели в токенах (0 = не указан)
+	Vision  bool   `json:"vision,omitempty"`  // Модель поддерживает изображения (мультимодальная)
 }
 
 type ModelsConfig struct {
@@ -154,6 +155,22 @@ func (h *Holder) GetModelContext(alias string) int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.config.Models[alias].Context
+}
+
+// GetCurrentVision возвращает true, если текущая модель поддерживает
+// изображения (мультимодальная).
+func (h *Holder) GetCurrentVision() bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.config.Models[h.config.Default].Vision
+}
+
+// GetModelVision возвращает true, если модель по алиасу поддерживает
+// изображения (мультимодальная).
+func (h *Holder) GetModelVision(alias string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.config.Models[alias].Vision
 }
 
 func (h *Holder) GetModelHost(alias string) (ModelEntry, bool) {

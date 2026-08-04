@@ -275,6 +275,69 @@ func TestConcurrentSession(t *testing.T) {
 	}
 }
 
+func TestAgentSessionDelete(t *testing.T) {
+	s := newTestStore(t)
+
+	now := time.Now()
+	if err := s.SaveAgentSession(&AgentSessionData{
+		ID: "sess-1", AgentName: "worker", PeerID: 1,
+		Status: "active", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveAgentSession: %v", err)
+	}
+
+	sd, err := s.GetAgentSession("sess-1")
+	if err != nil {
+		t.Fatalf("GetAgentSession: %v", err)
+	}
+	if sd == nil {
+		t.Fatal("expected session after save")
+	}
+
+	if err := s.DeleteAgentSession("sess-1"); err != nil {
+		t.Fatalf("DeleteAgentSession: %v", err)
+	}
+
+	sd, err = s.GetAgentSession("sess-1")
+	if err != nil {
+		t.Fatalf("GetAgentSession after delete: %v", err)
+	}
+	if sd != nil {
+		t.Error("expected nil session after delete")
+	}
+}
+
+func TestAgentSessionMessagesRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+
+	now := time.Now()
+	sd := &AgentSessionData{
+		ID: "sess-msg", AgentName: "reviewer", PeerID: 1,
+		Status:     "active",
+		LastPrompt: "review the code",
+		Messages:   `[{"role":"user","content":"hello"}]`,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	if err := s.SaveAgentSession(sd); err != nil {
+		t.Fatalf("SaveAgentSession: %v", err)
+	}
+
+	loaded, err := s.GetAgentSession("sess-msg")
+	if err != nil {
+		t.Fatalf("GetAgentSession: %v", err)
+	}
+	if loaded == nil {
+		t.Fatal("expected session after save")
+	}
+	if loaded.LastPrompt != "review the code" {
+		t.Errorf("expected last_prompt %q, got %q", "review the code", loaded.LastPrompt)
+	}
+	if loaded.Messages != `[{"role":"user","content":"hello"}]` {
+		t.Errorf("unexpected messages: %s", loaded.Messages)
+	}
+}
+
 func TestDBFileCreated(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "custom.db")

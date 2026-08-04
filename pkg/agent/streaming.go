@@ -62,7 +62,8 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 	resp, err := a.client.Do(req)
 	if err != nil {
 		logger.DebugToFile(a.agentPrefix()+"[LLM REQUEST] Failed to send: %v", err)
-		return nil, fmt.Errorf("send request: %w", err)
+		// Недоступность сервера — ретрабильная ошибка.
+		return nil, &retryableError{err: fmt.Errorf("send request: %w", err)}
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -71,7 +72,13 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 		resp.Body.Close()
 		a.debugLog.Error("API ERROR: Status %d, response: %s", resp.StatusCode, string(body))
 		logger.DebugToFile(a.agentPrefix()+"[LLM REQUEST] API error: status %d", resp.StatusCode)
-		return nil, fmt.Errorf("API error: status %d, body: %s", resp.StatusCode, string(body))
+		apiErr := fmt.Errorf("API error: status %d, body: %s", resp.StatusCode, string(body))
+		// HTTP 5xx (сервер перезагружается/модель грузится) — ретрабильная ошибка.
+		// HTTP 4xx (клиентская ошибка) — не ретраим.
+		if resp.StatusCode >= 500 {
+			return nil, &retryableError{err: apiErr}
+		}
+		return nil, apiErr
 	}
 
 	logger.DebugToFile(a.agentPrefix()+"[LLM REQUEST] Request successful, reading stream...")

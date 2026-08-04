@@ -196,6 +196,18 @@ func main() {
 		log.InfoLogf("Model context from models.json: %d tokens", ctx)
 	}
 
+	tools.SetImage2TextConfig(tools.Image2TextConfig{
+		ModelHolder: modelHolder,
+		MaxTokens:   maxTokens,
+	})
+
+	if modelHolder.GetCurrentVision() {
+		toolRegistry.Register(&tools.Image2TextTool{})
+		log.InfoLogf("image2text tool registered (vision model)")
+	} else {
+		log.InfoLogf("image2text tool NOT registered (model is not vision-capable)")
+	}
+
 	loopConfig := agentloop.DefaultLoopConfig()
 	loopConfig.ModelHolder = modelHolder
 	loopConfig.MaxTokens = maxTokens
@@ -293,6 +305,17 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Восстанавливаем незавершённые цепочки сабагентов после рестарта
+	if dbStore != nil {
+		go func() {
+			resumeCtx, resumeCancel := context.WithTimeout(ctx, 30*time.Minute)
+			defer resumeCancel()
+			if err := orchestrator.ResumeActiveChains(resumeCtx); err != nil {
+				log.WarnLogf("Resume active agent chains: %v", err)
+			}
+		}()
+	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
@@ -309,8 +332,12 @@ func main() {
 	}()
 
 	if config.PeerID > 0 {
-		startMsg := fmt.Sprintf("AI Agent started.\nDir: %s\nTools: %d\nModel: %s (%s)\nBuild: %s",
-			tools.WorkingDir, len(toolRegistry.GetAll()), alias, modelName, buildinfo.HumanReadable())
+		startMsg := fmt.Sprintf("AI Agent started.\nDir: %s\nTools: %d\nModel: %s (%s)",
+			tools.WorkingDir, len(toolRegistry.GetAll()), alias, modelName)
+		if modelHolder.GetCurrentVision() {
+			startMsg += "\nVision: yes"
+		}
+		startMsg += fmt.Sprintf("\nBuild: %s", buildinfo.HumanReadable())
 		keyboard := vk.CreateCommandKeyboard()
 		if _, err := vkClient.SendMessageWithKeyboard(config.PeerID, startMsg, keyboard); err != nil {
 			log.WarnLogf("Failed to send startup message: %v", err)

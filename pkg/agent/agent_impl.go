@@ -406,13 +406,8 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 		Stream:      true,
 	}
 
-	chunkChan, err := a.streamingRequest(ctx, streamConfig, messages)
-	if err != nil {
-		return "", fmt.Errorf("streaming request: %w", err)
-	}
-
-	// Собираем ответ с reasoning
-	responseText, reasoningText, promptTokens, completionTokens, err := a.collectStreamResponse(chunkChan)
+	// Собираем ответ с reasoning (с бесконечным ретраем серверных ошибок)
+	responseText, reasoningText, _, _, promptTokens, completionTokens, err := a.streamAndCollect(ctx, streamConfig, messages)
 	if err != nil {
 		return "", err
 	}
