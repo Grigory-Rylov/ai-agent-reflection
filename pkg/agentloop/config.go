@@ -9,9 +9,10 @@ import (
 )
 
 type LoopConfig struct {
-	ModelHolder *modelsconfig.Holder
-	MaxTokens   int
-	Temperature float64
+	ModelHolder     *modelsconfig.Holder
+	ContextResolver *ModelContextResolver
+	MaxTokens       int
+	Temperature     float64
 
 	SessionConfig                  session.Config
 	SystemPromptFile               string

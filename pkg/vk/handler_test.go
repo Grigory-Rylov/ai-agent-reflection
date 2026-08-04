@@ -2,6 +2,7 @@ package vk
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +23,7 @@ type mockAgentLoop struct {
 	lastMessage string
 	lastPeerID  int64
 	sessions    map[int64]*session.Session
+	returnErr   error
 }
 
 func newMockAgentLoop() *mockAgentLoop {
@@ -43,6 +45,9 @@ func (m *mockAgentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID
 }
 
 func (m *mockAgentLoop) ProcessMessage(ctx context.Context, prompt string, peerID int64) (string, error) {
+	if m.returnErr != nil {
+		return "", m.returnErr
+	}
 	return m.ProcessPrompt(ctx, prompt, peerID)
 }
 
@@ -702,5 +707,41 @@ func TestHandleNewSessionWithNonexistentPath(t *testing.T) {
 	response := handler.ProcessMessage("/n /nonexistent/path/12345", 12345)
 	if !strings.Contains(response, "не существует") && !strings.Contains(response, "Ошибка") {
 		t.Errorf("Expected error about nonexistent path, got %q", response)
+	}
+}
+
+func TestContextCanceledErrorSuppressed(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+	mock.returnErr = context.Canceled
+	handler := NewBotHandler(nil, mock, log)
+
+	response := handler.ProcessMessage("Hello, cancel this", 12345)
+	if response != "" {
+		t.Errorf("Expected empty response for context.Canceled, got %q", response)
+	}
+}
+
+func TestWrappedContextCanceledErrorSuppressed(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+	mock.returnErr = fmt.Errorf("process tool results: %w", context.Canceled)
+	handler := NewBotHandler(nil, mock, log)
+
+	response := handler.ProcessMessage("Hello, cancel this", 12345)
+	if response != "" {
+		t.Errorf("Expected empty response for wrapped context.Canceled, got %q", response)
+	}
+}
+
+func TestOtherAgentErrorStillShown(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+	mock.returnErr = fmt.Errorf("server down")
+	handler := NewBotHandler(nil, mock, log)
+
+	response := handler.ProcessMessage("Hello", 12345)
+	if !strings.Contains(response, "Ошибка") {
+		t.Errorf("Expected error message, got %q", response)
 	}
 }

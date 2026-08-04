@@ -75,9 +75,15 @@ func TestRunAgentWiresRootIntoSubAgentTool(t *testing.T) {
 		AgentManager: am,
 	})
 
-	a := orchestrator.makeSubAgent("lead", "lead prompt", 1)
+	a, err := orchestrator.makeSubAgent("lead", "lead prompt", 1)
+	if err != nil {
+		t.Fatalf("makeSubAgent: %v", err)
+	}
 	rootID := "root-uuid"
-	tool := orchestrator.makeSubAgentTool("lead", a, 1, rootID, []string{rootID})
+	tool, err := orchestrator.makeSubAgentTool("lead", a, 1, rootID, []string{rootID})
+	if err != nil {
+		t.Fatalf("makeSubAgentTool: %v", err)
+	}
 
 	if tool.ParentSessionID != rootID {
 		t.Errorf("expected ParentSessionID %q, got %q", rootID, tool.ParentSessionID)

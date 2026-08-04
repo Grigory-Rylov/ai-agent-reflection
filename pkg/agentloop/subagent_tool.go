@@ -21,6 +21,7 @@ import (
 
 type SubAgentTool struct {
 	AgentConfig     agent.Config
+	ContextResolver *ModelContextResolver
 	MainTools       *tools.Registry
 	SystemPromptDir string
 	AgentManager    *agentpolicy.AgentManager
@@ -172,7 +173,10 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 		return tools.ToolResult{Success: false, Error: err.Error()}, nil
 	}
 
-	a := t.createAgent(name, systemPrompt, task)
+	a, err := t.createAgent(name, systemPrompt, task)
+	if err != nil {
+		return tools.ToolResult{Success: false, Error: fmt.Sprintf("failed to create sub-agent %q: %v", name, err)}, nil
+	}
 
 	// Сохраняем историю родителя ДО запуска ребёнка — чтобы при краше
 	// посреди выполнения сабагента цепочка могла быть восстановлена.
@@ -307,13 +311,21 @@ func (t *SubAgentTool) loadSystemPrompt(name string) (string, error) {
 	return "", fmt.Errorf("failed to load system prompt for %q from %s", name, t.SystemPromptDir)
 }
 
-func (t *SubAgentTool) createAgent(name, systemPrompt, task string) agent.Agent {
+func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent, error) {
 	cfg := t.AgentConfig
 
 	if t.ModelHolder != nil {
 		_, modelName, llamaURL := t.ModelHolder.GetCurrent()
 		cfg.LlamaServerURL = llamaURL
 		cfg.Model = modelName
+	}
+
+	if t.ContextResolver != nil {
+		ctx, err := t.ContextResolver.Resolve()
+		if err != nil {
+			return nil, err
+		}
+		cfg.MaxTokens = ctx
 	}
 
 	cfg.SystemPromptFile = ""
@@ -355,7 +367,7 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) agent.Agent 
 		t.Store.SaveAgentChain(t.PeerID, chain)
 	}
 
-	return a
+	return a, nil
 }
 
 func (t *SubAgentTool) registerMainTools(a agent.Agent) {
@@ -397,6 +409,7 @@ func (t *SubAgentTool) registerSubAgentTool(name string, a agent.Agent) {
 	subReg := tools.NewRegistry()
 	subReg.Register(&SubAgentTool{
 		AgentConfig:     t.AgentConfig,
+		ContextResolver: t.ContextResolver,
 		MainTools:       t.MainTools,
 		SystemPromptDir: t.SystemPromptDir,
 		AgentManager:    t.AgentManager,

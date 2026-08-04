@@ -189,12 +189,15 @@ func main() {
 		}
 	}
 
-	// Лимит контекста: из models.json для текущей модели, если указан.
-	maxTokens := config.MaxTokens
-	if ctx := modelHolder.GetCurrentContext(); ctx > 0 {
-		maxTokens = ctx
-		log.InfoLogf("Model context from models.json: %d tokens", ctx)
+	// Лимит контекста: из models.json, иначе реальный контекст с llama-server.
+	// Кэшируется по алиасу модели; при /r <alias> для новой модели запрашивается заново.
+	ctxResolver := agentloop.NewModelContextResolver(modelHolder, log)
+	maxTokens, err := ctxResolver.Resolve()
+	if err != nil {
+		println("Error resolving model context:", err.Error())
+		os.Exit(1)
 	}
+	log.InfoLogf("Model context: %d tokens", maxTokens)
 
 	tools.SetImage2TextConfig(tools.Image2TextConfig{
 		ModelHolder: modelHolder,
@@ -210,6 +213,7 @@ func main() {
 
 	loopConfig := agentloop.DefaultLoopConfig()
 	loopConfig.ModelHolder = modelHolder
+	loopConfig.ContextResolver = ctxResolver
 	loopConfig.MaxTokens = maxTokens
 	loopConfig.Temperature = config.Temperature
 	if dbStore != nil {
@@ -269,6 +273,7 @@ func main() {
 	}
 	toolRegistry.Register(&agentloop.SubAgentTool{
 		AgentConfig:     subAgentCfg,
+		ContextResolver: ctxResolver,
 		MainTools:       toolRegistry,
 		SystemPromptDir: sysPromptDir,
 		AgentManager:    agentManager,
@@ -286,6 +291,7 @@ func main() {
 
 	orchestrator := agentloop.NewOrchestrator(agentloop.OrchestratorConfig{
 		ModelHolder:         modelHolder,
+		ContextResolver:     ctxResolver,
 		MaxTokens:           maxTokens,
 		Temperature:         config.Temperature,
 		ToolRegistry:        toolRegistry,

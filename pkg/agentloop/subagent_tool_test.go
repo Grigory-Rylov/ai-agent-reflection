@@ -28,7 +28,7 @@ func TestSubAgentToolCreatePersistsTask(t *testing.T) {
 		MaxDepth: 4,
 	}
 
-	agent := tool.createAgent("worker", "system prompt", "the task")
+	agent, _ := tool.createAgent("worker", "system prompt", "the task")
 	_ = agent
 
 	sd, err := st.GetAgentSession(tool.AgentSessionID)
@@ -58,7 +58,7 @@ func TestSubAgentToolSaveSessionPersistsMessages(t *testing.T) {
 		MaxDepth: 4,
 	}
 
-	agent := tool.createAgent("worker", "system prompt", "the task")
+	agent, _ := tool.createAgent("worker", "system prompt", "the task")
 	sess := agent.GetSession(1)
 	sess.AddUserMessage("hello")
 	sess.AddAssistantMessage("hi")
@@ -89,7 +89,7 @@ func TestSubAgentToolSaveParentHistoryPreservesLastPrompt(t *testing.T) {
 		Store:    st,
 		MaxDepth: 4,
 	}
-	parentAgent := parent.createAgent("worker", "system prompt", "parent task")
+	parentAgent, _ := parent.createAgent("worker", "system prompt", "parent task")
 	parentID := parent.AgentSessionID
 
 	child := &SubAgentTool{
@@ -100,7 +100,7 @@ func TestSubAgentToolSaveParentHistoryPreservesLastPrompt(t *testing.T) {
 		ParentAgent:     parentAgent,
 		Chain:           []string{parentID},
 	}
-	childAgent := child.createAgent("reviewer", "system prompt", "child task")
+	childAgent, _ := child.createAgent("reviewer", "system prompt", "child task")
 	childAgent.GetSession(peerID).AddUserMessage("child work")
 	childAgent.GetSession(peerID).AddAssistantMessage("child result")
 
@@ -136,7 +136,7 @@ func TestSubAgentToolCompleteDeletesAndPopsChain(t *testing.T) {
 		MaxDepth: 4,
 	}
 
-	tool.createAgent("worker", "system prompt", "the task")
+	_, _ = tool.createAgent("worker", "system prompt", "the task")
 	childID := tool.AgentSessionID
 
 	tool.completeAgentSession()
@@ -173,7 +173,7 @@ func TestSubAgentToolCancelDeletesAndPopsChain(t *testing.T) {
 		MaxDepth: 4,
 	}
 
-	tool.createAgent("worker", "system prompt", "the task")
+	_, _ = tool.createAgent("worker", "system prompt", "the task")
 	childID := tool.AgentSessionID
 
 	tool.cancelAgentSession()

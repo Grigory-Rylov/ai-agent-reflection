@@ -53,7 +53,9 @@ func TestModelSwitchRefreshesTokenizerCompactor(t *testing.T) {
 		t.Fatalf("Switch: %v", err)
 	}
 
-	al.syncCurrentModel()
+	if err := al.syncCurrentModel(); err != nil {
+		t.Fatalf("syncCurrentModel: %v", err)
+	}
 
 	if got := al.tokenizer.Name(); got != "llama-server-other-model" {
 		t.Errorf("tokenizer after switch = %q, want llama-server-other-model", got)
@@ -92,7 +94,9 @@ func TestModelSwitchRefreshIdempotent(t *testing.T) {
 	al := loop.(*agentLoop)
 
 	before := al.tokenizer
-	al.syncCurrentModel()
+	if err := al.syncCurrentModel(); err != nil {
+		t.Fatalf("syncCurrentModel: %v", err)
+	}
 	if al.tokenizer != before {
 		t.Error("refresh without model switch should not rebuild tokenizer")
 	}
@@ -100,5 +104,7 @@ func TestModelSwitchRefreshIdempotent(t *testing.T) {
 
 func TestModelSwitchRefreshNilHolder(t *testing.T) {
 	al := &agentLoop{config: DefaultLoopConfig()}
-	al.syncCurrentModel()
+	if err := al.syncCurrentModel(); err != nil {
+		t.Fatalf("syncCurrentModel: %v", err)
+	}
 }

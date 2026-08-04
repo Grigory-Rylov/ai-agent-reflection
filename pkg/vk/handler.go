@@ -2,6 +2,7 @@ package vk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -175,6 +176,12 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	defer h.clearCancelFunc(peerID)
 	response, err := h.aiAgent.ProcessMessage(ctx, message, peerID)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			if h.log != nil {
+				h.log.InfoLogf("AI Agent request canceled for peer %d", peerID)
+			}
+			return ""
+		}
 		if h.log != nil {
 			h.log.ErrorLogf("AI Agent error: %v", err)
 		}
@@ -228,6 +235,12 @@ func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, tim
 
 	response, err := h.aiAgent.ProcessMessage(ctx, message, peerID)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			if h.log != nil {
+				h.log.InfoLogf("AI Agent request canceled for peer %d", peerID)
+			}
+			return ""
+		}
 		if h.log != nil {
 			h.log.ErrorLogf("AI Agent error: %v", err)
 		}

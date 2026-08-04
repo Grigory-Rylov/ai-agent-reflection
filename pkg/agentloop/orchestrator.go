@@ -20,18 +20,19 @@ import (
 )
 
 type OrchestratorConfig struct {
-	ModelHolder         *modelsconfig.Holder
-	MaxTokens           int
-	Temperature         float64
-	ToolRegistry        *tools.Registry
-	Debug               bool
-	Logger              Logger
-	ThinkingPeerID      int64
-	VKClient            VKClient
-	SystemPromptDir     string
+	ModelHolder     *modelsconfig.Holder
+	ContextResolver *ModelContextResolver
+	MaxTokens       int
+	Temperature     float64
+	ToolRegistry    *tools.Registry
+	Debug           bool
+	Logger          Logger
+	ThinkingPeerID  int64
+	VKClient        VKClient
+	SystemPromptDir string
 	MaxReviewIterations int
-	AgentManager        *agentpolicy.AgentManager
-	Store               store.Store
+	AgentManager    *agentpolicy.AgentManager
+	Store           store.Store
 }
 
 type Orchestrator struct {
@@ -102,7 +103,10 @@ func (o *Orchestrator) RunAgent(ctx context.Context, agentName, task string, pee
 		prompt += fmt.Sprintf("\n\nMaximum review iterations: %d. After this many developer↔reviewer cycles, move forward regardless.", o.config.MaxReviewIterations)
 	}
 
-	a := o.makeSubAgent(agentName, prompt, peerID)
+	a, err := o.makeSubAgent(agentName, prompt, peerID)
+	if err != nil {
+		return "", err
+	}
 
 	// Персистим корневую сессию и стартовую цепочку, чтобы после рестарта
 	// цепочка lead → worker → reviewer восстановилась вплоть до лида.
@@ -112,7 +116,9 @@ func (o *Orchestrator) RunAgent(ctx context.Context, agentName, task string, pee
 		rootChain = []string{rootID}
 	}
 
-	o.setupAgentTools(agentName, a, peerID, rootID, rootChain)
+	if err := o.setupAgentTools(agentName, a, peerID, rootID, rootChain); err != nil {
+		return "", err
+	}
 
 	response, err := a.ProcessMessage(ctx, task, peerID)
 	if err != nil {
@@ -159,12 +165,12 @@ func (o *Orchestrator) endRootSession(peerID int64, rootID string) {
 // setupAgentTools регистрирует инструменты агента в зависимости от его типа.
 // sessionID — UUID текущей сессии агента, chain — цепочка от корня до неё
 // (нужны SubAgentTool для персистентности вложенных вызовов).
-func (o *Orchestrator) setupAgentTools(name string, a agent.Agent, peerID int64, sessionID string, chain []string) {
+func (o *Orchestrator) setupAgentTools(name string, a agent.Agent, peerID int64, sessionID string, chain []string) error {
 	switch {
 	case o.isCoordinator(name):
 		o.debugLog("[TOOL] Coordinator mode for %s: read-only + task tool", name)
 		o.addReadOnlyTools(a)
-		o.registerSubAgentTool(name, a, peerID, sessionID, chain)
+		return o.registerSubAgentTool(name, a, peerID, sessionID, chain)
 
 	case o.isReviewAgent(name):
 		o.debugLog("[TOOL] Review mode for %s: read-only + approve tool", name)
@@ -175,11 +181,12 @@ func (o *Orchestrator) setupAgentTools(name string, a agent.Agent, peerID int64,
 		o.addMainTools(a)
 		if !o.isLeafAgent(name) {
 			o.debugLog("[TOOL] Adding subagent tool for %s", name)
-			o.registerSubAgentTool(name, a, peerID, sessionID, chain)
+			return o.registerSubAgentTool(name, a, peerID, sessionID, chain)
 		} else {
 			o.debugLog("[TOOL] %s is leaf — no subagent tool", name)
 		}
 	}
+	return nil
 }
 
 func (o *Orchestrator) ListAgentNames() []string {
@@ -285,8 +292,13 @@ func (o *Orchestrator) resumeChain(ctx context.Context, chain store.AgentChainDa
 // runResumedAgent пересоздаёт агента из сохранённой сессии и запускает его.
 // chain — цепочка сессий от корня до восстанавливаемого агента (включая его).
 func (o *Orchestrator) runResumedAgent(ctx context.Context, sd *store.AgentSessionData, childResult string, chain []string) (string, error) {
-	a := o.makeSubAgent(sd.AgentName, sd.SystemPrompt, sd.PeerID)
-	o.setupAgentTools(sd.AgentName, a, sd.PeerID, sd.ID, chain)
+	a, err := o.makeSubAgent(sd.AgentName, sd.SystemPrompt, sd.PeerID)
+	if err != nil {
+		return "", err
+	}
+	if err := o.setupAgentTools(sd.AgentName, a, sd.PeerID, sd.ID, chain); err != nil {
+		return "", err
+	}
 	o.restoreSessionMessages(a.GetSession(sd.PeerID), sd.Messages)
 
 	prompt := "The process was restarted. Continue your task from where you left off."
@@ -365,7 +377,10 @@ func (o *Orchestrator) runWorker(ctx context.Context, task string, peerID int64)
 	if err != nil {
 		return "", err
 	}
-	a := o.makeSubAgent("worker", prompt, peerID)
+	a, err := o.makeSubAgent("worker", prompt, peerID)
+	if err != nil {
+		return "", err
+	}
 	o.addMainTools(a)
 	return a.ProcessMessage(ctx, task, peerID)
 }
@@ -375,14 +390,22 @@ func (o *Orchestrator) runQA(ctx context.Context, task string, peerID int64) (st
 	if err != nil {
 		return "", err
 	}
-	a := o.makeSubAgent("qa", prompt, peerID)
+	a, err := o.makeSubAgent("qa", prompt, peerID)
+	if err != nil {
+		return "", err
+	}
 	o.addMainTools(a)
-	o.registerSubAgentTool("qa", a, peerID, "", nil)
+	if err := o.registerSubAgentTool("qa", a, peerID, "", nil); err != nil {
+		return "", err
+	}
 	return a.ProcessMessage(ctx, task, peerID)
 }
 
-func (o *Orchestrator) makeSubAgent(name, systemPrompt string, peerID int64) agent.Agent {
-	cfg := o.makeAgentConfig()
+func (o *Orchestrator) makeSubAgent(name, systemPrompt string, peerID int64) (agent.Agent, error) {
+	cfg, err := o.makeAgentConfig()
+	if err != nil {
+		return nil, err
+	}
 	cfg.SystemPromptFile = ""
 	cfg.SessionConfig = session.Config{
 		AutoSave:    false,
@@ -403,7 +426,7 @@ func (o *Orchestrator) makeSubAgent(name, systemPrompt string, peerID int64) age
 
 	a.SetThinkingCallback(o.makeThinkingCallback(name))
 	a.GetSession(peerID).UpdateSystemPrompt(systemPrompt)
-	return a
+	return a, nil
 }
 
 func (o *Orchestrator) loadSystemPrompt(name string) (string, error) {
@@ -429,11 +452,17 @@ func (o *Orchestrator) systemPromptDir() string {
 	return "system_prompt"
 }
 
-func (o *Orchestrator) makeAgentConfig() agent.Config {
+func (o *Orchestrator) makeAgentConfig() (agent.Config, error) {
 	alias, modelName, llamaURL := o.config.ModelHolder.GetCurrent()
-	// Контекст для текущей модели: из models.json (если указан), иначе общий.
 	maxTokens := o.config.MaxTokens
-	if ctx := o.config.ModelHolder.GetModelContext(alias); ctx > 0 {
+	if o.config.ContextResolver != nil {
+		ctx, err := o.config.ContextResolver.Resolve()
+		if err != nil {
+			return agent.Config{}, err
+		}
+		maxTokens = ctx
+	} else if ctx := o.config.ModelHolder.GetModelContext(alias); ctx > 0 {
+		// Контекст для текущей модели: из models.json (если указан), иначе общий.
 		maxTokens = ctx
 	}
 	return agent.Config{
@@ -451,7 +480,7 @@ func (o *Orchestrator) makeAgentConfig() agent.Config {
 			AutoSave:    false,
 			SessionFile: "",
 		},
-	}
+	}, nil
 }
 
 func (o *Orchestrator) addMainTools(a agent.Agent) {
@@ -498,9 +527,14 @@ type toolInserter interface {
 
 // makeSubAgentTool создаёт SubAgentTool для текущего агента с привязкой к его
 // сессии (sessionID/chain) — так вложенные вызовы продолжают цепочку от корня.
-func (o *Orchestrator) makeSubAgentTool(name string, a agent.Agent, peerID int64, sessionID string, chain []string) *SubAgentTool {
+func (o *Orchestrator) makeSubAgentTool(name string, a agent.Agent, peerID int64, sessionID string, chain []string) (*SubAgentTool, error) {
+	cfg, err := o.makeAgentConfig()
+	if err != nil {
+		return nil, err
+	}
 	return &SubAgentTool{
-		AgentConfig:     o.makeAgentConfig(),
+		AgentConfig:     cfg,
+		ContextResolver: o.config.ContextResolver,
 		MainTools:       o.config.ToolRegistry,
 		SystemPromptDir: o.systemPromptDir(),
 		AgentManager:    o.config.AgentManager,
@@ -518,15 +552,19 @@ func (o *Orchestrator) makeSubAgentTool(name string, a agent.Agent, peerID int64
 		AgentSessionID:  sessionID,
 		ParentAgent:     a,
 		Chain:           chain,
-	}
+	}, nil
 }
 
-func (o *Orchestrator) registerSubAgentTool(name string, a agent.Agent, peerID int64, sessionID string, chain []string) {
+func (o *Orchestrator) registerSubAgentTool(name string, a agent.Agent, peerID int64, sessionID string, chain []string) error {
 	if o.isLeafAgent(name) {
-		return
+		return nil
+	}
+	subAgentTool, err := o.makeSubAgentTool(name, a, peerID, sessionID, chain)
+	if err != nil {
+		return err
 	}
 	subReg := tools.NewRegistry()
-	subReg.Register(o.makeSubAgentTool(name, a, peerID, sessionID, chain))
+	subReg.Register(subAgentTool)
 	if inserter, ok := a.(toolInserter); ok {
 		inserter.RegisterTools(subReg)
 	} else {
@@ -535,6 +573,7 @@ func (o *Orchestrator) registerSubAgentTool(name string, a agent.Agent, peerID i
 			a.SetTools(schemas)
 		}
 	}
+	return nil
 }
 
 func (o *Orchestrator) registerReviewTool(a agent.Agent) {

@@ -68,32 +68,45 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 		l = NewDefaultLogger(config.Debug)
 	}
 
-	// Лимит контекста для текущей модели:
-	// 1) явно задан в models.json (поле context) — приоритет,
-	// 2) иначе — реальный контекст с сервера (аргумент --ctx-size/-c),
-	// 3) иначе — config.MaxTokens.
-	modelCtx := config.ModelHolder.GetModelContext(alias)
-	config.MaxTokens = resolveMaxTokens(config.ModelHolder, alias, config.MaxTokens)
-
-	tokenizer := tokenizers.NewLlamaServerTokenizer(llamaURL, modelName, config.MaxTokens)
-	if config.EnableLogging {
-		tokenizer.SetDebug(true)
-	}
-
-	switch {
-	case modelCtx > 0:
-		if l != nil {
-			l.InfoLogf("Using model context from models.json for %s: %d tokens", alias, modelCtx)
+	// Лимит контекста для текущей модели.
+	// Приоритет: ContextResolver (models.json context или реальный контекст сервера),
+	// иначе models.json, иначе реальный контекст с сервера, иначе config.MaxTokens.
+	var tokenizer *tokenizers.LlamaServerTokenizer
+	if config.ContextResolver != nil {
+		ctx, err := config.ContextResolver.Resolve()
+		if err != nil {
+			return nil, fmt.Errorf("resolve model context: %w", err)
 		}
-	case tokenizer.InitializeContextLimit() == nil:
-		actualCtx := tokenizer.GetActualContextLimit()
+		config.MaxTokens = ctx
 		if l != nil {
-			l.InfoLogf("Using actual server context for %s: %d tokens (config had %d)", alias, actualCtx, config.MaxTokens)
+			l.InfoLogf("Using model context for %s: %d tokens", alias, ctx)
 		}
-		config.MaxTokens = actualCtx
-	default:
-		if l != nil {
-			l.WarnLogf("Failed to get actual context limit from server (using configured maxTokens=%d)", config.MaxTokens)
+		tokenizer = tokenizers.NewLlamaServerTokenizer(llamaURL, modelName, config.MaxTokens)
+		if config.EnableLogging {
+			tokenizer.SetDebug(true)
+		}
+	} else {
+		modelCtx := config.ModelHolder.GetModelContext(alias)
+		config.MaxTokens = resolveMaxTokens(config.ModelHolder, alias, config.MaxTokens)
+		tokenizer = tokenizers.NewLlamaServerTokenizer(llamaURL, modelName, config.MaxTokens)
+		if config.EnableLogging {
+			tokenizer.SetDebug(true)
+		}
+		switch {
+		case modelCtx > 0:
+			if l != nil {
+				l.InfoLogf("Using model context from models.json for %s: %d tokens", alias, modelCtx)
+			}
+		case tokenizer.InitializeContextLimit() == nil:
+			actualCtx := tokenizer.GetActualContextLimit()
+			if l != nil {
+				l.InfoLogf("Using actual server context for %s: %d tokens (config had %d)", alias, actualCtx, config.MaxTokens)
+			}
+			config.MaxTokens = actualCtx
+		default:
+			if l != nil {
+				l.WarnLogf("Failed to get actual context limit from server (using configured maxTokens=%d)", config.MaxTokens)
+			}
 		}
 	}
 
@@ -136,12 +149,12 @@ func resolveMaxTokens(h *modelsconfig.Holder, alias string, fallback int) int {
 // syncCurrentModel пересоздаёт токенайзер и компрессор при смене текущей модели.
 // Вызывается перед обработкой каждого промпта, поэтому после /r <alias> агент
 // начинает использовать новую модель/сервер для токенизации и компакции.
-func (al *agentLoop) syncCurrentModel() {
+func (al *agentLoop) syncCurrentModel() error {
 	al.modelMu.Lock()
 	defer al.modelMu.Unlock()
 
 	if al.config.ModelHolder == nil {
-		return
+		return nil
 	}
 
 	alias, modelName, llamaURL := al.config.ModelHolder.GetCurrent()
@@ -152,11 +165,20 @@ func (al *agentLoop) syncCurrentModel() {
 		modelName = "local-model"
 	}
 	if alias == al.currentAlias {
-		return
+		return nil
 	}
 
 	al.currentAlias = alias
-	al.config.MaxTokens = resolveMaxTokens(al.config.ModelHolder, alias, al.config.MaxTokens)
+
+	if al.config.ContextResolver != nil {
+		ctx, err := al.config.ContextResolver.Resolve()
+		if err != nil {
+			return fmt.Errorf("resolve model context for %s: %w", alias, err)
+		}
+		al.config.MaxTokens = ctx
+	} else {
+		al.config.MaxTokens = resolveMaxTokens(al.config.ModelHolder, alias, al.config.MaxTokens)
+	}
 
 	tok := tokenizers.NewLlamaServerTokenizer(llamaURL, modelName, al.config.MaxTokens)
 	if al.config.EnableLogging {
@@ -170,6 +192,7 @@ func (al *agentLoop) syncCurrentModel() {
 	}
 
 	al.syncVisionTool()
+	return nil
 }
 
 // syncVisionTool регистрирует image2text тул, если текущая модель
@@ -244,7 +267,9 @@ func (al *agentLoop) ProcessMessage(ctx context.Context, prompt string, peerID i
 }
 
 func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID int64) (string, error) {
-	al.syncCurrentModel()
+	if err := al.syncCurrentModel(); err != nil {
+		return "", err
+	}
 	sess := al.getOrCreateSession(peerID)
 
 	if al.log != nil {
