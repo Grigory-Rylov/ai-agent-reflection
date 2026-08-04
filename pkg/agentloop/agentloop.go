@@ -168,6 +168,39 @@ func (al *agentLoop) syncCurrentModel() {
 	if al.log != nil {
 		al.log.InfoLogf("Model switched: %s (%s) at %s, maxTokens=%d", alias, modelName, llamaURL, al.config.MaxTokens)
 	}
+
+	al.syncVisionTool()
+}
+
+// syncVisionTool регистрирует image2text тул, если текущая модель
+// поддерживает изображения (vision), и разрегистрирует в противном случае.
+// Возвращает true, если тул в итоге зарегистрирован.
+func (al *agentLoop) syncVisionTool() bool {
+	if al.config.ModelHolder == nil {
+		return false
+	}
+
+	reg, ok := al.registry.(*tools.Registry)
+	if !ok {
+		return false
+	}
+
+	vision := al.config.ModelHolder.GetCurrentVision()
+	if vision && !reg.IsRegistered("image2text") {
+		reg.Register(&tools.Image2TextTool{})
+		if al.log != nil {
+			al.log.InfoLogf("image2text tool registered (vision model)")
+		}
+		return true
+	}
+	if !vision && reg.IsRegistered("image2text") {
+		reg.Unregister("image2text")
+		if al.log != nil {
+			al.log.InfoLogf("image2text tool unregistered (model is not vision-capable)")
+		}
+		return false
+	}
+	return vision
 }
 
 func (al *agentLoop) GetContextStats(peerID int64) (charCount int, tokenCount int, err error) {

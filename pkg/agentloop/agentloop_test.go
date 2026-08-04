@@ -2,6 +2,8 @@ package agentloop
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -123,6 +125,60 @@ func TestNewAgentLoopEmptyConfig(t *testing.T) {
 	// Должно использовать значения по умолчанию
 	if loop != nil {
 		// Проверяем что цикл создан
+	}
+}
+
+func TestAgentLoopSyncVisionTool(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "models.json")
+	content := `{
+		"default": "vision",
+		"models": {
+			"vision": {"name": "vision-model", "host": "127.0.0.1:8081", "vision": true},
+			"plain":  {"name": "plain-model", "host": "127.0.0.1:8081"}
+		}
+	}`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	holder, err := modelsconfig.NewHolder(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reg := tools.NewRegistry()
+	reg.Register(&tools.FileReadTool{})
+
+	config := DefaultLoopConfig()
+	config.ModelHolder = holder
+	loop, err := NewAgentLoop(config, &mockVKClient{}, reg)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	al := loop.(*agentLoop)
+
+	if !al.syncVisionTool() {
+		t.Fatal("expected syncVisionTool to register image2text for vision model")
+	}
+	if !reg.IsRegistered("image2text") {
+		t.Error("expected image2text to be registered after switching to vision model")
+	}
+	if !reg.IsRegistered("file_read") {
+		t.Error("expected existing tools to remain registered")
+	}
+
+	if err := holder.Switch("plain"); err != nil {
+		t.Fatal(err)
+	}
+	if al.syncVisionTool() {
+		t.Fatal("expected syncVisionTool to unregister image2text for non-vision model")
+	}
+	if reg.IsRegistered("image2text") {
+		t.Error("expected image2text to be unregistered after switching to non-vision model")
+	}
+	if !reg.IsRegistered("file_read") {
+		t.Error("expected non-vision tools to remain registered")
 	}
 }
 

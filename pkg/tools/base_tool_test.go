@@ -112,6 +112,51 @@ func TestRegistryGet(t *testing.T) {
 	})
 }
 
+func TestRegistryUnregister(t *testing.T) {
+	t.Run("removes tool from registry", func(t *testing.T) {
+		registry := NewRegistry()
+		registry.Register(&MockTool{name: "test_tool"})
+		if !registry.IsRegistered("test_tool") {
+			t.Fatal("expected tool to be registered")
+		}
+
+		registry.Unregister("test_tool")
+
+		if registry.IsRegistered("test_tool") {
+			t.Error("expected tool to be unregistered")
+		}
+		if len(registry.GetAll()) != 0 {
+			t.Errorf("expected 0 tools, got %d", len(registry.GetAll()))
+		}
+		if _, ok := registry.Get("test_tool"); ok {
+			t.Error("expected Get to fail after unregister")
+		}
+	})
+
+	t.Run("unregister missing tool is a no-op", func(t *testing.T) {
+		registry := NewRegistry()
+		registry.Register(&MockTool{name: "keep"})
+
+		registry.Unregister("nonexistent")
+
+		if !registry.IsRegistered("keep") {
+			t.Error("expected other tools to remain")
+		}
+	})
+
+	t.Run("re-register after unregister works", func(t *testing.T) {
+		registry := NewRegistry()
+		tool := &MockTool{name: "test_tool"}
+		registry.Register(tool)
+		registry.Unregister("test_tool")
+
+		registry.Register(&MockTool{name: "test_tool"})
+		if !registry.IsRegistered("test_tool") {
+			t.Error("expected tool to be re-registered")
+		}
+	})
+}
+
 func TestRegistryGetAliases(t *testing.T) {
 	t.Run("read_file finds file_read", func(t *testing.T) {
 		registry := NewRegistry()

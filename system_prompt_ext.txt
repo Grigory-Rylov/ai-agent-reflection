@@ -86,6 +86,14 @@ If native function calling is unavailable, use XML format inline in your respons
 </function>
 </tool_call>
 
+### image2text
+<tool_call>
+<function=image2text>
+<parameter=path>/path/to/photo.jpg</parameter>
+<parameter=prompt>What is shown in this image?</parameter>
+</function>
+</tool_call>
+
 ### Multiple tools in sequence
 Now let me check the time and calculate.
 

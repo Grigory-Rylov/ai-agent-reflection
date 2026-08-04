@@ -53,6 +53,11 @@ func (r *Registry) Register(tool Tool) {
 	r.tools[tool.Name()] = tool
 }
 
+// Unregister удаляет инструмент из реестра по имени (no-op, если его нет)
+func (r *Registry) Unregister(name string) {
+	delete(r.tools, name)
+}
+
 // Get возвращает инструмент по имени с поддержкой алиасов
 func (r *Registry) Get(name string) (Tool, bool) {
 	// Прямой поиск
