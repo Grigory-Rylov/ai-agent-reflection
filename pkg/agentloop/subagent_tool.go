@@ -7,6 +7,7 @@ import (
 	"hash/fnv"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -464,12 +465,22 @@ func (t *SubAgentTool) makeThinkingCallback(agentName string) func(peerID int64,
 	}
 }
 
-// generateUUID создаёт уникальный идентификатор для сессии
-func (t *SubAgentTool) generateUUID() string {
+// newSessionUUID генерирует уникальный идентификатор сессии агента
+// (общий для SubAgentTool и Orchestrator).
+func newSessionUUID(parts ...string) string {
 	h := fnv.New128a()
-	h.Write([]byte(fmt.Sprintf("%s-%d-%d-%d", t.ParentSessionID, t.CurrentDepth, time.Now().UnixNano(), t.PeerID)))
+	for _, p := range parts {
+		h.Write([]byte(p))
+		h.Write([]byte{'-'})
+	}
+	h.Write([]byte(strconv.FormatInt(time.Now().UnixNano(), 10)))
 	sum := h.Sum(nil)
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", sum[:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
+}
+
+// generateUUID создаёт уникальный идентификатор для сессии
+func (t *SubAgentTool) generateUUID() string {
+	return newSessionUUID(t.ParentSessionID, strconv.Itoa(t.CurrentDepth), strconv.FormatInt(t.PeerID, 10))
 }
 
 // saveSessionHistory сохраняет историю сообщений сессии агента в БД

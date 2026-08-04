@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -103,23 +104,67 @@ func (o *Orchestrator) RunAgent(ctx context.Context, agentName, task string, pee
 
 	a := o.makeSubAgent(agentName, prompt, peerID)
 
-	o.setupAgentTools(agentName, a, peerID)
+	// Персистим корневую сессию и стартовую цепочку, чтобы после рестарта
+	// цепочка lead → worker → reviewer восстановилась вплоть до лида.
+	rootID := o.beginRootSession(agentName, prompt, task, peerID)
+	var rootChain []string
+	if rootID != "" {
+		rootChain = []string{rootID}
+	}
+
+	o.setupAgentTools(agentName, a, peerID, rootID, rootChain)
 
 	response, err := a.ProcessMessage(ctx, task, peerID)
 	if err != nil {
+		// Не очищаем цепочку: незавершённую работу восстановит ResumeActiveChains.
 		return "", fmt.Errorf("agent %q failed: %w", agentName, err)
+	}
+
+	if rootID != "" {
+		o.endRootSession(peerID, rootID)
 	}
 
 	return response, nil
 }
 
-// setupAgentTools регистрирует инструменты агента в зависимости от его типа
-func (o *Orchestrator) setupAgentTools(name string, a agent.Agent, peerID int64) {
+// beginRootSession сохраняет корневую сессию агента и цепочку [rootID] в БД.
+// Возвращает пустую строку, если стор не настроен.
+func (o *Orchestrator) beginRootSession(agentName, systemPrompt, task string, peerID int64) string {
+	if o.config.Store == nil {
+		return ""
+	}
+	rootID := newSessionUUID(agentName, strconv.FormatInt(peerID, 10))
+	o.config.Store.SaveAgentSession(&store.AgentSessionData{
+		ID:           rootID,
+		AgentName:    agentName,
+		PeerID:       peerID,
+		SystemPrompt: systemPrompt,
+		LastPrompt:   task,
+		Status:       "active",
+	})
+	o.config.Store.SaveAgentChain(peerID, []string{rootID})
+	return rootID
+}
+
+// endRootSession удаляет корневую сессию и очищает цепочку после успешного
+// завершения агента.
+func (o *Orchestrator) endRootSession(peerID int64, rootID string) {
+	if o.config.Store == nil || rootID == "" {
+		return
+	}
+	o.config.Store.DeleteAgentSession(rootID)
+	o.config.Store.SaveAgentChain(peerID, nil)
+}
+
+// setupAgentTools регистрирует инструменты агента в зависимости от его типа.
+// sessionID — UUID текущей сессии агента, chain — цепочка от корня до неё
+// (нужны SubAgentTool для персистентности вложенных вызовов).
+func (o *Orchestrator) setupAgentTools(name string, a agent.Agent, peerID int64, sessionID string, chain []string) {
 	switch {
 	case o.isCoordinator(name):
 		o.debugLog("[TOOL] Coordinator mode for %s: read-only + task tool", name)
 		o.addReadOnlyTools(a)
-		o.registerSubAgentTool(name, a, peerID)
+		o.registerSubAgentTool(name, a, peerID, sessionID, chain)
 
 	case o.isReviewAgent(name):
 		o.debugLog("[TOOL] Review mode for %s: read-only + approve tool", name)
@@ -130,7 +175,7 @@ func (o *Orchestrator) setupAgentTools(name string, a agent.Agent, peerID int64)
 		o.addMainTools(a)
 		if !o.isLeafAgent(name) {
 			o.debugLog("[TOOL] Adding subagent tool for %s", name)
-			o.registerSubAgentTool(name, a, peerID)
+			o.registerSubAgentTool(name, a, peerID, sessionID, chain)
 		} else {
 			o.debugLog("[TOOL] %s is leaf — no subagent tool", name)
 		}
@@ -221,7 +266,7 @@ func (o *Orchestrator) resumeChain(ctx context.Context, chain store.AgentChainDa
 			o.config.Store.SaveAgentChain(chain.PeerID, chain.Chain[:i])
 			continue
 		}
-		result, err := o.runResumedAgent(ctx, sd, childResult)
+		result, err := o.runResumedAgent(ctx, sd, childResult, chain.Chain[:i+1])
 		if err != nil {
 			o.config.Store.DeleteAgentSession(id)
 			o.config.Store.SaveAgentChain(chain.PeerID, chain.Chain[:i])
@@ -238,9 +283,10 @@ func (o *Orchestrator) resumeChain(ctx context.Context, chain store.AgentChainDa
 }
 
 // runResumedAgent пересоздаёт агента из сохранённой сессии и запускает его.
-func (o *Orchestrator) runResumedAgent(ctx context.Context, sd *store.AgentSessionData, childResult string) (string, error) {
+// chain — цепочка сессий от корня до восстанавливаемого агента (включая его).
+func (o *Orchestrator) runResumedAgent(ctx context.Context, sd *store.AgentSessionData, childResult string, chain []string) (string, error) {
 	a := o.makeSubAgent(sd.AgentName, sd.SystemPrompt, sd.PeerID)
-	o.setupAgentTools(sd.AgentName, a, sd.PeerID)
+	o.setupAgentTools(sd.AgentName, a, sd.PeerID, sd.ID, chain)
 	o.restoreSessionMessages(a.GetSession(sd.PeerID), sd.Messages)
 
 	prompt := "The process was restarted. Continue your task from where you left off."
@@ -331,7 +377,7 @@ func (o *Orchestrator) runQA(ctx context.Context, task string, peerID int64) (st
 	}
 	a := o.makeSubAgent("qa", prompt, peerID)
 	o.addMainTools(a)
-	o.registerSubAgentTool("qa", a, peerID)
+	o.registerSubAgentTool("qa", a, peerID, "", nil)
 	return a.ProcessMessage(ctx, task, peerID)
 }
 
@@ -450,12 +496,10 @@ type toolInserter interface {
 	ReplaceTools(registry *tools.Registry)
 }
 
-func (o *Orchestrator) registerSubAgentTool(name string, a agent.Agent, peerID int64) {
-	if o.isLeafAgent(name) {
-		return
-	}
-	subReg := tools.NewRegistry()
-	subReg.Register(&SubAgentTool{
+// makeSubAgentTool создаёт SubAgentTool для текущего агента с привязкой к его
+// сессии (sessionID/chain) — так вложенные вызовы продолжают цепочку от корня.
+func (o *Orchestrator) makeSubAgentTool(name string, a agent.Agent, peerID int64, sessionID string, chain []string) *SubAgentTool {
+	return &SubAgentTool{
 		AgentConfig:     o.makeAgentConfig(),
 		MainTools:       o.config.ToolRegistry,
 		SystemPromptDir: o.systemPromptDir(),
@@ -470,7 +514,19 @@ func (o *Orchestrator) registerSubAgentTool(name string, a agent.Agent, peerID i
 		ModelHolder:     o.config.ModelHolder,
 		SetActiveAgent:  func(n string) { o.setActiveAgent(n) },
 		Store:           o.config.Store,
-	})
+		ParentSessionID: sessionID,
+		AgentSessionID:  sessionID,
+		ParentAgent:     a,
+		Chain:           chain,
+	}
+}
+
+func (o *Orchestrator) registerSubAgentTool(name string, a agent.Agent, peerID int64, sessionID string, chain []string) {
+	if o.isLeafAgent(name) {
+		return
+	}
+	subReg := tools.NewRegistry()
+	subReg.Register(o.makeSubAgentTool(name, a, peerID, sessionID, chain))
 	if inserter, ok := a.(toolInserter); ok {
 		inserter.RegisterTools(subReg)
 	} else {
