@@ -732,6 +732,11 @@ func (h *BotHandler) buildFullText(msg *VKMessage, fullMsgMap map[int64]VKMessag
 	if !found || len(full.Attachments) == 0 {
 		return msg.Text
 	}
+	absAttachmentsDir, _ := filepath.Abs(h.attachmentsDir)
+	if ctrl := tools.GetAccessController(); ctrl != nil {
+		ctrl.AddAllowedDir(absAttachmentsDir)
+	}
+
 	rawAttachments := toRawAttachments(full.Attachments)
 	downloaded, err := DownloadAttachments(rawAttachments, h.attachmentsDir)
 	if err != nil {

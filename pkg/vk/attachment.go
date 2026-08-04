@@ -155,8 +155,12 @@ func extractStickerURL(attData map[string]interface{}) (string, string, bool) {
 // Creates saveDir if it doesn't exist.
 // Prepends timestamp (YYYYMMDD_HHmmSS) to each filename.
 func DownloadAttachments(attachments []map[string]interface{}, saveDir string) ([]DownloadedAttachment, error) {
-	if err := os.MkdirAll(saveDir, 0755); err != nil {
-		return nil, fmt.Errorf("create dir %s: %w", saveDir, err)
+	absDir, err := filepath.Abs(saveDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve dir %s: %w", saveDir, err)
+	}
+	if err := os.MkdirAll(absDir, 0755); err != nil {
+		return nil, fmt.Errorf("create dir %s: %w", absDir, err)
 	}
 
 	var results []DownloadedAttachment
@@ -173,7 +177,7 @@ func DownloadAttachments(attachments []map[string]interface{}, saveDir string) (
 		name, ext := splitFileName(safeName)
 		timedName := fmt.Sprintf("%s_%s%s", timestamp, name, ext)
 
-		result, err := downloadSingle(url, filepath.Join(saveDir, timedName))
+		result, err := downloadSingle(url, filepath.Join(absDir, timedName))
 		if err != nil {
 			return results, fmt.Errorf("download %s: %w", filename, err)
 		}

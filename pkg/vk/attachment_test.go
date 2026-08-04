@@ -2,6 +2,11 @@ package vk
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -162,5 +167,54 @@ func TestVKAttachmentToRaw(t *testing.T) {
 				t.Errorf("roundtrip Raw len = %d, want %d", len(result.Raw), len(tt.attach.Raw))
 			}
 		})
+	}
+}
+
+func TestDownloadAttachmentsAbsolutePath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("file-content"))
+	}))
+	defer srv.Close()
+
+	attachments := []map[string]interface{}{
+		{
+			"type": "doc",
+			"doc": map[string]interface{}{
+				"id":    float64(1),
+				"title": "report.txt",
+				"url":   srv.URL + "/report.txt",
+			},
+		},
+	}
+
+	workDir := t.TempDir()
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origWD)
+
+	downloaded, err := DownloadAttachments(attachments, "./attachments")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(downloaded) != 1 {
+		t.Fatalf("expected 1 downloaded file, got %d", len(downloaded))
+	}
+
+	path := downloaded[0].Path
+	if !filepath.IsAbs(path) {
+		t.Errorf("expected absolute path, got %q", path)
+	}
+	if filepath.Base(filepath.Dir(path)) != "attachments" {
+		t.Errorf("expected file under 'attachments' dir, got %q", path)
+	}
+
+	info := FormatAttachmentInfo(downloaded)
+	if !strings.Contains(info, path) {
+		t.Errorf("attachment info should contain full path %q, got: %s", path, info)
 	}
 }
