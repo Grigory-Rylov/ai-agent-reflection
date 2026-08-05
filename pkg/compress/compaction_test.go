@@ -45,3 +45,29 @@ func TestEstimateMessagesTokensSimple(t *testing.T) {
 		t.Error("Token estimate should be positive")
 	}
 }
+
+// TestEstimateMessagesTokensSimple_ToolCallsIncluded проверяет, что tool call
+// аргументы, добавленные к Content, учитываются в оценке токенов. Это критично
+// для корректной работы компакции: без учёта tool calls оценка была ~0, а реальный
+// запрос к API переполнял контекст.
+func TestEstimateMessagesTokensSimple_ToolCallsIncluded(t *testing.T) {
+	// Сообщение с tool call аргументами (как делает convertSessionHistory)
+	content := "result" + `{"path":"src/main.go","content":"package main\nfunc main() { fmt.Println(\"hello\") }"}`
+	messagesWithToolCalls := []tokenizers.Message{
+		{Role: "user", Content: "read file"},
+		{Role: "assistant", Content: content},
+	}
+
+	// Сообщение без tool call аргументов
+	messagesWithoutToolCalls := []tokenizers.Message{
+		{Role: "user", Content: "read file"},
+		{Role: "assistant", Content: "result"},
+	}
+
+	tokensWith := EstimateMessagesTokensSimple(messagesWithToolCalls)
+	tokensWithout := EstimateMessagesTokensSimple(messagesWithoutToolCalls)
+
+	if tokensWith <= tokensWithout {
+		t.Errorf("tokens with tool calls (%d) should exceed tokens without (%d)", tokensWith, tokensWithout)
+	}
+}
