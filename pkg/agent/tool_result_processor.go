@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/opencode/llama-client/pkg/compress"
 	"github.com/opencode/llama-client/pkg/logger"
+	"github.com/opencode/llama-client/pkg/tokenizers"
 	sess "github.com/opencode/llama-client/session"
 )
 
@@ -49,28 +51,11 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	}
 
 	// Формируем сообщения для API
-	messages := make([]Message, len(originalMessages))
-	copy(messages, originalMessages)
+	messages := a.buildToolResultMessages(originalMessages, assistantContent, toolCalls, toolResults)
 
-	// Assistant message с tool_calls
-	reqToolCalls := make([]ToolCall, len(toolCalls))
-	for i, tc := range toolCalls {
-		reqToolCalls[i] = buildToolCallForRequest(tc)
-	}
-	messages = append(messages, Message{
-		Role:      "assistant",
-		Content:   assistantContent,
-		ToolCalls: reqToolCalls,
-	})
-
-	// Результаты инструментов
-	for _, tr := range toolResults {
-		messages = append(messages, Message{
-			Role:       "tool",
-			ToolCallID: tr.ToolCallID,
-			Name:       tr.ToolName,
-			Content:    tr.Content,
-		})
+	// Проверяем переполнение ДО отправки в LLM (как в opencode — перед каждым запросом)
+	if a.compactor != nil {
+		messages = a.compactIfNeededBeforeLLM(ctx, session, messages, assistantContent, toolCalls, toolResults)
 	}
 
 	// Отправляем запрос в LLM (с инструментами, чтобы модель могла продолжить)
@@ -85,7 +70,53 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	// Собираем ответ с проверкой на tool_calls (с бесконечным ретраем серверных ошибок)
 	responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.streamAndCollect(ctx, streamConfig, messages)
 	if err != nil {
-		return "", err
+		// Реактивная компакция при переполнении контекста (как compactAfterOverflow в opencode)
+		if IsContextOverflowError(err) && a.compactor != nil {
+			prefix := a.agentPrefix()
+			fmt.Printf(prefix+"[OPENCODE-COMPACT] Reactive overflow recovery for peer %d\n", session.GetPeerID())
+			logger.DebugToFile(prefix+"[OPENCODE-COMPACT] Peer %d: Reactive overflow recovery, compacting", session.GetPeerID())
+
+			a.compactIfNeeded(ctx, session)
+
+			// Восстанавливаем tool calls/results после компактизации
+			history := session.GetHistory()
+			hasLastResult := false
+			if len(history) > 1 {
+				if history[len(history)-2].Role == sess.AssistantRole {
+					hasLastResult = true
+				}
+			}
+			if !hasLastResult {
+				sessionToolCalls := make([]sess.MsgToolCall, len(toolCalls))
+				for i, tc := range toolCalls {
+					sessionToolCalls[i] = sess.MsgToolCall{
+						ID:   tc.ID,
+						Type: tc.Type,
+						Function: sess.MsgToolCallFunc{
+							Name:      tc.Function.Name,
+							Arguments: string(tc.Function.Arguments),
+						},
+					}
+				}
+				session.AddAssistantMessageWithToolCalls(assistantContent, sessionToolCalls)
+				for _, tr := range toolResults {
+					session.AddToolMessage(tr.ToolCallID, tr.ToolName, tr.Content)
+				}
+			}
+
+			messages = a.buildToolResultMessagesFromSession(session)
+
+			// Повторный запрос после компактизации
+			responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err = a.streamAndCollect(ctx, streamConfig, messages)
+			if err != nil {
+				// Если после реактивной компактизации снова ошибка — это терминальная
+				prefix := a.agentPrefix()
+				fmt.Printf(prefix+"[ERROR] Context overflow after reactive compaction: %v\n", err)
+				return "", fmt.Errorf("context overflow after compaction: %w", err)
+			}
+		} else {
+			return "", err
+		}
 	}
 
 	// Отправляем reasoning в thinking чат сразу после получения,
@@ -246,4 +277,108 @@ func (a *agentImpl) handleInvalidXMLToolCall(ctx context.Context, messages []Mes
 		return FunctionCallResult{}, fmt.Errorf("process format error: %w", err)
 	}
 	return FunctionCallResult{Success: true, Response: finalResponse}, nil
+}
+
+// buildToolResultMessages собирает список сообщений для API из оригинальных + assistant + tool results.
+func (a *agentImpl) buildToolResultMessages(originalMessages []Message, assistantContent string, toolCalls []ToolCall, toolResults []ToolCallResult) []Message {
+	messages := make([]Message, len(originalMessages))
+	copy(messages, originalMessages)
+
+	reqToolCalls := make([]ToolCall, len(toolCalls))
+	for i, tc := range toolCalls {
+		reqToolCalls[i] = buildToolCallForRequest(tc)
+	}
+	messages = append(messages, Message{
+		Role:      "assistant",
+		Content:   assistantContent,
+		ToolCalls: reqToolCalls,
+	})
+
+	for _, tr := range toolResults {
+		messages = append(messages, Message{
+			Role:       "tool",
+			ToolCallID: tr.ToolCallID,
+			Name:       tr.ToolName,
+			Content:    tr.Content,
+		})
+	}
+
+	return messages
+}
+
+// compactIfNeededBeforeLLM проверяет, не переполнит ли текущий набор сообщений контекст.
+// Если да — компактирует сессию и пересобирает messages (сохраняя tool calls/results).
+// Опционально, проверяет не переполнит ли context — если да, выполняет компакцию.
+func (a *agentImpl) compactIfNeededBeforeLLM(ctx context.Context, session *sess.Session, messages []Message, assistantContent string, toolCalls []ToolCall, toolResults []ToolCallResult) []Message {
+	tokenMessages := make([]tokenizers.Message, len(messages))
+	for i, m := range messages {
+		tokenMessages[i] = tokenizers.Message{
+			Role:    m.Role,
+			Content: m.Content,
+		}
+	}
+
+	tokens := compress.EstimateMessagesTokensSimple(tokenMessages)
+	if !compress.IsOverflow(tokens, a.config.MaxTokens, a.config.CompactionReserved) {
+		return messages
+	}
+
+	prefix := a.agentPrefix()
+	fmt.Printf(prefix+"[OPENCODE-COMPACT] Tool results overflow (%d tokens), compacting before LLM request\n", tokens)
+	logger.DebugToFile(prefix+"[OPENCODE-COMPACT] Peer %d: Tool results overflow (%d/%d), compacting",
+		session.GetPeerID(), tokens, a.config.MaxTokens)
+
+	// Компактируем сессию — она уже содержит tool calls/results (добавлены выше)
+	a.compactIfNeeded(ctx, session)
+
+	// После компактизации сессия сброшена, но tool calls/results добавленные до compactIfNeeded
+	// могут быть утеряны. Нужно убедиться, что последние tool results восстановлены.
+	// compactIfNeeded использует tailTurns — если tool messages попали в tail, они сохранятся.
+	// Но если не попали — нужно добавить их заново.
+
+	history := session.GetHistory()
+	historyLen := len(history)
+
+	// Проверяем, есть ли в истории tool message (последний добавленный)
+	hasLastToolResult := false
+	if historyLen > 0 {
+		last := history[historyLen-1]
+		// Tool messages добавляются как user role в сессии
+		if last.Role == sess.UserRole && historyLen > 1 {
+			prev := history[historyLen-2]
+			if prev.Role == sess.AssistantRole {
+				// Это assistant + tool result пара — есть в сессии
+				hasLastToolResult = true
+			}
+		}
+	}
+
+	// Если tool results утеряны — добавляем их заново
+	if !hasLastToolResult {
+		sessionToolCalls := make([]sess.MsgToolCall, len(toolCalls))
+		for i, tc := range toolCalls {
+			sessionToolCalls[i] = sess.MsgToolCall{
+				ID:   tc.ID,
+				Type: tc.Type,
+				Function: sess.MsgToolCallFunc{
+					Name:      tc.Function.Name,
+					Arguments: string(tc.Function.Arguments),
+				},
+			}
+		}
+		session.AddAssistantMessageWithToolCalls(assistantContent, sessionToolCalls)
+
+		for _, tr := range toolResults {
+			session.AddToolMessage(tr.ToolCallID, tr.ToolName, tr.Content)
+		}
+	}
+
+	// Пересобираем messages из обновлённой сессии
+	return a.buildToolResultMessagesFromSession(session)
+}
+
+// buildToolResultMessagesFromSession пересобирает messages из истории сессии
+// после компактизации.
+func (a *agentImpl) buildToolResultMessagesFromSession(session *sess.Session) []Message {
+	return a.convertHistoryToAPIMessages(session.GetContextMessages())
 }
