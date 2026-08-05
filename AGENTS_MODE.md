@@ -154,4 +154,3 @@ Adding a scenario:
 | `system_prompt/worker.txt` | Worker system prompt |
 | `system_prompt/qa.txt` | QA system prompt |
 | `cmd/vk-gateway/main.go` | Orchestrator creation and wiring |
-| `SUBAGENTS_FEATURE.md` | Detailed design document |

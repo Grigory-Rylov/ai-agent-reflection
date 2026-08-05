@@ -49,6 +49,8 @@ type agentLoop struct {
 	thinkingCallback func(peerID int64, content string) error
 	currentAlias     string
 	modelMu          sync.Mutex
+	slots            *slotClient
+	slotIDCache      sync.Map // serverURL -> int
 }
 
 func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentLoop, error) {
@@ -127,6 +129,7 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 		dispatcher:   NewEventDispatcher(),
 		log:          l,
 		currentAlias: alias,
+		slots:        newSlotClient(),
 	}, nil
 }
 
@@ -226,6 +229,108 @@ func (al *agentLoop) syncVisionTool() bool {
 	return vision
 }
 
+// currentModelSlotSave возвращает true, если текущая модель настроена на
+// сохранение/восстановление KV-cache слота llama-server (slot-save в models.json).
+func (al *agentLoop) currentModelSlotSave() bool {
+	if al.config.ModelHolder == nil {
+		return false
+	}
+	return al.config.ModelHolder.GetCurrentSlotSave()
+}
+
+// restoreSessionSlot восстанавливает KV-cache слота для сессии peerID перед запросом.
+// Ошибки пишутся в лог и не влияют на обработку запроса.
+func (al *agentLoop) restoreSessionSlot(ctx context.Context, peerID int64) {
+	al.withSessionSlot(ctx, peerID, "restore")
+}
+
+// saveSessionSlot сохраняет KV-cache слота для сессии peerID после ответа модели.
+// Ошибки пишутся в лог и не влияют на отправку ответа.
+func (al *agentLoop) saveSessionSlot(ctx context.Context, peerID int64) {
+	al.withSessionSlot(ctx, peerID, "save")
+}
+
+// withSessionSlot выполняет сохранение или восстановление слота для сессии peerID.
+func (al *agentLoop) withSessionSlot(ctx context.Context, peerID int64, action string) {
+	if al.config.ModelHolder == nil {
+		return
+	}
+
+	_, _, host := al.config.ModelHolder.GetCurrent()
+	if host == "" {
+		return
+	}
+
+	slotID, err := al.resolveSlotID(ctx, host)
+	if err != nil {
+		al.logSlotError(action, peerID, err)
+		return
+	}
+
+	filename := al.sessionSlotFileName(peerID)
+
+	var serr error
+	switch action {
+	case "save":
+		serr = al.slots.saveSlot(ctx, host, slotID, filename)
+	case "restore":
+		serr = al.slots.restoreSlot(ctx, host, slotID, filename)
+	}
+	if serr != nil {
+		al.logSlotError(action, peerID, serr)
+		return
+	}
+
+	if al.log != nil {
+		al.log.InfoLogf("[SLOT] %s slot %d for peer %d (%s)", action, slotID, peerID, filename)
+	}
+}
+
+// sessionSlotFileName возвращает имя файла слота для сессии peerID.
+// Имя привязано к модели, чтобы не восстанавливать чужой KV-cache после /r.
+func (al *agentLoop) sessionSlotFileName(peerID int64) string {
+	_, modelName, _ := al.config.ModelHolder.GetCurrent()
+	return fmt.Sprintf("agent_%d_%s.bin", peerID, sanitizeSlotName(modelName))
+}
+
+// resolveSlotID возвращает id слота для сервера, кэшируя результат по адресу сервера.
+func (al *agentLoop) resolveSlotID(ctx context.Context, serverURL string) (int, error) {
+	if val, ok := al.slotIDCache.Load(serverURL); ok {
+		return val.(int), nil
+	}
+	id, err := al.slots.firstSlotID(ctx, serverURL)
+	if err != nil {
+		return 0, err
+	}
+	al.slotIDCache.Store(serverURL, id)
+	return id, nil
+}
+
+// logSlotError пишет ошибку save/restore слота в лог (не в чат).
+func (al *agentLoop) logSlotError(action string, peerID int64, err error) {
+	if al.log != nil {
+		al.log.WarnLogf("[SLOT] Failed to %s slot for peer %d: %v", action, peerID, err)
+	}
+}
+
+// sanitizeSlotName приводит имя модели к безопасному имени файла.
+func sanitizeSlotName(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "model"
+	}
+	return b.String()
+}
+
 func (al *agentLoop) GetContextStats(peerID int64) (charCount int, tokenCount int, err error) {
 	s := al.GetSession(peerID)
 	if s == nil {
@@ -286,12 +391,21 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 
 	messages := al.buildAPIMessages(sess)
 
+	slotSave := al.currentModelSlotSave()
+	if slotSave {
+		al.restoreSessionSlot(ctx, peerID)
+	}
+
 	response, err := al.sendToLLM(ctx, messages, sess, peerID, prompt)
 	if err != nil {
 		if al.log != nil {
 			al.log.ErrorLogf("LLM request failed: %v", err)
 		}
 		return "", fmt.Errorf("LLM request failed: %w", err)
+	}
+
+	if slotSave {
+		al.saveSessionSlot(ctx, peerID)
 	}
 
 	if al.config.EnablePruning {

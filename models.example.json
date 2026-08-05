@@ -5,7 +5,8 @@
             "name": "model-name-on-server.gguf",
             "host": "127.0.0.1:8081",
             "context": 32768,
-            "vision": true
+            "vision": true,
+            "slot-save": true
         },
         "another-model": {
             "name": "another-model.gguf",

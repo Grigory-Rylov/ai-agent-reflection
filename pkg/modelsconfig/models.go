@@ -10,10 +10,11 @@ import (
 )
 
 type ModelEntry struct {
-	Name    string `json:"name"`
-	Host    string `json:"host"`
-	Context int    `json:"context,omitempty"` // Лимит контекста модели в токенах (0 = не указан)
-	Vision  bool   `json:"vision,omitempty"`  // Модель поддерживает изображения (мультимодальная)
+	Name     string `json:"name"`
+	Host     string `json:"host"`
+	Context  int    `json:"context,omitempty"`   // Лимит контекста модели в токенах (0 = не указан)
+	Vision   bool   `json:"vision,omitempty"`    // Модель поддерживает изображения (мультимодальная)
+	SlotSave bool   `json:"slot-save,omitempty"` // Сохранять/восстанавливать KV-cache слота llama-server для сессии
 }
 
 type ModelsConfig struct {
@@ -171,6 +172,22 @@ func (h *Holder) GetModelVision(alias string) bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.config.Models[alias].Vision
+}
+
+// GetCurrentSlotSave возвращает true, если для текущей модели включено
+// сохранение/восстановление KV-cache слота llama-server (slot-save).
+func (h *Holder) GetCurrentSlotSave() bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.config.Models[h.config.Default].SlotSave
+}
+
+// GetModelSlotSave возвращает true, если для модели по алиасу включено
+// сохранение/восстановление KV-cache слота llama-server (slot-save).
+func (h *Holder) GetModelSlotSave(alias string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.config.Models[alias].SlotSave
 }
 
 func (h *Holder) GetModelHost(alias string) (ModelEntry, bool) {

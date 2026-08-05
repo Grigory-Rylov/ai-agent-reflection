@@ -229,6 +229,43 @@ func TestHolderContext(t *testing.T) {
 	}
 }
 
+func TestHolderSlotSave(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "models.json")
+	content := `{
+		"default": "gemma",
+		"models": {
+			"gemma": {"name": "gemma-4.gguf", "host": "127.0.0.1:8081", "slot-save": true},
+			"llama": {"name": "llama-3.gguf", "host": "192.168.1.1:8081"}
+		}
+	}`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	holder, err := NewHolder(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := holder.GetCurrentSlotSave(); got != true {
+		t.Errorf("GetCurrentSlotSave: got %v, want true", got)
+	}
+	if got := holder.GetModelSlotSave("gemma"); got != true {
+		t.Errorf("GetModelSlotSave(gemma): got %v, want true", got)
+	}
+	if got := holder.GetModelSlotSave("llama"); got != false {
+		t.Errorf("GetModelSlotSave(llama): got %v, want false (not set)", got)
+	}
+
+	if err := holder.Switch("llama"); err != nil {
+		t.Fatal(err)
+	}
+	if got := holder.GetCurrentSlotSave(); got != false {
+		t.Errorf("GetCurrentSlotSave after switch: got %v, want false", got)
+	}
+}
+
 func TestHolderVision(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "models.json")

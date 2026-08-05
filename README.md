@@ -26,7 +26,7 @@ VK Bot API → Agent Gateway → llama-server (local LLM)
 go build -o agent .
 go build -o agent-restarter ./cmd/vk-gateway-restarter
 
-# Configure config.json with VK token
+# Configure config.json with VK token (models and their servers live in models.json)
 # Run agent directly:
 ./agent
 
@@ -38,14 +38,64 @@ Config is loaded from `./config.json` (priority), with fallback to `~/.config/ai
 
 ```json
 {
-    "llama_server_url": "192.168.1.212:8081",
     "token_vk": "vk1.a.your_vk_bot_token",
     "peer_id": 2000000001,
     "thinking_peer_id": 2000000002,
     "max_tokens": 4096,
-    "temperature": 0.7
+    "temperature": 0.7,
+    "db_path": "./agent.db",
+    "allowed_dirs": ["/path/to/working/dir"]
 }
 ```
+
+Model settings (which model, which llama-server address) are **not** part of `config.json` — they live in `models.json` (see next section).
+
+## Models config
+
+Models are configured in `models.json` (in the agent directory):
+
+```json
+{
+    "default": "gemma-4",
+    "models": {
+        "gemma-4": {
+            "name": "gemma-4-12b-it-UD-Q4_K_XL.gguf",
+            "host": "127.0.0.1:8081",
+            "context": 32768,
+            "vision": true,
+            "slot-save": true
+        }
+    }
+}
+```
+
+Fields per model:
+
+| Field | Description |
+|-------|-------------|
+| `name` | Model file name on the server |
+| `host` | llama-server address (with or without `http://`) |
+| `context` | Context limit in tokens (optional) |
+| `vision` | Model supports images (optional) |
+| `slot-save` | Persist/restore the llama-server slot KV-cache per session (optional). See [Slot cache](#slot-cache-slot-save) below. |
+
+## Slot cache (`slot-save`)
+
+Long multi-turn conversations re-process the whole history on every request. With `"slot-save": true` on the model the agent persists the server-side KV-cache of a slot between turns:
+
+- before each prompt the agent tries to **restore** the slot file for this session;
+- after the response it **saves** the slot again;
+- slot file is named after session and model — `agent_<peer_id>_<model>.bin` — and stored server-side in the directory from `--slot-save-path`;
+- errors are only logged, never shown in chat; a missing/expired slot file is a logged HTTP 400 and the request proceeds with an empty cache.
+
+### llama-server flags
+
+Slot save/restore uses the llama-server `/slots` API, so the server must be started with:
+
+- `--slot-save-path <dir>` — **required**; directory where slot files are stored (e.g. `/tmp/llama-cache`);
+- `--swa-full` — **required for SWA/hybrid models** (e.g. gemma-4). Without it the restored cache is *not* reused: for such models llama-server relies on in-memory context checkpoints that the `/slots` save/restore API does not persist, so after a restore the whole history is re-processed (`cache_n: 0`).
+
+Recommended also: run the server with `--parallel 1` (or a single user/agent per server), otherwise a request may be served by a different slot than the one the agent saves, making the save no-op.
 
 ## Multi-Agent Mode
 
@@ -267,7 +317,7 @@ Send a message with `#agent_name` prefix to route to a specific agent:
 
 ```
 #developer напиши тесты для модуля
-#reviewer проверь код на安全问题
+#reviewer проверь код на ошибки
 #qa запусти тесты и отчитайся
 ```
 
