@@ -796,11 +796,9 @@ func (al *agentLoop) checkAndCompressOpenCode(ctx context.Context, sess *session
 
 	messages := al.convertHistoryToMessages(history)
 	tokensBefore := compress.EstimateMessagesTokensSimple(messages)
-	// Safety margin: эвристика len/4 может недооценивать реальные токены
-	tokensBefore = int(float64(tokensBefore) * 1.5)
 
 	if al.log != nil {
-		al.log.DebugLogf("[OPENCODE-COMPACT] Peer %d: %d messages, ~%d tokens (with 1.5x safety)",
+		al.log.DebugLogf("[OPENCODE-COMPACT] Peer %d: %d messages, ~%d tokens",
 			peerID, len(messages), tokensBefore)
 	}
 
@@ -904,6 +902,7 @@ func (al *agentLoop) convertHistoryToMessages(history []session.Message) []token
 	messages := make([]tokenizers.Message, len(history))
 	for i, msg := range history {
 		content := msg.Content
+		// Tool call аргументы учитываются в оценке (как в opencode)
 		for _, tc := range msg.ToolCalls {
 			content += tc.Function.Arguments
 		}

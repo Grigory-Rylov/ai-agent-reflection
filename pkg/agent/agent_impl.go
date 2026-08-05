@@ -279,8 +279,6 @@ func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session) {
 	messages := a.convertSessionHistory(history)
 
 	tokensBefore := compress.EstimateMessagesTokensSimple(messages)
-	// Safety margin: эвристика len/4 может недооценивать реальные токены
-	tokensBefore = int(float64(tokensBefore) * 1.5)
 	if !compress.IsOverflow(tokensBefore, a.config.MaxTokens, a.config.CompactionReserved) {
 		return
 	}
@@ -315,6 +313,8 @@ func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session) {
 }
 
 // convertSessionHistory конвертирует историю сессии в tokenizers.Message
+// Tool call аргументы добавляются к контенту для корректной оценки токенов
+// (в opencode оценивается JSON.stringify всего request, включая tool calls)
 func (a *agentImpl) convertSessionHistory(history []session.Message) []tokenizers.Message {
 	messages := make([]tokenizers.Message, len(history))
 	for i, msg := range history {

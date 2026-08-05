@@ -313,7 +313,7 @@ func (a *agentImpl) compactIfNeededBeforeLLM(ctx context.Context, session *sess.
 	tokenMessages := make([]tokenizers.Message, len(messages))
 	for i, m := range messages {
 		content := m.Content
-		// Добавляем содержимое tool calls к оценке токенов
+		// Tool call аргументы учитываются в оценке (как в opencode — полный request)
 		for _, tc := range m.ToolCalls {
 			content += string(tc.Function.Arguments)
 		}
@@ -324,9 +324,6 @@ func (a *agentImpl) compactIfNeededBeforeLLM(ctx context.Context, session *sess.
 	}
 
 	tokens := compress.EstimateMessagesTokensSimple(tokenMessages)
-	// Safety margin: эвристика len/4 может недооценивать реальные токены
-	// (особенно для JSON/структурированных данных), поэтому умножаем на 1.5
-	tokens = int(float64(tokens) * 1.5)
 	if !compress.IsOverflow(tokens, a.config.MaxTokens, a.config.CompactionReserved) {
 		return messages
 	}
