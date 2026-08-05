@@ -279,6 +279,8 @@ func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session) {
 	messages := a.convertSessionHistory(history)
 
 	tokensBefore := compress.EstimateMessagesTokensSimple(messages)
+	// Safety margin: эвристика len/4 может недооценивать реальные токены
+	tokensBefore = int(float64(tokensBefore) * 1.5)
 	if !compress.IsOverflow(tokensBefore, a.config.MaxTokens, a.config.CompactionReserved) {
 		return
 	}
@@ -316,9 +318,14 @@ func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session) {
 func (a *agentImpl) convertSessionHistory(history []session.Message) []tokenizers.Message {
 	messages := make([]tokenizers.Message, len(history))
 	for i, msg := range history {
+		content := msg.Content
+		// Добавляем содержимое tool calls к оценке токенов
+		for _, tc := range msg.ToolCalls {
+			content += tc.Function.Arguments
+		}
 		messages[i] = tokenizers.Message{
 			Role:    string(msg.Role),
-			Content: msg.Content,
+			Content: content,
 		}
 	}
 	return messages
