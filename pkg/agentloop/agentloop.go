@@ -869,7 +869,7 @@ func (al *agentLoop) applyOpenCodeCompactResult(sess *session.Session, result *c
 	sess.Reset()
 
 	if result.SummaryMsg.Content != "" {
-		sess.AddAssistantMessage(
+		sess.AddAssistantMessageWithSummary(
 			"<<CONVERSATION CHECKPOINT>>\n" + result.SummaryMsg.Content,
 		)
 	}
@@ -938,9 +938,10 @@ func (al *agentLoop) convertHistoryToMessages(history []session.Message) []token
 		messages[i] = tokenizers.Message{
 			Role:    string(msg.Role),
 			Content: content,
+			Summary: msg.Summary,
 		}
 	}
-	return messages
+	return compress.FilterCompacted(messages)
 }
 
 func (al *agentLoop) Start(ctx context.Context) {

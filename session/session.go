@@ -46,6 +46,7 @@ type Message struct {
 	ToolCalls  []MsgToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string        `json:"tool_call_id,omitempty"` // ID инструмента для сообщений с role=tool
 	Name       string        `json:"name,omitempty"`         // Имя инструмента для сообщений с role=tool
+	Summary    bool          `json:"summary,omitempty"`      // true если это результат компактизации (для FilterCompacted)
 	Timestamp  time.Time     `json:"timestamp,omitempty"`
 }
 
@@ -246,6 +247,26 @@ func (s *Session) AddAssistantMessageWithToolCalls(content string, toolCalls []M
 		Role:      AssistantRole,
 		Content:   content,
 		ToolCalls: toolCalls,
+		Timestamp: time.Now(),
+	}
+	s.messages = append(s.messages, msg)
+	s.updatedAt = time.Now()
+
+	if s.config.AutoSave {
+		s.saveNow()
+	}
+}
+
+// AddAssistantMessageWithSummary добавляет assistant сообщение с флагом Summary=true
+// для маркировки результатов компактизации (нужно для FilterCompacted)
+func (s *Session) AddAssistantMessageWithSummary(content string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	msg := Message{
+		Role:      AssistantRole,
+		Content:   content,
+		Summary:   true,
 		Timestamp: time.Now(),
 	}
 	s.messages = append(s.messages, msg)

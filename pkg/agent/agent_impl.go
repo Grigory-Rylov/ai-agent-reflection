@@ -296,7 +296,7 @@ func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session) {
 
 	s.Reset()
 	if result.SummaryMsg.Content != "" {
-		s.AddAssistantMessage("<<CONVERSATION CHECKPOINT>>\n" + result.SummaryMsg.Content)
+		s.AddAssistantMessageWithSummary("<<CONVERSATION CHECKPOINT>>\n" + result.SummaryMsg.Content)
 	}
 	for _, msg := range result.KeptTail {
 		switch msg.Role {
@@ -315,6 +315,8 @@ func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session) {
 // convertSessionHistory конвертирует историю сессии в tokenizers.Message
 // Tool call аргументы добавляются к контенту для корректной оценки токенов
 // (в opencode оценивается JSON.stringify всего request, включая tool calls)
+// После конвертации применяет FilterCompacted для корректного порядка
+// сообщений после компактизации: [compaction-user, summary, tail, after-summary]
 func (a *agentImpl) convertSessionHistory(history []session.Message) []tokenizers.Message {
 	messages := make([]tokenizers.Message, len(history))
 	for i, msg := range history {
@@ -326,9 +328,10 @@ func (a *agentImpl) convertSessionHistory(history []session.Message) []tokenizer
 		messages[i] = tokenizers.Message{
 			Role:    string(msg.Role),
 			Content: content,
+			Summary: msg.Summary,
 		}
 	}
-	return messages
+	return compress.FilterCompacted(messages)
 }
 
 // ResetSession сбрасывает сессию пользователя
