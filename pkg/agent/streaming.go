@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/opencode/llama-client/pkg/compress"
 	"github.com/opencode/llama-client/pkg/logger"
 )
 
@@ -106,11 +107,16 @@ func (a *agentImpl) buildRequestJSON(config StreamingConfig, messages []Message)
 
 // buildBaseRequestJSON формирует базовый JSON запрос для llama-server API
 func (a *agentImpl) buildBaseRequestJSON(model string, messages []Message, stream bool) map[string]interface{} {
+	// max_tokens для output: OUTPUT_TOKEN_MAX, но не больше контекста модели
+	maxOutput := compress.OUTPUT_TOKEN_MAX
+	if a.config.MaxTokens > 0 && a.config.MaxTokens < maxOutput {
+		maxOutput = a.config.MaxTokens
+	}
 	return map[string]interface{}{
 		"model":       model,
 		"messages":    messages,
 		"temperature": a.config.Temperature,
-		"max_tokens":  a.config.MaxTokens,
+		"max_tokens":  maxOutput,
 		"stream":      stream,
 	}
 }
