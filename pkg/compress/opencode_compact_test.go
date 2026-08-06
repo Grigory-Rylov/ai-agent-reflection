@@ -27,18 +27,30 @@ func TestUsable(t *testing.T) {
 		}
 	})
 
-	t.Run("large context uses COMPACTION_BUFFER", func(t *testing.T) {
+	t.Run("large context uses maxOutputTokens (opencode-style)", func(t *testing.T) {
+		// В opencode: context - maxOutputTokens(model, outputTokenMax)
+		// maxOutputTokens = min(context, 32000) = 32000
 		got := Usable(200_000, nil)
-		if got != 180_000 {
-			t.Errorf("Usable(200000) = %d, want 180000", got)
+		if got != 168_000 {
+			t.Errorf("Usable(200000) = %d, want 168000 (200000 - OUTPUT_TOKEN_MAX 32000)", got)
 		}
 	})
 
-	t.Run("custom reserved", func(t *testing.T) {
+	t.Run("custom reserved used for inputLimit branch only (opencode-style)", func(t *testing.T) {
+		// В opencode: reserved используется только с inputLimit.
+		// Для context ветки всегда: context - maxOutputTokens
 		reserved := 50000
 		got := Usable(200_000, &reserved)
-		if got != 150_000 {
-			t.Errorf("Usable(200000, 50000) = %d, want 150000", got)
+		// Usable() — обёртка над UsableWithLimits(context, 0, reserved)
+		// inputLimit = 0 → context - maxOutputTokens = 200000 - 32000 = 168000
+		if got != 168_000 {
+			t.Errorf("Usable(200000, 50000) = %d, want 168000 (context - maxOutputTokens)", got)
+		}
+
+		// С inputLimit reserved используется:
+		gotWithInput := UsableWithLimits(200_000, 150_000, &reserved)
+		if gotWithInput != 100_000 {
+			t.Errorf("UsableWithLimits(200000, 150000, 50000) = %d, want 100000 (input - reserved)", gotWithInput)
 		}
 	})
 }
@@ -51,8 +63,14 @@ func TestIsOverflow(t *testing.T) {
 	})
 
 	t.Run("overflow when at limit", func(t *testing.T) {
-		if !IsOverflow(180_000, 200_000, nil) {
-			t.Error("180000 tokens should overflow 200K context (reserved=20K)")
+		if !IsOverflow(168_000, 200_000, nil) {
+			t.Error("168000 tokens should overflow 200K context (usable=168000)")
+		}
+	})
+
+	t.Run("no overflow under usable limit", func(t *testing.T) {
+		if IsOverflow(167_999, 200_000, nil) {
+			t.Error("167999 tokens should not overflow 200K context (usable=168000)")
 		}
 	})
 

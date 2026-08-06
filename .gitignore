@@ -40,3 +40,4 @@ mcp_config.json
 
 # Model config (with server addresses)
 models.json
+tool-output/

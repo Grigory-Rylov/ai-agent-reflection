@@ -164,12 +164,12 @@ func TestScenario_OverflowEdgeCases(t *testing.T) {
 		reserved       *int
 		expectOverflow bool
 	}{
-		{"exact limit", 180_000, 200_000, nil, true},
-		{"just under", 179_999, 200_000, nil, false},
+		{"exact limit", 168_000, 200_000, nil, true}, // usable = 200000 - 32000 = 168000
+		{"just under", 167_999, 200_000, nil, false},
 		{"zero context", 1000, 0, nil, false},
-		{"custom reserved", 150_000, 200_000, intPtr(50_000), true},
-		{"under custom reserved", 149_999, 200_000, intPtr(50_000), false},
-		{"large context", 980_000, 1_000_000, nil, true},
+		{"custom reserved no inputLimit", 168_000, 200_000, intPtr(50_000), true}, // reserved не влияет без inputLimit
+		{"under custom reserved", 167_999, 200_000, intPtr(50_000), false},
+		{"large context", 968_000, 1_000_000, nil, true}, // usable = 1000000 - 32000 = 968000
 	}
 
 	for _, tt := range tests {
