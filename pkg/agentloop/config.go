@@ -30,6 +30,7 @@ type LoopConfig struct {
 	TailTurns                      int
 	PreserveRecentTokens           *int
 	CompactionReserved             *int
+	ModelLimitInput                int
 	EnablePruning                  bool
 	ToolOutputMaxLines             int
 	ToolOutputMaxBytes             int

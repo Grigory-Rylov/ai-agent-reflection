@@ -279,7 +279,7 @@ func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session) {
 	messages := a.convertSessionHistory(history)
 
 	tokensBefore := compress.EstimateMessagesTokensSimple(messages)
-	if !compress.IsOverflow(tokensBefore, a.config.MaxTokens, a.config.CompactionReserved) {
+	if !compress.IsOverflowWithLimits(tokensBefore, a.config.MaxTokens, a.config.ModelLimitInput, a.config.CompactionReserved) {
 		return
 	}
 

@@ -34,6 +34,7 @@ type Config struct {
 	PeerID              int64                           `json:"peer_id"`
 	ThinkingPeerID      int64                           `json:"thinking_peer_id"`
 	MaxTokens           int                             `json:"max_tokens"`
+	ModelLimitInput     int                             `json:"model_limit_input"`
 	Temperature         float64                         `json:"temperature"`
 	MCPConfigPath       string                          `json:"mcp_config_path"`
 	AllowedDirs         []string                        `json:"allowed_dirs"`
@@ -223,6 +224,7 @@ func main() {
 	loopConfig.ModelHolder = modelHolder
 	loopConfig.ContextResolver = ctxResolver
 	loopConfig.MaxTokens = maxTokens
+	loopConfig.ModelLimitInput = config.ModelLimitInput
 	loopConfig.Temperature = config.Temperature
 	if dbStore != nil {
 		loopConfig.SessionConfig.Store = dbStore
@@ -272,6 +274,7 @@ func main() {
 		LlamaServerURL:      llamaURL,
 		Model:               modelName,
 		MaxTokens:           maxTokens,
+		ModelLimitInput:     config.ModelLimitInput,
 		Temperature:         config.Temperature,
 		EnableTools:         true,
 		MaxToolCalls:        10,
@@ -305,6 +308,7 @@ func main() {
 		ModelHolder:         modelHolder,
 		ContextResolver:     ctxResolver,
 		MaxTokens:           maxTokens,
+		ModelLimitInput:     config.ModelLimitInput,
 		Temperature:         config.Temperature,
 		ToolRegistry:        toolRegistry,
 		ToolOutputMaxLines:  config.ToolOutput.MaxLines,

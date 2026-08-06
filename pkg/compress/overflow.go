@@ -88,10 +88,15 @@ func UsableWithLimits(contextLimit, inputLimit int, reserved *int) int {
 
 // IsOverflow — простая проверка переполнения с эвристической оценкой токенов.
 func IsOverflow(currentTokens, contextLimit int, reserved *int) bool {
+	return IsOverflowWithLimits(currentTokens, contextLimit, 0, reserved)
+}
+
+// IsOverflowWithLimits — как IsOverflow, но с поддержкой model.limit.input.
+func IsOverflowWithLimits(currentTokens, contextLimit, inputLimit int, reserved *int) bool {
 	if contextLimit <= 0 {
 		return false
 	}
-	return currentTokens >= Usable(contextLimit, reserved)
+	return currentTokens >= UsableWithLimits(contextLimit, inputLimit, reserved)
 }
 
 // IsOverflowWithProviderTokens — проверка переполнения с provider-reported токенами.

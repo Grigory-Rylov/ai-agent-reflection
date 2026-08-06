@@ -831,7 +831,7 @@ func (al *agentLoop) checkAndCompressOpenCode(ctx context.Context, sess *session
 			peerID, len(messages), tokensBefore)
 	}
 
-	if !compress.IsOverflow(tokensBefore, al.config.MaxTokens, al.config.CompactionReserved) {
+	if !compress.IsOverflowWithLimits(tokensBefore, al.config.MaxTokens, al.config.ModelLimitInput, al.config.CompactionReserved) {
 		if al.log != nil {
 			al.log.DebugLogf("[OPENCODE-COMPACT] Peer %d: No overflow, skipping", peerID)
 		}

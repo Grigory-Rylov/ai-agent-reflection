@@ -1,6 +1,7 @@
 package compress
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -59,8 +60,8 @@ func (c *LLMCompressor) Compress(ctx context.Context, req *CompressionRequest) (
 	systemPrompt := c.buildCompressionSystemPrompt(req)
 	userPrompt := c.buildCompressionUserPrompt(req.Messages, req.TargetTokens)
 
-	// Отправляем запрос на сжатие
-	compressedText, summary, err := c.sendCompressionRequest(ctx, systemPrompt, userPrompt, req.TargetTokens)
+	// Отправляем запрос на сжатие (streaming для быстрой обработки)
+	compressedText, summary, err := c.sendCompressionRequestStreaming(ctx, systemPrompt, userPrompt, req.TargetTokens)
 	if err != nil {
 		return nil, fmt.Errorf("compression request failed: %w", err)
 	}
@@ -177,6 +178,94 @@ func (c *LLMCompressor) sendCompressionRequest(ctx context.Context, systemPrompt
 
 	compressedText := apiResponse.Choices[0].Message.Content
 	summary := fmt.Sprintf("Summary: %d → %d tokens", 0, apiResponse.Usage.CompletionTokens)
+
+	return compressedText, summary, nil
+}
+
+// sendCompressionRequestStreaming отправляет запрос на сжатие с streaming-ответом.
+// Позволяет быстрее начать обработку и не блокировать контекст полным ответом.
+func (c *LLMCompressor) sendCompressionRequestStreaming(ctx context.Context, systemPrompt, userPrompt string, targetTokens int) (string, string, error) {
+	reqBody := map[string]interface{}{
+		"model": c.model,
+		"messages": []map[string]string{
+			{"role": "system", "content": systemPrompt},
+			{"role": "user", "content": userPrompt},
+		},
+		"max_tokens":  targetTokens,
+		"temperature": c.temperature,
+		"stream":      true,
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", "", fmt.Errorf("marshal request: %w", err)
+	}
+
+	reqURL := fmt.Sprintf("%s/v1/chat/completions", c.serverURL)
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewReader(jsonData))
+	if err != nil {
+		return "", "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("API error: status %d", resp.StatusCode)
+	}
+
+	// Парсим SSE поток
+	var (
+		contentBuilder strings.Builder
+		completionN    int
+	)
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		payload := strings.TrimPrefix(line, "data: ")
+		if payload == "[DONE]" {
+			break
+		}
+
+		var evt struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+				FinishReason *string `json:"finish_reason"`
+			} `json:"choices"`
+			Usage *struct {
+				CompletionTokens int `json:"completion_tokens"`
+			} `json:"usage"`
+		}
+
+		if err := json.Unmarshal([]byte(payload), &evt); err != nil {
+			continue
+		}
+
+		for _, ch := range evt.Choices {
+			contentBuilder.WriteString(ch.Delta.Content)
+		}
+
+		if evt.Usage != nil {
+			completionN = evt.Usage.CompletionTokens
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return "", "", fmt.Errorf("read stream: %w", err)
+	}
+
+	compressedText := contentBuilder.String()
+	summary := fmt.Sprintf("Summary: %d → %d tokens", 0, completionN)
 
 	return compressedText, summary, nil
 }

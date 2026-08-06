@@ -23,6 +23,7 @@ type OrchestratorConfig struct {
 	ModelHolder     *modelsconfig.Holder
 	ContextResolver *ModelContextResolver
 	MaxTokens       int
+	ModelLimitInput int
 	Temperature     float64
 	ToolRegistry    *tools.Registry
 	Debug           bool
@@ -471,6 +472,7 @@ func (o *Orchestrator) makeAgentConfig() (agent.Config, error) {
 		LlamaServerURL:      llamaURL,
 		Model:               modelName,
 		MaxTokens:           maxTokens,
+		ModelLimitInput:     o.config.ModelLimitInput,
 		Temperature:         o.config.Temperature,
 		SystemPromptFile:    o.systemPromptDir() + "/coordinator.txt",
 		EnableTools:         true,

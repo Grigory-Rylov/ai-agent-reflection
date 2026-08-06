@@ -324,7 +324,7 @@ func (a *agentImpl) compactIfNeededBeforeLLM(ctx context.Context, session *sess.
 	}
 
 	tokens := compress.EstimateMessagesTokensSimple(tokenMessages)
-	if !compress.IsOverflow(tokens, a.config.MaxTokens, a.config.CompactionReserved) {
+	if !compress.IsOverflowWithLimits(tokens, a.config.MaxTokens, a.config.ModelLimitInput, a.config.CompactionReserved) {
 		return messages
 	}
 

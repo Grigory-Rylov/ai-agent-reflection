@@ -64,6 +64,8 @@ type Config struct {
 	PreserveRecentTokens *int
 	// CompactionReserved — резерв токенов для компакции
 	CompactionReserved *int
+	// ModelLimitInput — model.limit.input из конфигурации модели (0 = не задано)
+	ModelLimitInput int
 	// EnablePruning — вычищать большие tool-выводы
 	EnablePruning bool
 	// ToolOutputMaxLines — лимит строк вывода инструмента (0 = дефолт opencode 2000)
