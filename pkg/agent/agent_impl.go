@@ -296,7 +296,8 @@ func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session) {
 
 	s.Reset()
 	if result.SummaryMsg.Content != "" {
-		s.AddAssistantMessageWithSummary("<<CONVERSATION CHECKPOINT>>\n" + result.SummaryMsg.Content)
+		s.AddUserMessage("<<CONVERSATION COMPACTED>>")
+		s.AddAssistantMessageWithSummary(result.Summary)
 	}
 	for _, msg := range result.KeptTail {
 		switch msg.Role {

@@ -869,8 +869,10 @@ func (al *agentLoop) applyOpenCodeCompactResult(sess *session.Session, result *c
 	sess.Reset()
 
 	if result.SummaryMsg.Content != "" {
+		// Compaction user message — нужен для FilterCompacted (находит маркер)
+		sess.AddUserMessage("<<CONVERSATION COMPACTED>>")
 		sess.AddAssistantMessageWithSummary(
-			"<<CONVERSATION CHECKPOINT>>\n" + result.SummaryMsg.Content,
+			result.Summary,
 		)
 	}
 
