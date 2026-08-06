@@ -236,55 +236,20 @@ func (c *Compactor) CompactWithOpenCode(ctx context.Context, messages []tokenize
 	selected := SelectMessages(messages, tailTurns, budget)
 
 	head := selected.Head
-	var tail []tokenizers.Message
-	if selected.TailStartID > 0 {
-		tail = make([]tokenizers.Message, len(messages)-selected.TailStartID)
-		copy(tail, messages[selected.TailStartID:])
-	} else if selected.TailStartID == 0 {
-		tail = make([]tokenizers.Message, len(messages))
-		copy(tail, messages)
-	}
+	tail := copyTail(messages, selected.TailStartID)
 
 	if c.llm == nil {
 		return nil, fmt.Errorf("LLMCompressorInterface not configured for compaction")
 	}
 
-	// Ищем предыдущий summary
-	previousSummary := ""
-	for _, msg := range messages {
-		if msg.Role == "assistant" && msg.Summary {
-			previousSummary = msg.Content
-		}
-	}
-
+	previousSummary := findPreviousSummary(messages)
 	if len(head) == 0 && previousSummary == "" {
 		return nil, fmt.Errorf("no messages to compact and no previous summary")
 	}
 
-	prompt := BuildSummaryPrompt(previousSummary, head)
-	systemPrompt := "You are a context compaction assistant. Extract and summarize the key information from the conversation into a structured Markdown summary."
-
-	req := &CompressionRequest{
-		Messages: []tokenizers.Message{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: prompt},
-		},
-		Strategy:     SummarizeStrategy,
-		TargetTokens: 2000,
-	}
-
-	compResult, err := c.llm.Compress(ctx, req)
+	summaryContent, err := c.summarizeHead(ctx, head, previousSummary, maxTokens)
 	if err != nil {
 		return nil, fmt.Errorf("LLM compaction failed: %w", err)
-	}
-
-	// Извлекаем summary из результата (raw LLM ответ в user-сообщении)
-	summaryContent := compResult.Summary
-	for _, m := range compResult.CompressedMessages {
-		if m.Role == "user" && m.Content != "" {
-			summaryContent = m.Content
-			break
-		}
 	}
 
 	summaryMsg := tokenizers.Message{
@@ -305,4 +270,138 @@ func (c *Compactor) CompactWithOpenCode(ctx context.Context, messages []tokenize
 	result.TokensAfter = tailTokens + summaryTokens + 100
 
 	return result, nil
+}
+
+const (
+	// SUMMARY_CHUNK_OVERHEAD — резерв токенов под system-промпт и выход summary.
+	SUMMARY_CHUNK_OVERHEAD = 8_192
+	// MIN_SUMMARY_CHUNK_BUDGET — минимальный бюджет одного вызова суммаризации.
+	MIN_SUMMARY_CHUNK_BUDGET = 1_024
+)
+
+// summaryChunkBudget вычисляет бюджет токенов одного вызова суммаризации.
+func summaryChunkBudget(maxTokens int) int {
+	usable := Usable(maxTokens, nil)
+	budget := usable - SUMMARY_CHUNK_OVERHEAD
+	half := usable / 2
+	if budget < half {
+		budget = half
+	}
+	if budget < MIN_SUMMARY_CHUNK_BUDGET {
+		budget = MIN_SUMMARY_CHUNK_BUDGET
+	}
+	return budget
+}
+
+// summarizeHead суммирует head по кускам, каждый из которых укладывается в контекст.
+// Summary накапливается: каждый следующий вызов обновляет summary предыдущего.
+func (c *Compactor) summarizeHead(ctx context.Context, head []tokenizers.Message, previousSummary string, maxTokens int) (string, error) {
+	summary := previousSummary
+	remaining := head
+	for len(remaining) > 0 {
+		currentBudget := summaryChunkBudget(maxTokens) - c.estimator.Estimate(summary)
+		if currentBudget < MIN_SUMMARY_CHUNK_BUDGET {
+			currentBudget = MIN_SUMMARY_CHUNK_BUDGET
+		}
+		chunk, rest := takeOldestFit(remaining, currentBudget)
+		if len(chunk) == 0 {
+			chunk = []tokenizers.Message{truncateToBudget(remaining[0], currentBudget)}
+			rest = remaining[1:]
+		}
+		next, err := c.summarizeChunk(ctx, summary, chunk)
+		if err != nil {
+			return "", err
+		}
+		summary = next
+		remaining = rest
+	}
+	return summary, nil
+}
+
+// summarizeChunk вызывает LLM для суммаризации одного куска head.
+func (c *Compactor) summarizeChunk(ctx context.Context, previousSummary string, chunk []tokenizers.Message) (string, error) {
+	prompt := BuildSummaryPrompt(previousSummary, chunk)
+	systemPrompt := "You are a context compaction assistant. Extract and summarize the key information from the conversation into a structured Markdown summary."
+	req := &CompressionRequest{
+		Messages: []tokenizers.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: prompt},
+		},
+		Strategy:     SummarizeStrategy,
+		TargetTokens: 2000,
+	}
+	compResult, err := c.llm.Compress(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	return extractSummary(compResult), nil
+}
+
+// extractSummary извлекает текст summary из результата сжатия.
+func extractSummary(compResult *CompressionResult) string {
+	for _, m := range compResult.CompressedMessages {
+		if m.Role == "user" && m.Content != "" {
+			return m.Content
+		}
+	}
+	return compResult.Summary
+}
+
+// takeOldestFit возвращает самый длинный префикс messages, укладывающийся в budget.
+// Если первое сообщение не влезает, возвращает пустой chunk — вызывающий обязан его обрезать.
+func takeOldestFit(messages []tokenizers.Message, budget int) ([]tokenizers.Message, []tokenizers.Message) {
+	if budget <= 0 || len(messages) == 0 {
+		return nil, messages
+	}
+	total := 0
+	for i := range messages {
+		size := estimateMessagesTokens(messages[i : i+1])
+		if total+size > budget {
+			if i == 0 {
+				return nil, messages
+			}
+			return messages[:i], messages[i:]
+		}
+		total += size
+	}
+	return messages, nil
+}
+
+// truncateToBudget обрезает содержимое сообщения до укладывания в budget токенов.
+func truncateToBudget(msg tokenizers.Message, budget int) tokenizers.Message {
+	// Резерв под роль, разметку и маркер обрезки.
+	maxChars := (budget - 64) * 4
+	if maxChars < 0 {
+		maxChars = 0
+	}
+	if len(msg.Content) <= maxChars {
+		return msg
+	}
+	msg.Content = msg.Content[:maxChars] + "\n[truncated for summarization]"
+	return msg
+}
+
+// copyTail копирует хвост сообщений, начиная с tailStartID.
+func copyTail(messages []tokenizers.Message, tailStartID int) []tokenizers.Message {
+	if tailStartID > 0 {
+		tail := make([]tokenizers.Message, len(messages)-tailStartID)
+		copy(tail, messages[tailStartID:])
+		return tail
+	}
+	if tailStartID == 0 {
+		tail := make([]tokenizers.Message, len(messages))
+		copy(tail, messages)
+		return tail
+	}
+	return nil
+}
+
+// findPreviousSummary ищет предыдущий summary в сообщениях.
+func findPreviousSummary(messages []tokenizers.Message) string {
+	for _, msg := range messages {
+		if msg.Role == "assistant" && msg.Summary {
+			return msg.Content
+		}
+	}
+	return ""
 }
