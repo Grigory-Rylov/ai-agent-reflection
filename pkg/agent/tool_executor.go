@@ -112,6 +112,7 @@ func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, 
 	}
 
 	content := tools.MarshalToolResult(result)
+	content = e.truncateToolOutput(peerID, content)
 	if result.Success {
 		e.agent.debugLog.Debug(e.agent.agentPrefix()+"Result: %s success", toolName)
 		e.agent.sendThinking(peerID, "[TOOL] Result: "+toolName+" success")
@@ -127,6 +128,28 @@ func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, 
 		Content:    content,
 		IsError:    !result.Success,
 	}, nil
+}
+
+// truncateToolOutput обрезает вывод инструмента в стиле opencode перед
+// отправкой в LLM: полный вывод сохраняется в файл, в ответ уходит превью.
+func (e *agentToolExecutor) truncateToolOutput(peerID int64, content string) string {
+	opts := tools.TruncateOptions{
+		Dir:         filepath.Join(tools.WorkingDir, "tool-output"),
+		MaxLines:    e.agent.config.ToolOutputMaxLines,
+		MaxBytes:    e.agent.config.ToolOutputMaxBytes,
+		HasTaskTool: e.agent.toolsRegistry.IsRegistered("task"),
+	}
+
+	res, err := tools.TruncateToolResult(content, opts)
+	if err != nil {
+		e.agent.debugLog.Error("%s tool output truncation failed: %v", e.agent.agentPrefix(), err)
+		return content
+	}
+	if res.Truncated {
+		e.agent.debugLog.Debug("%sResult: tool output truncated, full output saved to %s", e.agent.agentPrefix(), res.OutputPath)
+		e.agent.sendThinking(peerID, "[TOOL] Result: output truncated, full output saved to "+res.OutputPath)
+	}
+	return res.Content
 }
 
 func (e *agentToolExecutor) checkShellPermission(ctx context.Context, checker permissionChecker, command string, peerID int64) bool {

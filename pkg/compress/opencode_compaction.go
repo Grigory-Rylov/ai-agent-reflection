@@ -16,7 +16,23 @@ const (
 	DEFAULT_TAIL_TURNS         = 2
 	MIN_PRESERVE_RECENT_TOKENS = 2_000
 	MAX_PRESERVE_RECENT_TOKENS = 8_000
+
+	TOOL_OUTPUT_MAX_CHARS = 2000
 )
+
+// TruncateToolOutput truncates tool output to TOOL_OUTPUT_MAX_CHARS (like opencode)
+func TruncateToolOutput(content string) string {
+	if len(content) <= TOOL_OUTPUT_MAX_CHARS {
+		return content
+	}
+	head := content[:TOOL_OUTPUT_MAX_CHARS] + "\n[truncated]"
+	// Сохраняем хвостовую подсказку с путём к полному выводу, чтобы LLM
+	// мог перечитать файл порциями после компакции.
+	if idx := strings.LastIndex(content, "Full output saved to:"); idx >= 0 {
+		return head + "\n" + content[idx:]
+	}
+	return head
+}
 
 // SUMMARY_TEMPLATE — шаблон для суммаризации контекста в формате opencode.
 const SUMMARY_TEMPLATE = `Output exactly the Markdown structure shown inside <template> and keep the section order unchanged. Do not include the <template> tags in your response.

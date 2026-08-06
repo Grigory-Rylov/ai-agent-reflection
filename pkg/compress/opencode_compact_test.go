@@ -480,3 +480,35 @@ func truncateStr(s string, maxLen int) string {
 	}
 	return s[:maxLen] + "..."
 }
+
+// TestTruncateToolOutput_PreservesHint проверяет, что при обрезке вывода
+// для компакции сохраняется хвостовая подсказка с путём к полному файлу —
+// чтобы LLM мог перечитать результат порциями после компакции.
+func TestTruncateToolOutput_PreservesHint(t *testing.T) {
+	fullOutput := strings.Repeat("output-line\n", 500)
+	filePath := "/home/orangepi/projects/go/agent/tool-output/tool_123"
+	content := fullOutput + "\n\n...100 lines truncated...\n\n" +
+		"The tool call succeeded but the output was truncated. Full output saved to: " + filePath + "\n" +
+		"Use Grep to search the full content or Read with offset/limit to view specific sections."
+
+	got := TruncateToolOutput(content)
+
+	if len(got) > TOOL_OUTPUT_MAX_CHARS+512 {
+		t.Errorf("truncated content too large: %d bytes", len(got))
+	}
+	if !strings.Contains(got, filePath) {
+		t.Errorf("expected hint with file path to survive compaction, got %q", got)
+	}
+	if !strings.Contains(got, "Full output saved to:") {
+		t.Errorf("expected 'Full output saved to:' marker, got %q", got)
+	}
+}
+
+// TestTruncateToolOutput_ShortContentPassesThrough проверяет, что короткий
+// вывод не изменяется.
+func TestTruncateToolOutput_ShortContentPassesThrough(t *testing.T) {
+	content := `{"success":true}`
+	if got := TruncateToolOutput(content); got != content {
+		t.Errorf("expected content unchanged, got %q", got)
+	}
+}

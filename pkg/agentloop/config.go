@@ -31,6 +31,8 @@ type LoopConfig struct {
 	PreserveRecentTokens           *int
 	CompactionReserved             *int
 	EnablePruning                  bool
+	ToolOutputMaxLines             int
+	ToolOutputMaxBytes             int
 	SkipShellPermissionForPathless bool
 }
 
@@ -52,6 +54,8 @@ func DefaultLoopConfig() LoopConfig {
 		PreserveRecentTokens:           nil,
 		CompactionReserved:             nil,
 		EnablePruning:                  true,
+		ToolOutputMaxLines:             tools.DefaultToolOutputMaxLines,
+		ToolOutputMaxBytes:             tools.DefaultToolOutputMaxBytes,
 		SkipShellPermissionForPathless: false,
 	}
 }

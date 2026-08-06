@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -659,6 +660,8 @@ func (al *agentLoop) buildAgentConfig() agent.Config {
 		SystemPromptFile:               al.config.SystemPromptFile,
 		EnableTools:                    al.config.EnableTools,
 		MaxToolCalls:                   al.config.MaxToolCalls,
+		ToolOutputMaxLines:             al.config.ToolOutputMaxLines,
+		ToolOutputMaxBytes:             al.config.ToolOutputMaxBytes,
 		Debug:                          al.config.Debug,
 		SkipShellPermissionForPathless: al.config.SkipShellPermissionForPathless,
 	}
@@ -746,16 +749,17 @@ func (al *agentLoop) processToolCalls(ctx context.Context, toolCalls []map[strin
 					args = make(map[string]string)
 				}
 
-				toolResult, err := tool.Execute(ctx, args)
-				if err != nil {
-					result = tools.MarshalToolResult(toolResult)
-					execErr = err
-				} else {
-					result = tools.MarshalToolResult(toolResult)
-					if !toolResult.Success {
-						execErr = fmt.Errorf("%s", toolResult.Error)
-					}
+			toolResult, err := tool.Execute(ctx, args)
+			if err != nil {
+				result = tools.MarshalToolResult(toolResult)
+				execErr = err
+			} else {
+				result = tools.MarshalToolResult(toolResult)
+				if !toolResult.Success {
+					execErr = fmt.Errorf("%s", toolResult.Error)
 				}
+			}
+			result = al.truncateToolOutput(result)
 			}
 		} else {
 			result = fmt.Sprintf(`{"success": false, "error": "no tool registry"}`)
@@ -780,6 +784,31 @@ func (al *agentLoop) processToolCalls(ctx context.Context, toolCalls []map[strin
 	}
 
 	return results, nil
+}
+
+func (al *agentLoop) truncateToolOutput(content string) string {
+	var hasTask bool
+	if al.registry != nil {
+		_, hasTask = al.registry.Get("task")
+	}
+	opts := tools.TruncateOptions{
+		Dir:         filepath.Join(tools.WorkingDir, "tool-output"),
+		MaxLines:    al.config.ToolOutputMaxLines,
+		MaxBytes:    al.config.ToolOutputMaxBytes,
+		HasTaskTool: hasTask,
+	}
+
+	res, err := tools.TruncateToolResult(content, opts)
+	if err != nil {
+		if al.log != nil {
+			al.log.ErrorLogf("tool output truncation failed: %v", err)
+		}
+		return content
+	}
+	if res.Truncated && al.log != nil {
+		al.log.InfoLogf("Tool output truncated, full output saved to %s", res.OutputPath)
+	}
+	return res.Content
 }
 
 func getStringField(m map[string]interface{}, key string) string {

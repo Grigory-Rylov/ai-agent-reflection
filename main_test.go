@@ -426,3 +426,44 @@ func TestTruncateQuestionWithoutOptions(t *testing.T) {
 		t.Error("expected truncation marker")
 	}
 }
+
+func TestConfigToolOutputParsing(t *testing.T) {
+	t.Run("explicit values", func(t *testing.T) {
+		input := `{"tool_output": {"max_lines": 1000, "max_bytes": 32768}}`
+		var cfg Config
+		if err := json.Unmarshal([]byte(input), &cfg); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if cfg.ToolOutput.MaxLines != 1000 {
+			t.Errorf("expected max_lines=1000, got %d", cfg.ToolOutput.MaxLines)
+		}
+		if cfg.ToolOutput.MaxBytes != 32768 {
+			t.Errorf("expected max_bytes=32768, got %d", cfg.ToolOutput.MaxBytes)
+		}
+	})
+
+	t.Run("missing tool_output is optional and zero", func(t *testing.T) {
+		input := `{"model": "test"}`
+		var cfg Config
+		if err := json.Unmarshal([]byte(input), &cfg); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if cfg.ToolOutput.MaxLines != 0 || cfg.ToolOutput.MaxBytes != 0 {
+			t.Errorf("expected zero defaults for missing tool_output, got %+v", cfg.ToolOutput)
+		}
+	})
+
+	t.Run("partial tool_output", func(t *testing.T) {
+		input := `{"tool_output": {"max_lines": 500}}`
+		var cfg Config
+		if err := json.Unmarshal([]byte(input), &cfg); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if cfg.ToolOutput.MaxLines != 500 {
+			t.Errorf("expected max_lines=500, got %d", cfg.ToolOutput.MaxLines)
+		}
+		if cfg.ToolOutput.MaxBytes != 0 {
+			t.Errorf("expected max_bytes=0 (unset), got %d", cfg.ToolOutput.MaxBytes)
+		}
+	})
+}

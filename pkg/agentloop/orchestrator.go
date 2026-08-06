@@ -29,10 +29,12 @@ type OrchestratorConfig struct {
 	Logger          Logger
 	ThinkingPeerID  int64
 	VKClient        VKClient
-	SystemPromptDir string
-	MaxReviewIterations int
-	AgentManager    *agentpolicy.AgentManager
-	Store           store.Store
+	SystemPromptDir      string
+	MaxReviewIterations  int
+	ToolOutputMaxLines   int
+	ToolOutputMaxBytes   int
+	AgentManager         *agentpolicy.AgentManager
+	Store                store.Store
 }
 
 type Orchestrator struct {
@@ -466,16 +468,18 @@ func (o *Orchestrator) makeAgentConfig() (agent.Config, error) {
 		maxTokens = ctx
 	}
 	return agent.Config{
-		LlamaServerURL:   llamaURL,
-		Model:            modelName,
-		MaxTokens:        maxTokens,
-		Temperature:      o.config.Temperature,
-		SystemPromptFile: o.systemPromptDir() + "/coordinator.txt",
-		EnableTools:      true,
-		MaxToolCalls:     10,
-		EnableLoopAlert:  false,
-		Debug:            o.config.Debug,
-		AgentName:        "coordinator",
+		LlamaServerURL:      llamaURL,
+		Model:               modelName,
+		MaxTokens:           maxTokens,
+		Temperature:         o.config.Temperature,
+		SystemPromptFile:    o.systemPromptDir() + "/coordinator.txt",
+		EnableTools:         true,
+		MaxToolCalls:        10,
+		EnableLoopAlert:     false,
+		ToolOutputMaxLines:  o.config.ToolOutputMaxLines,
+		ToolOutputMaxBytes:  o.config.ToolOutputMaxBytes,
+		Debug:               o.config.Debug,
+		AgentName:           "coordinator",
 		SessionConfig: session.Config{
 			AutoSave:    false,
 			SessionFile: "",

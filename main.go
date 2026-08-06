@@ -41,9 +41,17 @@ type Config struct {
 	PromptsDir          string                          `json:"prompts_dir"`
 	MaxReviewIterations int                             `json:"max_review_iterations"`
 	Agents              map[string]agentpolicy.AgentCfg `json:"agents"`
+	ToolOutput          ToolOutputConfig                `json:"tool_output"`
 	// SkipShellPermissionForPathless — не запрашивать разрешение для shell-команд
 	// без явных файловых операций (нет путей и редиректов).
 	SkipShellPermissionForPathless bool `json:"skip_shell_permission_without_paths"`
+}
+
+// ToolOutputConfig задаёт лимиты вывода инструментов перед отправкой в LLM
+// (стиль opencode). Если поля не заданы — используются дефолты opencode.
+type ToolOutputConfig struct {
+	MaxLines int `json:"max_lines"`
+	MaxBytes int `json:"max_bytes"`
 }
 
 func main() {
@@ -231,6 +239,8 @@ func main() {
 	loopConfig.EnableLogging = true
 	loopConfig.Debug = *debug
 	loopConfig.SkipShellPermissionForPathless = config.SkipShellPermissionForPathless
+	loopConfig.ToolOutputMaxLines = config.ToolOutput.MaxLines
+	loopConfig.ToolOutputMaxBytes = config.ToolOutput.MaxBytes
 
 	agentLoop, err := agentloop.NewAgentLoop(loopConfig, vkClient, toolRegistry)
 	if err != nil {
@@ -259,13 +269,15 @@ func main() {
 	alias, modelName, llamaURL := modelHolder.GetCurrent()
 	sysPromptDir := filepath.Join(agentDir, "agents")
 	subAgentCfg := agent.Config{
-		LlamaServerURL: llamaURL,
-		Model:          modelName,
-		MaxTokens:      maxTokens,
-		Temperature:    config.Temperature,
-		EnableTools:    true,
-		MaxToolCalls:   10,
-		Debug:          *debug,
+		LlamaServerURL:      llamaURL,
+		Model:               modelName,
+		MaxTokens:           maxTokens,
+		Temperature:         config.Temperature,
+		EnableTools:         true,
+		MaxToolCalls:        10,
+		ToolOutputMaxLines:  config.ToolOutput.MaxLines,
+		ToolOutputMaxBytes:  config.ToolOutput.MaxBytes,
+		Debug:               *debug,
 		SessionConfig: session.Config{
 			AutoSave:    false,
 			SessionFile: "",
@@ -295,6 +307,8 @@ func main() {
 		MaxTokens:           maxTokens,
 		Temperature:         config.Temperature,
 		ToolRegistry:        toolRegistry,
+		ToolOutputMaxLines:  config.ToolOutput.MaxLines,
+		ToolOutputMaxBytes:  config.ToolOutput.MaxBytes,
 		Debug:               *debug,
 		Logger:              log,
 		ThinkingPeerID:      config.ThinkingPeerID,

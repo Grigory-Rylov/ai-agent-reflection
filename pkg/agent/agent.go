@@ -66,6 +66,10 @@ type Config struct {
 	CompactionReserved *int
 	// EnablePruning — вычищать большие tool-выводы
 	EnablePruning bool
+	// ToolOutputMaxLines — лимит строк вывода инструмента (0 = дефолт opencode 2000)
+	ToolOutputMaxLines int
+	// ToolOutputMaxBytes — лимит байт вывода инструмента (0 = дефолт opencode 50KB)
+	ToolOutputMaxBytes int
 	// Debug — режим отладки (сохранять промпт в debug_prompt.txt)
 	Debug bool
 	// AgentName — имя агента для логов (coordinator, worker, qa и т.д.)

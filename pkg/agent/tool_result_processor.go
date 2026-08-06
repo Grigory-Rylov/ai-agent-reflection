@@ -45,7 +45,7 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	}
 	session.AddAssistantMessageWithToolCalls(assistantContent, sessionToolCalls)
 
-	// Сохраняем результаты инструментов в историю сессии
+	// Сохраняем результаты инструментов в историю сессии (полные данные, как в opencode)
 	for _, tr := range toolResults {
 		session.AddToolMessage(tr.ToolCallID, tr.ToolName, tr.Content)
 	}
@@ -100,7 +100,7 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 				}
 				session.AddAssistantMessageWithToolCalls(assistantContent, sessionToolCalls)
 				for _, tr := range toolResults {
-					session.AddToolMessage(tr.ToolCallID, tr.ToolName, tr.Content)
+					session.AddToolMessage(tr.ToolCallID, tr.ToolName, compress.TruncateToolOutput(tr.Content))
 				}
 			}
 
@@ -374,7 +374,7 @@ func (a *agentImpl) compactIfNeededBeforeLLM(ctx context.Context, session *sess.
 		session.AddAssistantMessageWithToolCalls(assistantContent, sessionToolCalls)
 
 		for _, tr := range toolResults {
-			session.AddToolMessage(tr.ToolCallID, tr.ToolName, tr.Content)
+			session.AddToolMessage(tr.ToolCallID, tr.ToolName, compress.TruncateToolOutput(tr.Content))
 		}
 	}
 
