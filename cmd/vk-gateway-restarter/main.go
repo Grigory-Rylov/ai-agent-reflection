@@ -344,10 +344,7 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 }
 
 func buildAgent(agentPath string) error {
-	buildTime := time.Now().UTC().Format(time.RFC3339)
-	output, err := exec.Command("/usr/local/go/bin/go", "build",
-		"-ldflags", "-X github.com/opencode/llama-client/pkg/buildinfo.BuildTime="+buildTime,
-		"-o", agentPath, ".").CombinedOutput()
+	output, err := exec.Command("sh", "./build.sh").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(output)))
 	}
