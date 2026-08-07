@@ -17,6 +17,9 @@ type SessionData struct {
 	IsLooped   bool      `json:"is_looped"`
 	LastLooped string    `json:"last_looped,omitempty"`
 	Pinned     []string  `json:"pinned,omitempty"`
+	// ResumePrompt — последний user-промпт незавершённой обработки.
+	// Непустое значение после рестарта означает, что задачу надо продолжить.
+	ResumePrompt string `json:"resume_prompt,omitempty"`
 }
 
 type MessageData struct {

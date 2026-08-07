@@ -117,7 +117,4 @@ func TestIsOverflow_ProviderTokens(t *testing.T) {
 	}
 }
 
-// TODO: TestEstimateWithRealTokenizer — когда EstimateWithTokenizer добавлен в overflow.go.
-// Тесты для EstimateWithTokenizer требуют mock токенайзера и integration с agent/agentloop.
-// Пока оставлена заглушка — реальная интеграция будет добавлена когда tokenizer
-// будет готов к production use (без HTTP блокировок в тестах).
+

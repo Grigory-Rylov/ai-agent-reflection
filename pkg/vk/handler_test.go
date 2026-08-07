@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/opencode/llama-client/pkg/agentloop"
 	"github.com/opencode/llama-client/pkg/logger"
 	"github.com/opencode/llama-client/pkg/modelsconfig"
 	"github.com/opencode/llama-client/session"
@@ -64,6 +65,10 @@ func (m *mockAgentLoop) EnsureSession(peerID int64) *session.Session {
 	return m.getOrCreateSession(peerID)
 }
 
+func (m *mockAgentLoop) ResumeInterruptedTask(ctx context.Context, peerID int64) {}
+
+func (m *mockAgentLoop) ClearAllSlots(ctx context.Context) {}
+
 func (m *mockAgentLoop) GetContextStats(peerID int64) (int, int, error) {
 	sess := m.sessions[peerID]
 	if sess == nil {
@@ -87,8 +92,11 @@ func (m *mockAgentLoop) TestLlamaServer(ctx context.Context) (string, time.Durat
 }
 
 func (m *mockAgentLoop) GetModelHolder() *modelsconfig.Holder {
-return nil
+	return nil
 }
+
+func (m *mockAgentLoop) GetSlotManager() *agentloop.SlotManager { return nil }
+func (m *mockAgentLoop) GetSlots() *agentloop.SlotClient        { return nil }
 
 func (m *mockAgentLoop) getOrCreateSession(peerID int64) *session.Session {
 	if sess, ok := m.sessions[peerID]; ok {

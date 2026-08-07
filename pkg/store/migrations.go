@@ -26,35 +26,37 @@ func runMigrations(db *sql.DB) error {
 		}
 	}
 
-	if err := ensurePinnedColumn(db); err != nil {
-		return fmt.Errorf("migrate pinned column: %w", err)
+	for _, col := range []string{"pinned", "resume_prompt"} {
+		if err := ensureColumn(db, "sessions", col); err != nil {
+			return fmt.Errorf("migrate %s column: %w", col, err)
+		}
 	}
 
 	return nil
 }
 
-// ensurePinnedColumn добавляет колонку pinned в sessions, если её ещё нет
+// ensureColumn добавляет колонку в таблицу, если её ещё нет
 // (SQLite не поддерживает ADD COLUMN IF NOT EXISTS).
-func ensurePinnedColumn(db *sql.DB) error {
-	cols, err := db.Query(`PRAGMA table_info(sessions)`)
+func ensureColumn(db *sql.DB, table, column string) error {
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
 	if err != nil {
 		return err
 	}
-	defer cols.Close()
+	defer rows.Close()
 
-	for cols.Next() {
+	for rows.Next() {
 		var cid int
 		var name, ctype string
 		var notnull, pk int
 		var dflt *string
-		if err := cols.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
 			return err
 		}
-		if name == "pinned" {
+		if name == column {
 			return nil
 		}
 	}
-	_, err = db.Exec(`ALTER TABLE sessions ADD COLUMN pinned TEXT DEFAULT ''`)
+	_, err = db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` TEXT DEFAULT ''`)
 	return err
 }
 
@@ -66,7 +68,8 @@ const sessionsTable = `CREATE TABLE IF NOT EXISTS sessions (
 	loop_count INTEGER DEFAULT 0,
 	is_looped INTEGER DEFAULT 0,
 	last_looped TEXT DEFAULT '',
-	pinned TEXT DEFAULT ''
+	pinned TEXT DEFAULT '',
+	resume_prompt TEXT DEFAULT ''
 )`
 
 const messagesTable = `CREATE TABLE IF NOT EXISTS messages (

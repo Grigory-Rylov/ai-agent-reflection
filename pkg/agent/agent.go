@@ -89,6 +89,21 @@ type Config struct {
 	// при серверных ошибках (недоступность, HTTP 5xx, оборванный стрим).
 	// Если <= 0 — используется значение по умолчанию (5 сек).
 	RetryDelay time.Duration
+	// SlotID — привязанный слот llama-server (-1 = не привязан)
+	SlotID int
+	// SlotSave — true если модель поддерживает KV-cache save/restore
+	SlotSave bool
+	// SlotSaver — сохраняет KV-cache слота после каждого ответа LLM, пока
+	// слот ещё держит актуальный кэш. Реализуется вызывающим кодом
+	// (agentLoop/оркестратор) через SlotClient. Вызывается только при
+	// SlotSave=true и SlotSaver!=nil. nil → фича слотов выключена.
+	SlotSaver SlotSaver
+}
+
+// SlotSaver сохраняет KV-cache слота на диск после LLM-ответа.
+// Реализация живёт в pkg/agentloop и дёргает llama-server /slots/{id}?action=save.
+type SlotSaver interface {
+	SaveSlot(ctx context.Context)
 }
 
 // DefaultConfig возвращает конфигурацию по умолчанию
@@ -106,5 +121,6 @@ func DefaultConfig() Config {
 		TailTurns:         2,
 		EnablePruning:     true,
 		RetryDelay:        5 * time.Second,
+		SlotID:            -1, // not pinned by default
 	}
 }

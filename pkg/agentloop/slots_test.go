@@ -41,14 +41,14 @@ func TestSlotClientSaveRestore(t *testing.T) {
 	srv, calls := newSlotTestServer(t)
 	client := newSlotClient()
 
-	if err := client.saveSlot(context.Background(), srv.URL, 0, "session_1_model.bin"); err != nil {
+	if err := client.saveSlot(context.Background(), srv.URL, 0, "Qwen3.6-27b", "session_1_model.bin"); err != nil {
 		t.Fatalf("saveSlot: %v", err)
 	}
 	if atomic.LoadInt32(calls) != 1 {
 		t.Errorf("expected 1 save call, got %d", calls)
 	}
 
-	if err := client.restoreSlot(context.Background(), srv.URL, 0, "session_1_model.bin"); err != nil {
+	if err := client.restoreSlot(context.Background(), srv.URL, 0, "Qwen3.6-27b", "session_1_model.bin"); err != nil {
 		t.Fatalf("restoreSlot: %v", err)
 	}
 	if atomic.LoadInt32(calls) != 2 {
@@ -63,7 +63,7 @@ func TestSlotClientSaveError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	err := newSlotClient().saveSlot(context.Background(), srv.URL, 0, "x.bin")
+	err := newSlotClient().saveSlot(context.Background(), srv.URL, 0, "model-x", "x.bin")
 	if err == nil {
 		t.Fatal("expected error for failed save")
 	}
@@ -79,7 +79,7 @@ func TestSlotClientRestoreMissingFile(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	err := newSlotClient().restoreSlot(context.Background(), srv.URL, 0, "missing.bin")
+	err := newSlotClient().restoreSlot(context.Background(), srv.URL, 0, "model-x", "missing.bin")
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -87,7 +87,7 @@ func TestSlotClientRestoreMissingFile(t *testing.T) {
 
 func TestSlotClientFirstSlotID(t *testing.T) {
 	srv, _ := newSlotTestServer(t)
-	id, err := newSlotClient().firstSlotID(context.Background(), srv.URL)
+	id, err := newSlotClient().firstSlotID(context.Background(), srv.URL, "model-x")
 	if err != nil {
 		t.Fatalf("firstSlotID: %v", err)
 	}
@@ -102,7 +102,44 @@ func TestSlotClientFirstSlotIDError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := newSlotClient().firstSlotID(context.Background(), srv.URL); err == nil {
+	if _, err := newSlotClient().firstSlotID(context.Background(), srv.URL, "model-x"); err == nil {
 		t.Fatal("expected error for forbidden /slots")
+	}
+}
+
+func TestSlotClientEraseSlot(t *testing.T) {
+	var gotAction string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/slots/0") {
+			gotAction = r.URL.Query().Get("action")
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"id_slot":0,"n_erased":0}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	if err := newSlotClient().eraseSlot(context.Background(), srv.URL, 0, "model-x"); err != nil {
+		t.Fatalf("eraseSlot: %v", err)
+	}
+	if gotAction != "erase" {
+		t.Errorf("expected action erase, got %q", gotAction)
+	}
+}
+
+func TestSlotClientEraseSlotError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":{"message":"Invalid action"}}`))
+	}))
+	defer srv.Close()
+
+	err := newSlotClient().eraseSlot(context.Background(), srv.URL, 0, "model-x")
+	if err == nil {
+		t.Fatal("expected error for failed erase")
+	}
+	if !strings.Contains(err.Error(), "status 400") {
+		t.Errorf("error should contain status, got: %v", err)
 	}
 }

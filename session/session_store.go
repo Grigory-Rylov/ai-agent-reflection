@@ -22,6 +22,7 @@ func (s *Session) loadFromStore(st store.Store) error {
 	s.workingDir = sd.WorkingDir
 	s.pinned = make([]string, len(sd.Pinned))
 	copy(s.pinned, sd.Pinned)
+	s.resumePrompt = sd.ResumePrompt
 
 	if sd.WorkingDir != "" {
 		s.config.WorkingDir = sd.WorkingDir
@@ -55,13 +56,14 @@ func (s *Session) loadFromStore(st store.Store) error {
 
 func (s *Session) saveToStore(st store.Store) error {
 	sd := &store.SessionData{
-		PeerID:     s.config.PeerID,
-		CreatedAt:  s.createdAt,
-		UpdatedAt:  s.updatedAt,
-		WorkingDir: s.workingDir,
-		LoopCount:  s.loopCount,
-		IsLooped:   s.isLooped,
-		Pinned:     s.pinned,
+		PeerID:       s.config.PeerID,
+		CreatedAt:    s.createdAt,
+		UpdatedAt:    s.updatedAt,
+		WorkingDir:   s.workingDir,
+		LoopCount:    s.loopCount,
+		IsLooped:     s.isLooped,
+		Pinned:       s.pinned,
+		ResumePrompt: s.resumePrompt,
 	}
 
 	if s.isLooped {

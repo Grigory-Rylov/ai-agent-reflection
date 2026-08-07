@@ -3,8 +3,10 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -54,10 +56,12 @@ type Message struct {
 // Конфигурация Session
 // ============================================================
 
-// Config содержит настройки сессии
+// Config contains session settings
 type Config struct {
 	// PeerID — идентификатор пользователя (VK peer_id)
 	PeerID int64
+	// SessionID — уникальный идентификатор сессии
+	SessionID string
 	// SessionFile — путь к файлу для сохранения сессии
 	SessionFile string
 	// MaxLoopHistory — сколько последних ответов AI отслеживать для обнаружения цикла
@@ -96,29 +100,32 @@ func DefaultConfig() Config {
 // Session — основная сущность для хранения истории сессии
 // ============================================================
 
-// Session управляет историей диалога и обнаружением зацикливания
+// Session manages dialog history and loop detection
 type Session struct {
-	config     Config
-	messages   []Message
-	pinned     []string // промпты /pin, переживающие компактизацию и reset
+	config      Config
+	sessionID   string
+	messages    []Message
+	pinned      []string // промпты /pin, переживающие компактизацию и reset
 	loopHistory []string // последние N ответов AI для обнаружения цикла
-	loopCount  int      // количество обнаруженных циклов
-	isLooped   bool     // флаг обнаруженного цикла
-	mu         sync.RWMutex
-	createdAt  time.Time
-	updatedAt  time.Time
-	workingDir string  // текущая рабочая директория для инструментов
+	loopCount   int      // количество обнаруженных циклов
+	isLooped    bool     // флаг обнаруженного цикла
+	mu          sync.RWMutex
+	createdAt   time.Time
+	updatedAt   time.Time
+	workingDir  string // текущая рабочая директория для инструментов
+	resumePrompt string // последний user-промпт незавершённой обработки (для resume после рестарта)
 }
 
-// NewSession создаёт новую сессию
+// NewSession creates a new session
 func NewSession(config Config) *Session {
 	s := &Session{
-		config:     config,
-		messages:   make([]Message, 0),
+		config:      config,
+		sessionID:   generateSessionID(config.SessionID),
+		messages:    make([]Message, 0),
 		loopHistory: make([]string, 0, config.MaxLoopHistory),
-		createdAt:  time.Now(),
-		updatedAt:  time.Now(),
-		workingDir: config.WorkingDir,
+		createdAt:   time.Now(),
+		updatedAt:   time.Now(),
+		workingDir:  config.WorkingDir,
 	}
 
 	// Добавляем системное сообщение с рабочей директорией
@@ -573,6 +580,7 @@ func (s *Session) Reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.sessionID = generateSessionID("")
 	s.messages = s.messages[:0]
 
 	// Восстанавливаем системное сообщение
@@ -589,6 +597,9 @@ func (s *Session) Reset() {
 	s.loopCount = 0
 	s.isLooped = false
 	s.updatedAt = time.Now()
+
+	// Сбрасываем флаг незавершённой задачи
+	s.resumePrompt = ""
 
 	if s.config.AutoSave {
 		s.saveNow()
@@ -841,6 +852,45 @@ func (s *Session) GetPeerID() int64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.config.PeerID
+}
+
+// GetSessionID возвращает уникальный идентификатор сессии
+func (s *Session) GetSessionID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sessionID
+}
+
+// SetResumePrompt сохраняет последний user-промпт незавершённой обработки.
+// Персистится в БД; после рестарта непустое значение означает, что задачу
+// надо продолжить. Пустая строка — обработка завершена.
+func (s *Session) SetResumePrompt(prompt string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resumePrompt = prompt
+	s.updatedAt = time.Now()
+	if s.config.AutoSave {
+		s.saveNow()
+	}
+}
+
+// GetResumePrompt возвращает последний незавершённый user-промпт (или "").
+func (s *Session) GetResumePrompt() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.resumePrompt
+}
+
+// generateSessionID генерирует уникальный идентификатор сессии
+// Если providedID не пустой, используется он, иначе генерируется новый
+func generateSessionID(providedID string) string {
+	if providedID != "" {
+		return providedID
+	}
+	h := fnv.New128a()
+	h.Write([]byte(strconv.FormatInt(time.Now().UnixNano(), 10)))
+	sum := h.Sum(nil)
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", sum[:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
 // String возвращает текстовое представление истории

@@ -118,17 +118,17 @@ func (a *agentImpl) handleNativeToolCalls(ctx context.Context, messages []Messag
 	}
 
 	toolCalls := streamToolCalls
-	logger.DebugToFile(prefix+"[FLOW] Entering tool_calls branch: finishReason=%q, len(streamToolCalls)=%d", finishReason, len(streamToolCalls))
+	logger.DebugToFile("[FLOW] Entering tool_calls branch: finishReason=%q, len(streamToolCalls)=%d", finishReason, len(streamToolCalls))
 
 	// Предупреждение: finish="" с tool_calls — возможна обрезка стрима
 	if finishReason == "" && len(toolCalls) > 0 {
-		fmt.Printf(prefix+"[TOOL] WARNING: finish_reason is empty, tool calls may be truncated/incomplete\n")
-		logger.DebugToFile(prefix+"[TOOL] WARNING: finish_reason is empty (stream may be truncated)")
+		fmt.Printf("%s[TOOL] WARNING: finish_reason is empty, tool calls may be truncated/incomplete\n", prefix)
+		logger.DebugToFile("[TOOL] WARNING: finish_reason is empty (stream may be truncated)")
 	}
 
 	if len(toolCalls) == 0 {
 		fmt.Printf("[WARN] LLM returned tool_calls but none collected from stream, trying non-streaming\n")
-		logger.DebugToFile(prefix+"[FLOW] Trying non-streaming fallback")
+		logger.DebugToFile("[FLOW] Trying non-streaming fallback")
 		var err error
 		toolCalls, err = a.getToolCallsFromResponse(ctx, messages, a.toolsRegistry.ToOpenAISchema())
 		if err != nil {
@@ -136,19 +136,19 @@ func (a *agentImpl) handleNativeToolCalls(ctx context.Context, messages []Messag
 		}
 	}
 	if len(toolCalls) == 0 {
-		logger.DebugToFile(prefix+"[FLOW] No tool_calls after all attempts, returning empty")
+		logger.DebugToFile("[FLOW] No tool_calls after all attempts, returning empty")
 		return &FunctionCallResult{Success: true, Response: ""}, nil
 	}
 
-	logger.DebugToFile(prefix+"[TOOL] NATIVE format: detected %d tool calls", len(toolCalls))
+	logger.DebugToFile("%s[TOOL] NATIVE format: detected %d tool calls", prefix, len(toolCalls))
 	for _, tc := range toolCalls {
 		sig := toolCallSignature(tc)
 		executedToolCalls[sig] = true
 	}
 
-	logger.DebugToFile(prefix+"[FLOW] Calling executeAllTools with %d tool calls", len(toolCalls))
+	logger.DebugToFile("%s[FLOW] Calling executeAllTools with %d tool calls", prefix, len(toolCalls))
 	result := a.executeAllTools(ctx, toolCalls, session.GetPeerID())
-	logger.DebugToFile(prefix+"[FLOW] executeAllTools returned %d results", len(result.ToolCalls))
+	logger.DebugToFile("%s[FLOW] executeAllTools returned %d results", prefix, len(result.ToolCalls))
 	if len(result.ToolCalls) > 0 {
 		finalResponse, err := a.processToolResults(ctx, messages, "", toolCalls, result.ToolCalls, session, executedToolCalls)
 		if err != nil {
@@ -157,7 +157,7 @@ func (a *agentImpl) handleNativeToolCalls(ctx context.Context, messages []Messag
 		return &FunctionCallResult{Success: true, Response: finalResponse}, nil
 	}
 
-	logger.DebugToFile(prefix+"[FLOW] No tool results, continuing...")
+	logger.DebugToFile("%s[FLOW] No tool results, continuing...", prefix)
 	return nil, nil
 }
 
@@ -174,7 +174,7 @@ func (a *agentImpl) handleXMLInReasoning(ctx context.Context, messages []Message
 		return nil
 	}
 
-	fmt.Printf(prefix+"[TOOL] XML in reasoning: detected %d tool calls\n", len(parsedReasoning.ToolCalls))
+	fmt.Printf("%s[TOOL] XML in reasoning: detected %d tool calls\n", prefix, len(parsedReasoning.ToolCalls))
 
 	var uniqueCalls []XMLToolCall
 	for _, tc := range parsedReasoning.ToolCalls {
@@ -182,7 +182,7 @@ func (a *agentImpl) handleXMLInReasoning(ctx context.Context, messages []Message
 		if !executedToolCalls[sig] {
 			uniqueCalls = append(uniqueCalls, tc)
 		} else {
-			fmt.Printf(prefix+"[TOOL] XML duplicate skipped: %s\n", tc.Name)
+			fmt.Printf("%s[TOOL] XML duplicate skipped: %s\n", prefix, tc.Name)
 		}
 	}
 
@@ -201,7 +201,7 @@ func (a *agentImpl) handleXMLInReasoning(ctx context.Context, messages []Message
 	}
 	finalResponse, err := a.processToolResults(ctx, messages, parsedReasoning.Content, toolCalls, result.ToolCalls, session, executedToolCalls)
 	if err != nil {
-		fmt.Printf(prefix+"[ERROR] process xml tool results: %v\n", err)
+		fmt.Printf("%s[ERROR] process xml tool results: %v\n", prefix, err)
 		return nil
 	}
 	return &FunctionCallResult{Success: true, Response: finalResponse}
@@ -298,7 +298,7 @@ func (a *agentImpl) sendThinkingIfNeeded(session *sess.Session, reasoningText st
 	if hasPartialToolCall(cleanedReasoning) {
 		prefix := a.agentPrefix()
 		fmt.Print(prefix + "[TOOL] Stripped partial/malformed tool call fragments from reasoning\n")
-		logger.DebugToFile(prefix+"[THINKING] Stripping partial tool call fragments from reasoning")
+		logger.DebugToFile("%s[THINKING] Stripping partial tool call fragments from reasoning", prefix)
 		cleanedReasoning = stripPartialToolCall(cleanedReasoning)
 		if cleanedReasoning == "" {
 			return
@@ -369,17 +369,17 @@ func (a *agentImpl) handleInvalidOrTextResponse(ctx context.Context, messages []
 	if responseText == "" && reasoningText != "" && hasPartialToolCall(reasoningText) && !strings.Contains(reasoningText, "<tool_call>") && finishReason != "" {
 		prefix := a.agentPrefix()
 		snippet := truncateStr(reasoningText, 200)
-		fmt.Printf(prefix+"[TOOL] Partial/malformed tool call fragments in reasoning: %s\n", snippet)
-		logger.DebugToFile(prefix+"[TOOL] Partial tool call fragments in reasoning: %s", snippet)
+		fmt.Printf("%s[TOOL] Partial/malformed tool call fragments in reasoning: %s\n", prefix, snippet)
+		logger.DebugToFile("%s[TOOL] Partial tool call fragments in reasoning: %s", prefix, snippet)
 		a.debugLog.Error("[TOOL] Partial/malformed tool call fragments in reasoning")
 		a.sendThinking(session.GetPeerID(), "[TOOL] Error: partial/incomplete tool call in reasoning, sending corrective feedback")
 
 		// Очищаем reasoning от фрагментов и отправляем как thinking
 		cleanedReasoning := stripPartialToolCall(reasoningText)
 		if cleanedReasoning != "" {
-			logger.DebugToFile(prefix+"[THINKING] Sending cleaned reasoning (stripped partial fragments)")
+			logger.DebugToFile("%s[THINKING] Sending cleaned reasoning (stripped partial fragments)", prefix)
 			if err := a.thinkingCallback(session.GetPeerID(), cleanedReasoning); err != nil {
-				fmt.Printf(prefix+"[WARN] Failed to send thinking: %v\n", err)
+				fmt.Printf("%s[WARN] Failed to send thinking: %v\n", prefix, err)
 			}
 		}
 
@@ -465,7 +465,7 @@ func (a *agentImpl) xmlFallbackFiltered(ctx context.Context, responseText string
 	for _, tc := range parsed.ToolCalls {
 		sig := xmlToolCallSignature(tc)
 		if executed[sig] {
-			fmt.Printf(prefix+"[TOOL] XML duplicate skipped: %s\n", tc.Name)
+			fmt.Printf("%s[TOOL] XML duplicate skipped: %s\n", prefix, tc.Name)
 			continue
 		}
 		uniqueCalls = append(uniqueCalls, tc)
@@ -475,7 +475,7 @@ func (a *agentImpl) xmlFallbackFiltered(ctx context.Context, responseText string
 		return FunctionCallResult{}, false, nil
 	}
 
-	fmt.Printf(prefix+"[TOOL] XML fallback: detected %d tool calls (%d duplicates skipped)\n", len(uniqueCalls), len(parsed.ToolCalls)-len(uniqueCalls))
+	fmt.Printf("%s[TOOL] XML fallback: detected %d tool calls (%d duplicates skipped)\n", prefix, len(uniqueCalls), len(parsed.ToolCalls)-len(uniqueCalls))
 
 	toolCalls := convertXMLToolCalls(uniqueCalls)
 	for _, tc := range toolCalls {
@@ -509,7 +509,7 @@ func (a *agentImpl) xmlFallback(ctx context.Context, responseText string, messag
 		executed[toolCallSignature(tc)] = true
 	}
 
-	fmt.Printf(prefix+"[TOOL] XML fallback: detected %d tool calls in response text\n", len(toolCalls))
+	fmt.Printf("%s[TOOL] XML fallback: detected %d tool calls in response text\n", prefix, len(toolCalls))
 
 	result := a.executeAllTools(ctx, toolCalls, session.GetPeerID())
 	if len(result.ToolCalls) > 0 {
@@ -549,7 +549,7 @@ func (a *agentImpl) jsonFallback(ctx context.Context, responseText string, messa
 		executed[toolCallSignature(tc)] = true
 	}
 
-	fmt.Printf(prefix+"[TOOL] JSON fallback: detected %d tool calls in response text\n", len(toolCalls))
+	fmt.Printf("%s[TOOL] JSON fallback: detected %d tool calls in response text\n", prefix, len(toolCalls))
 
 	result := a.executeAllTools(ctx, toolCalls, session.GetPeerID())
 	if len(result.ToolCalls) > 0 {

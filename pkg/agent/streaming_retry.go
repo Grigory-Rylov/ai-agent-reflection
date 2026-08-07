@@ -52,6 +52,12 @@ func (a *agentImpl) streamAndCollect(ctx context.Context, config StreamingConfig
 			}
 			continue
 		}
+		// Сохраняем KV-cache слота после каждого ответа LLM, пока слот держит
+		// актуальный кэш. Только при включённом slot-save (SlotSaver выставлен
+		// вызывающим кодом только когда models.json slot-save: true).
+		if a.config.SlotSave && a.config.SlotSaver != nil {
+			a.config.SlotSaver.SaveSlot(ctx)
+		}
 		return responseText, reasoningText, finishReason, toolCalls, promptTokens, completionTokens, nil
 	}
 }

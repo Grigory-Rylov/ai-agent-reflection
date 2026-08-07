@@ -41,18 +41,4 @@ func (e *RealEstimator) EstimateMessages(messages []tokenizers.Message) int {
 	return count
 }
 
-// ============================================================
-// EstimateWithTokenizer — estimate tokens with real tokenizer or fallback
-// ============================================================
 
-// EstimateWithTokenizer returns token count via tokenizer, or heuristic fallback.
-func EstimateWithTokenizer(tz tokenizers.Tokenizer, messages []tokenizers.Message) int {
-	if tz == nil {
-		return EstimateMessagesTokensSimple(messages)
-	}
-	count, err := tz.CountMessagesTokens(messages)
-	if err != nil {
-		return EstimateMessagesTokensSimple(messages)
-	}
-	return count
-}

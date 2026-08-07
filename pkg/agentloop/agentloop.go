@@ -27,10 +27,18 @@ type AgentLoop interface {
 	ResetSession(peerID int64)
 	GetSession(peerID int64) *session.Session
 	EnsureSession(peerID int64) *session.Session
+	// ResumeInterruptedTask продолжает незавершённую задачу главного агента
+	// после рестарта (если сессия помечена resume_prompt в БД).
+	ResumeInterruptedTask(ctx context.Context, peerID int64)
+	// ClearAllSlots очищает все серверные слоты и их KV-cache файлы для
+	// текущей модели (best-effort, для стартового сброса -r).
+	ClearAllSlots(ctx context.Context)
 	SetThinkingCallback(cb func(peerID int64, content string) error)
 	GetContextStats(peerID int64) (charCount int, tokenCount int, err error)
 	TestLlamaServer(ctx context.Context) (model string, responseTime time.Duration, tokensPerSec float64, err error)
 	GetModelHolder() *modelsconfig.Holder
+	GetSlotManager() *SlotManager
+	GetSlots() *SlotClient
 }
 
 type agentLoop struct {
@@ -50,8 +58,8 @@ type agentLoop struct {
 	thinkingCallback func(peerID int64, content string) error
 	currentAlias     string
 	modelMu          sync.Mutex
-	slots            *slotClient
-	slotIDCache      sync.Map // serverURL -> int
+	slots            *SlotClient
+	slotMgr          *SlotManager
 }
 
 func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentLoop, error) {
@@ -120,6 +128,9 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 		l.InfoLogf("AgentLoop initialized: model=%s host=%s maxTokens=%d", modelName, llamaURL, config.MaxTokens)
 	}
 
+	slotMgr := NewSlotManager(newSlotClient())
+	slotMgr.SetLogger(l)
+
 	return &agentLoop{
 		config:       config,
 		vk:           vk,
@@ -131,11 +142,20 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 		log:          l,
 		currentAlias: alias,
 		slots:        newSlotClient(),
+		slotMgr:      slotMgr,
 	}, nil
 }
 
 func (al *agentLoop) GetModelHolder() *modelsconfig.Holder {
 	return al.config.ModelHolder
+}
+
+func (al *agentLoop) GetSlotManager() *SlotManager {
+	return al.slotMgr
+}
+
+func (al *agentLoop) GetSlots() *SlotClient {
+	return al.slots
 }
 
 // resolveMaxTokens возвращает лимит контекста модели: из models.json (поле context),
@@ -239,78 +259,57 @@ func (al *agentLoop) currentModelSlotSave() bool {
 	return al.config.ModelHolder.GetCurrentSlotSave()
 }
 
-// restoreSessionSlot восстанавливает KV-cache слота для сессии peerID перед запросом.
-// Ошибки пишутся в лог и не влияют на обработку запроса.
-func (al *agentLoop) restoreSessionSlot(ctx context.Context, peerID int64) {
-	al.withSessionSlot(ctx, peerID, "restore")
+// restoreSlotInto восстанавливает KV-cache из {model}_slot{N}.bin в слот slotID
+// перед запросом. Ошибки обрабатываются по правилам доступности:
+//   - отсутствует файл (первый запуск) — debug-лог, продолжаем cold;
+//   - ошибка конфигурации (нет --slot-save-path) — хост помечается недоступным
+//     и логируется один раз на уровне info, дальше save/restore пропускаются;
+//   - прочие ошибки — warn-лог.
+func (al *agentLoop) restoreSlotInto(ctx context.Context, host, modelName string, slotID int, sessionID string) {
+	filename := SlotFileName(modelName, slotID)
+	err := al.slots.restoreSlot(ctx, host, slotID, modelName, filename)
+	if err == nil {
+		if al.log != nil {
+			al.log.InfoLogf("[SLOT] restore slot %d for session %s (%s)", slotID, sessionID, filename)
+		}
+		return
+	}
+	switch {
+	case IsSlotConfigError(err):
+		if al.slotMgr.MarkUnavailable(host) && al.slotMgr.ShouldLogUnavailable(host) && al.log != nil {
+			al.log.InfoLogf("[SLOT] KV-cache save/restore unavailable on %s, skipping slot feature: %v", host, err)
+		}
+	case IsSlotMissingFileError(err):
+		if al.log != nil {
+			al.log.DebugLogf("[SLOT] restore slot %d for session %s: no cache file yet (cold start)", slotID, sessionID)
+		}
+	default:
+		if al.log != nil {
+			al.log.WarnLogf("[SLOT] restore slot %d for session %s: %v", slotID, sessionID, err)
+		}
+	}
 }
 
-// saveSessionSlot сохраняет KV-cache слота для сессии peerID после ответа модели.
-// Ошибки пишутся в лог и не влияют на отправку ответа.
-func (al *agentLoop) saveSessionSlot(ctx context.Context, peerID int64) {
-	al.withSessionSlot(ctx, peerID, "save")
-}
-
-// withSessionSlot выполняет сохранение или восстановление слота для сессии peerID.
-func (al *agentLoop) withSessionSlot(ctx context.Context, peerID int64, action string) {
-	if al.config.ModelHolder == nil {
+// saveSlotFrom сохраняет KV-cache слота slotID в {model}_slot{N}.bin после ответа.
+// При ошибке конфигурации хост помечается недоступным (один info-лог), прочие
+// ошибки — warn. Ошибки save никогда не валят обработку запроса.
+func (al *agentLoop) saveSlotFrom(ctx context.Context, host, modelName string, slotID int, sessionID string) {
+	filename := SlotFileName(modelName, slotID)
+	err := al.slots.saveSlot(ctx, host, slotID, modelName, filename)
+	if err == nil {
+		if al.log != nil {
+			al.log.InfoLogf("[SLOT] save slot %d for session %s (%s)", slotID, sessionID, filename)
+		}
 		return
 	}
-
-	_, _, host := al.config.ModelHolder.GetCurrent()
-	if host == "" {
+	if IsSlotConfigError(err) {
+		if al.slotMgr.MarkUnavailable(host) && al.slotMgr.ShouldLogUnavailable(host) && al.log != nil {
+			al.log.InfoLogf("[SLOT] KV-cache save/restore unavailable on %s, skipping slot feature: %v", host, err)
+		}
 		return
 	}
-
-	slotID, err := al.resolveSlotID(ctx, host)
-	if err != nil {
-		al.logSlotError(action, peerID, err)
-		return
-	}
-
-	filename := al.sessionSlotFileName(peerID)
-
-	var serr error
-	switch action {
-	case "save":
-		serr = al.slots.saveSlot(ctx, host, slotID, filename)
-	case "restore":
-		serr = al.slots.restoreSlot(ctx, host, slotID, filename)
-	}
-	if serr != nil {
-		al.logSlotError(action, peerID, serr)
-		return
-	}
-
 	if al.log != nil {
-		al.log.InfoLogf("[SLOT] %s slot %d for peer %d (%s)", action, slotID, peerID, filename)
-	}
-}
-
-// sessionSlotFileName возвращает имя файла слота для сессии peerID.
-// Имя привязано к модели, чтобы не восстанавливать чужой KV-cache после /r.
-func (al *agentLoop) sessionSlotFileName(peerID int64) string {
-	_, modelName, _ := al.config.ModelHolder.GetCurrent()
-	return fmt.Sprintf("agent_%d_%s.bin", peerID, sanitizeSlotName(modelName))
-}
-
-// resolveSlotID возвращает id слота для сервера, кэшируя результат по адресу сервера.
-func (al *agentLoop) resolveSlotID(ctx context.Context, serverURL string) (int, error) {
-	if val, ok := al.slotIDCache.Load(serverURL); ok {
-		return val.(int), nil
-	}
-	id, err := al.slots.firstSlotID(ctx, serverURL)
-	if err != nil {
-		return 0, err
-	}
-	al.slotIDCache.Store(serverURL, id)
-	return id, nil
-}
-
-// logSlotError пишет ошибку save/restore слота в лог (не в чат).
-func (al *agentLoop) logSlotError(action string, peerID int64, err error) {
-	if al.log != nil {
-		al.log.WarnLogf("[SLOT] Failed to %s slot for peer %d: %v", action, peerID, err)
+		al.log.WarnLogf("[SLOT] save slot %d for session %s: %v", slotID, sessionID, err)
 	}
 }
 
@@ -378,6 +377,11 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 	}
 	sess := al.getOrCreateSession(peerID)
 
+	// Помечаем обработку незавершённой: если процесс упадёт/будет перезапущен
+	// посреди задачи, resume_prompt в БД позволит продолжить её на старте.
+	sess.SetResumePrompt(prompt)
+	defer sess.SetResumePrompt("")
+
 	if al.log != nil {
 		al.log.InfoLogf("Prompt received from peer %d: %s", peerID, truncate(prompt, 100))
 	}
@@ -393,11 +397,43 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 	messages := al.buildAPIMessages(sess)
 
 	slotSave := al.currentModelSlotSave()
+	sessionID := sess.GetSessionID()
+	assignedSlotID := -1
+
 	if slotSave {
-		al.restoreSessionSlot(ctx, peerID)
+		_, modelName, host := al.config.ModelHolder.GetCurrent()
+		if host != "" {
+			al.slotMgr.CheckAvailability(ctx, host, modelName)
+		}
+
+		// Get or assign slot for this session (LRU eviction if all occupied).
+		slotID, evictedSessionID := al.slotMgr.GetOrAssign(sessionID, al.slotMgr.TotalSlots())
+		if al.slotMgr.IsAvailable(host) && slotID >= 0 {
+			assignedSlotID = slotID
+
+			// On eviction, persist the evicted session's KV-cache into its
+			// slot file, then clear the server slot so the new session does
+			// NOT inherit the evicted session's context (slot-keyed files
+			// are shared by slot, so we must start the new owner cold).
+			if evictedSessionID != "" {
+				al.saveSlotFrom(ctx, host, modelName, slotID, evictedSessionID)
+				if err := al.slots.eraseSlot(ctx, host, slotID, modelName); err != nil {
+					if al.log != nil {
+						al.log.DebugLogf("[SLOT] erase slot %d after eviction: %v", slotID, err)
+					}
+				}
+				if al.log != nil {
+					al.log.InfoLogf("[SLOT] evicted session %s from slot %d, new session %s starts cold", evictedSessionID, slotID, sessionID)
+				}
+			} else {
+				// Same session reuses its slot → restore its own cache.
+				// Fresh slot → restore is a no-op (no file yet).
+				al.restoreSlotInto(ctx, host, modelName, slotID, sessionID)
+			}
+		}
 	}
 
-	response, err := al.sendToLLM(ctx, messages, sess, peerID, prompt)
+	response, err := al.sendToLLM(ctx, messages, sess, peerID, prompt, assignedSlotID)
 	if err != nil {
 		if al.log != nil {
 			al.log.ErrorLogf("LLM request failed: %v", err)
@@ -406,7 +442,9 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 	}
 
 	if slotSave {
-		al.saveSessionSlot(ctx, peerID)
+		// KV-cache уже сохранён per-response внутри agent_impl (SlotSaver);
+		// здесь только обновляем LRU-метку сессии.
+		al.slotMgr.Touch(sessionID)
 	}
 
 	if al.config.EnablePruning {
@@ -578,12 +616,19 @@ func (al *agentLoop) buildAPIMessages(sess *session.Session) []agent.Message {
 	return messages
 }
 
-func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, sess *session.Session, peerID int64, prompt string) (string, error) {
+func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, sess *session.Session, peerID int64, prompt string, slotID int) (string, error) {
 	if al.log != nil {
 		al.log.DebugLog("[sendToLLM] creating agent")
 	}
 
 	agentConfig := al.buildAgentConfig()
+	// Pin agent to its session's slot for KV-cache continuity. SlotSaver
+	// сохраняет KV-cache после каждого ответа LLM (только при slot-save).
+	agentConfig.SlotID = slotID
+	if slotID >= 0 && al.currentModelSlotSave() {
+		agentConfig.SlotSave = true
+		agentConfig.SlotSaver = NewSlotSaver(al.slotMgr, al.slots, al.config.ModelHolder, sess.GetSessionID(), al.log)
+	}
 	var a agent.Agent = agent.NewAgent(agentConfig)
 
 	if ps, ok := a.(interface{ SetPermissionChecker(agent.PermissionChecker) }); ok {
@@ -863,6 +908,45 @@ func (al *agentLoop) checkAndCompressOpenCode(ctx context.Context, sess *session
 	}
 
 	al.applyOpenCodeCompactResult(sess, result)
+
+	// After compaction, the KV-cache in the slot is stale: history was rewritten,
+	// so cached prompt tokens no longer match. Invalidate the slot fully —
+	// delete the cache file and clear the server slot — then release it in the
+	// SlotManager. The next request for this session allocates a fresh slot and
+	// starts cold (no stale context is restored into any session that reuses it).
+	sessionID := sess.GetSessionID()
+	al.invalidateSessionSlot(ctx, sessionID)
+}
+
+// invalidateSessionSlot стирает KV-cache слота сессии в памяти сервера
+// (action=erase) и освобождает слот в SlotManager. Используется при компакции
+// и сбросе сессии — история переписана, кэш устарел. Файл на диске не удаляется
+// (llama-server не поддерживает это через HTTP); он перезапишется при следующем
+// save этого слота.
+func (al *agentLoop) invalidateSessionSlot(ctx context.Context, sessionID string) {
+	if al.config.ModelHolder == nil {
+		return
+	}
+	_, modelName, host := al.config.ModelHolder.GetCurrent()
+	if host == "" {
+		return
+	}
+	slotID := al.slotMgr.GetSlotID(sessionID)
+	if slotID < 0 {
+		// No slot assigned (e.g. feature unavailable) — nothing to invalidate.
+		return
+	}
+	if err := al.slots.eraseSlot(ctx, host, slotID, modelName); err != nil {
+		if al.log != nil {
+			al.log.DebugLogf("[SLOT] invalidate: erase slot %d: %v", slotID, err)
+		}
+	} else if al.log != nil {
+		al.log.InfoLogf("[SLOT] invalidate: erased slot %d (%s) for session %s", slotID, SlotFileName(modelName, slotID), sessionID)
+	}
+	al.slotMgr.Release(sessionID)
+	if al.log != nil {
+		al.log.InfoLogf("[SLOT] invalidated slot %d for session %s", slotID, sessionID)
+	}
 }
 
 func (al *agentLoop) applyOpenCodeCompactResult(sess *session.Session, result *compress.OpenCodeCompactResult) {
@@ -976,9 +1060,48 @@ func (al *agentLoop) Stop() {
 	}
 }
 
+// deleteSessionSlot очищает слот сессии при сбросе: удаляет файл KV-cache,
+// очищает серверный слот и возвращает слот в свободный пул SlotManager.
+// Использует исключительно отображение SlotManager (никаких сессийно-ключёвых
+// имён файлов). Если у сессии нет слота — no-op.
+func (al *agentLoop) deleteSessionSlot(ctx context.Context, peerID int64, sessionID string) {
+	_ = peerID
+	al.invalidateSessionSlot(ctx, sessionID)
+}
+
+// ClearAllSlots очищает все серверные слоты и удаляет их KV-cache файлы для
+// текущей модели. Best-effort: используется при старте с флагом -r, чтобы
+// устранить устаревшие файлы от предыдущего запуска. Если сервер недоступен
+// или флаг слотов не поддерживается — тихо пропускается.
+func (al *agentLoop) ClearAllSlots(ctx context.Context) {
+	if al.config.ModelHolder == nil {
+		return
+	}
+	_, modelName, host := al.config.ModelHolder.GetCurrent()
+	if host == "" {
+		return
+	}
+	if !al.currentModelSlotSave() {
+		return
+	}
+	al.slotMgr.CheckAvailability(ctx, host, modelName)
+	if !al.slotMgr.IsAvailable(host) {
+		return
+	}
+	total := al.slotMgr.TotalSlots()
+	if total <= 0 {
+		return
+	}
+	al.slots.ClearAllSlots(ctx, host, modelName, total, al.log)
+	if al.log != nil {
+		al.log.InfoLogf("[SLOT] startup reset: cleared %d slots for model %s", total, modelName)
+	}
+}
+
 func (al *agentLoop) ResetSession(peerID int64) {
 	if val, ok := al.sessionM.Load(peerID); ok {
 		sess := val.(*session.Session)
+		al.deleteSessionSlot(context.Background(), peerID, sess.GetSessionID())
 		sess.Reset()
 		sess.ClearPinned()
 		if al.log != nil {
@@ -1003,6 +1126,26 @@ func (al *agentLoop) GetSession(peerID int64) *session.Session {
 
 func (al *agentLoop) EnsureSession(peerID int64) *session.Session {
 	return al.getOrCreateSession(peerID)
+}
+
+// ResumeInterruptedTask продолжает незавершённую задачу главного агента после
+// рестарта. Если при остановке процесса сессия была помечена как in-progress
+// (resume_prompt не пуст), история уже восстановлена из БД — отправляем модели
+// continuation-промпт, и она продолжает с места обрыва. No-op без флага.
+func (al *agentLoop) ResumeInterruptedTask(ctx context.Context, peerID int64) {
+	sess := al.GetSession(peerID)
+	if sess == nil || sess.GetResumePrompt() == "" {
+		return
+	}
+	if al.log != nil {
+		al.log.InfoLogf("[RESUME] continuing interrupted task for peer %d (resume_prompt=%q)", peerID, truncate(sess.GetResumePrompt(), 80))
+	}
+	const contPrompt = "The process was restarted. Continue your task from where you left off."
+	if _, err := al.ProcessPrompt(ctx, contPrompt, peerID); err != nil {
+		if al.log != nil {
+			al.log.WarnLogf("[RESUME] continue interrupted task for peer %d failed: %v", peerID, err)
+		}
+	}
 }
 
 func (al *agentLoop) SetThinkingCallback(cb func(peerID int64, content string) error) {

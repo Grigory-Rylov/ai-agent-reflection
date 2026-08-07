@@ -251,7 +251,23 @@ func main() {
 	}
 
 	if config.PeerID > 0 {
-		agentLoop.EnsureSession(config.PeerID)
+		if *reset {
+			// Сброс слотов: очищаем серверные слоты и KV-cache файлы от
+			// предыдущего запуска, затем сбрасываем сессию основного пира.
+			clearCtx, clearCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			agentLoop.ClearAllSlots(clearCtx)
+			clearCancel()
+			agentLoop.ResetSession(config.PeerID)
+		} else {
+			agentLoop.EnsureSession(config.PeerID)
+			// Продолжаем незавершённую задачу главного агента после рестарта
+			// (сессия уже восстановлена из БД вместе с resume_prompt).
+			go func() {
+				resumeCtx, resumeCancel := context.WithTimeout(context.Background(), 30*time.Minute)
+				defer resumeCancel()
+				agentLoop.ResumeInterruptedTask(resumeCtx, config.PeerID)
+			}()
+		}
 	}
 
 	agentLoop.SetThinkingCallback(func(peerID int64, content string) error {
@@ -302,6 +318,8 @@ func main() {
 		ModelHolder:     modelHolder,
 		SetActiveAgent:  func(name string) {},
 		Store:           dbStore,
+		SlotManager:     agentLoop.GetSlotManager(),
+		Slots:           agentLoop.GetSlots(),
 	})
 
 	orchestrator := agentloop.NewOrchestrator(agentloop.OrchestratorConfig{
@@ -321,6 +339,8 @@ func main() {
 		AgentManager:        agentManager,
 		MaxReviewIterations: config.MaxReviewIterations,
 		Store:               dbStore,
+		SlotManager:         agentLoop.GetSlotManager(),
+		Slots:               agentLoop.GetSlots(),
 	})
 
 	botHandler := vk.NewBotHandlerWithPeerID(vkClient, agentLoop, log,

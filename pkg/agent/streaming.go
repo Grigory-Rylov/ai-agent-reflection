@@ -53,7 +53,7 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 		contentChars += len(m.Content)
 	}
 
-	logger.DebugToFile(a.agentPrefix()+"[LLM REQUEST] Sending request to %s, model=%s, messages=%d, chars=%d, tokens=%d", a.config.LlamaServerURL, config.Model, len(messages), len(reqBody), contentChars/3)
+	logger.DebugToFile("%s[LLM REQUEST] Sending request to %s, model=%s, messages=%d, chars=%d, tokens=%d", a.agentPrefix(), a.config.LlamaServerURL, config.Model, len(messages), len(reqBody), contentChars/3)
 
 	req, err := a.createStreamingRequest(ctx, reqBody)
 	if err != nil {
@@ -62,7 +62,7 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		logger.DebugToFile(a.agentPrefix()+"[LLM REQUEST] Failed to send: %v", err)
+		logger.DebugToFile("%s[LLM REQUEST] Failed to send: %v", a.agentPrefix(), err)
 		// Недоступность сервера — ретрабильная ошибка.
 		return nil, &retryableError{err: fmt.Errorf("send request: %w", err)}
 	}
@@ -72,7 +72,7 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		a.debugLog.Error("API ERROR: Status %d, response: %s", resp.StatusCode, string(body))
-		logger.DebugToFile(a.agentPrefix()+"[LLM REQUEST] API error: status %d", resp.StatusCode)
+		logger.DebugToFile("%s[LLM REQUEST] API error: status %d", a.agentPrefix(), resp.StatusCode)
 		apiErr := fmt.Errorf("API error: status %d, body: %s", resp.StatusCode, string(body))
 		// HTTP 5xx (сервер перезагружается/модель грузится) — ретрабильная ошибка.
 		// HTTP 4xx (клиентская ошибка) — не ретраим.
@@ -82,7 +82,7 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 		return nil, apiErr
 	}
 
-	logger.DebugToFile(a.agentPrefix()+"[LLM REQUEST] Request successful, reading stream...")
+	logger.DebugToFile("%s[LLM REQUEST] Request successful, reading stream...", a.agentPrefix())
 	chunkChan := make(chan StreamChunkEvent, 100)
 	go a.readStreamResponse(ctx, resp, chunkChan)
 	return chunkChan, nil
@@ -112,13 +112,18 @@ func (a *agentImpl) buildBaseRequestJSON(model string, messages []Message, strea
 	if a.config.MaxTokens > 0 && a.config.MaxTokens < maxOutput {
 		maxOutput = a.config.MaxTokens
 	}
-	return map[string]interface{}{
+	req := map[string]interface{}{
 		"model":       model,
 		"messages":    messages,
 		"temperature": a.config.Temperature,
 		"max_tokens":  maxOutput,
 		"stream":      stream,
 	}
+	// Pin to specific slot for KV-cache continuity (multi-agent support)
+	if a.config.SlotID >= 0 {
+		req["slot_id"] = a.config.SlotID
+	}
+	return req
 }
 
 // saveDebugPrompt сохраняет промпт в debug_prompt.txt
