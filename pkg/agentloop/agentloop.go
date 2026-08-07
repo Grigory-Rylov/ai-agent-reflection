@@ -607,9 +607,13 @@ func (al *agentLoop) buildAPIMessages(sess *session.Session) []agent.Message {
 	messages := make([]agent.Message, len(history))
 
 	for i, msg := range history {
+		content := msg.Content
+		if msg.Role == session.ToolRole {
+			content = compress.TruncateToolOutput(content)
+		}
 		messages[i] = agent.Message{
 			Role:    string(msg.Role),
-			Content: msg.Content,
+			Content: content,
 		}
 	}
 

@@ -68,11 +68,13 @@
 - **opencode**: `toModelMessagesEffect()` обрезает вывод tool до `TOOL_OUTPUT_MAX_CHARS=2000` при каждом формировании запроса (message-v2.ts:306, compaction.ts:363-375).
 - **агент**: `TruncateToolOutput()` обрезает **при записи** в сессию (tool_result_processor.go:103,377), но не при формировании запроса. Различие: в opencode truncation происходит на этапе рендера, а не на записи.
 - **TODO**: рассмотреть перенос truncation на этап построения API-сообщений (чтобы повторные запросы тоже обрезались).
+- **DONE**: truncation перенесён на этап рендера — `convertHistoryToAPIMessages()` (agent_impl.go) и `buildAPIMessages()` (agentloop.go) обрезают большой tool-вывод через `TruncateToolOutput()` при формировании каждого запроса. В сессии хранятся полные выводы (инструменты сохраняют полный файл с хинтом "Full output saved to:" для перечитывания). Защищено `TestConvertHistoryToAPIMessages_TruncatesLargeToolOutput` и `TestBuildAPIMessages_TruncatesLargeToolOutput`.
 
 ### 12. Системный промпт и AGENTS.md при компактизации
 - **opencode**: system prompt (env + instructions + skills) собирается динамически при каждом запросе (prompt.ts:1333) и **не является частью истории**; при компактизации он не теряется.
 - **агент**: системный промпт хранится первым сообщением в истории; после `sess.Reset()` восстанавливается из `config.SystemPrompt`, а AGENTS.md добавляется отдельным system-сообщением через `injectInstructions()` после компактизации.
 - **TODO**: убедиться, что после компактизации system prompt и инструкции (AGENTS.md/CLAUDE.md) восстанавливаются так же надёжно, как в opencode.
+- **DONE**: system-сообщение не компактится (`MarkCompaction` пропускает `SystemRole`), `injectInstructions()` вызывается при каждом построении запроса и перечитывает AGENTS.md/CLAUDE.md из config и project директорий. Защищено `TestSystemPromptAndInstructionsSurviveCompaction`.
 
 ---
 
@@ -92,8 +94,8 @@
 | P0 | 1, 2, 3 | Core-логика выбора head/tail и переупорядочивания = базовое совпадение с opencode | DONE |
 | P0 | 5, 6 | Качество summary (правильная структура промпта, сохранение recent) | DONE |
 | P1 | 7, 8 | Устойчивость: авто-продолжение и fallback при overflow | TODO |
-| P1 | 9, 10, 11 | Консистентность оценок и работы с tool-выводами | 9,10 DONE; 11 TODO |
-| P2 | 4, 12 | Точность границ оборота и восстановление system-контекста | 4 DONE; 12 TODO |
+| P1 | 9, 10, 11 | Консистентность оценок и работы с tool-выводами | DONE |
+| P2 | 4, 12 | Точность границ оборота и восстановление system-контекста | DONE |
 | P2 | 13 | Подтверждение поведения `/pin` тестами (обязательно к сохранению) | DONE (тесты есть) |
 
 ---

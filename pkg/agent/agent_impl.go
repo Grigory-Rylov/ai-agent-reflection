@@ -497,9 +497,13 @@ func (a *agentImpl) injectInstructions(messages []Message, workingDir string) []
 func (a *agentImpl) convertHistoryToAPIMessages(history []session.Message) []Message {
 	apiMessages := make([]Message, len(history))
 	for i, msg := range history {
+		content := msg.Content
+		if msg.Role == session.ToolRole {
+			content = compress.TruncateToolOutput(content)
+		}
 		apiMsg := Message{
 			Role:       string(msg.Role),
-			Content:    msg.Content,
+			Content:    content,
 			ToolCallID: msg.ToolCallID,
 			Name:       msg.Name,
 		}
