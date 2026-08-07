@@ -276,9 +276,9 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 // compactIfNeeded выполняет opencode-style компакцию при переполнении контекста
 func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session) {
 	history := s.GetHistory()
-	messages := a.convertSessionHistory(history)
 
-	tokensBefore := compress.EstimateMessagesTokensSimple(messages)
+	visible := a.convertSessionHistory(history)
+	tokensBefore := compress.EstimateMessagesTokensSimple(visible)
 	if !compress.IsOverflowWithLimits(tokensBefore, a.config.MaxTokens, a.config.ModelLimitInput, a.config.CompactionReserved) {
 		return
 	}
@@ -288,29 +288,20 @@ func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session) {
 		tailTurns = 2
 	}
 
-	result, err := a.compactor.CompactWithOpenCode(ctx, messages, a.config.MaxTokens, tailTurns, a.config.PreserveRecentTokens)
+	// Компактируем по сырой истории (без FilterCompacted): TailStartID из
+	// select() должен совпадать с индексами session.messages для MarkCompaction.
+	result, err := a.compactor.CompactWithOpenCode(ctx, a.convertSessionHistoryRaw(history), a.config.MaxTokens, tailTurns, a.config.PreserveRecentTokens)
 	if err != nil {
 		a.debugLog.Warn("Compaction skipped: %v", err)
 		return
 	}
 
-	s.Reset()
-	if result.SummaryMsg.Content != "" {
-		s.AddUserMessage("<<CONVERSATION COMPACTED>>")
-		s.AddAssistantMessageWithSummary(result.Summary)
+	// Не сбрасываем сессию (модель opencode): head помечается как compacted,
+	// tail сохраняется через tail_start_id, GetContextMessages переупорядочивает.
+	if result.Summary == "" {
+		return
 	}
-	for _, msg := range result.KeptTail {
-		switch msg.Role {
-		case "system":
-			s.UpdateSystemPrompt(msg.Content)
-		case "user":
-			s.AddUserMessage(msg.Content)
-		case "assistant":
-			s.AddAssistantMessage(msg.Content)
-		case "tool":
-			s.AddUserMessage(msg.Content)
-		}
-	}
+	s.MarkCompaction(result.TailStartID, result.Summary)
 }
 
 // convertSessionHistory конвертирует историю сессии в tokenizers.Message
@@ -319,6 +310,12 @@ func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session) {
 // После конвертации применяет FilterCompacted для корректного порядка
 // сообщений после компактизации: [compaction-user, summary, tail, after-summary]
 func (a *agentImpl) convertSessionHistory(history []session.Message) []tokenizers.Message {
+	return compress.FilterCompacted(a.convertSessionHistoryRaw(history))
+}
+
+// convertSessionHistoryRaw конвертирует историю 1:1 (без FilterCompacted),
+// сохраняя выравнивание индексов с session.messages для TailStartID.
+func (a *agentImpl) convertSessionHistoryRaw(history []session.Message) []tokenizers.Message {
 	messages := make([]tokenizers.Message, len(history))
 	for i, msg := range history {
 		content := msg.Content
@@ -327,12 +324,14 @@ func (a *agentImpl) convertSessionHistory(history []session.Message) []tokenizer
 			content += tc.Function.Arguments
 		}
 		messages[i] = tokenizers.Message{
-			Role:    string(msg.Role),
-			Content: content,
-			Summary: msg.Summary,
+			Role:        string(msg.Role),
+			Content:     content,
+			Summary:     msg.Summary,
+			Compacted:   msg.Compacted,
+			TailStartID: msg.TailStartID,
 		}
 	}
-	return compress.FilterCompacted(messages)
+	return messages
 }
 
 // ResetSession сбрасывает сессию пользователя

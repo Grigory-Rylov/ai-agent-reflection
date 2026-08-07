@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/opencode/llama-client/pkg/store"
+	"github.com/opencode/llama-client/pkg/tokenizers"
 )
 
 // ============================================================
@@ -49,7 +50,14 @@ type Message struct {
 	ToolCallID string        `json:"tool_call_id,omitempty"` // ID инструмента для сообщений с role=tool
 	Name       string        `json:"name,omitempty"`         // Имя инструмента для сообщений с role=tool
 	Summary    bool          `json:"summary,omitempty"`      // true если это результат компактизации (для FilterCompacted)
-	Timestamp  time.Time     `json:"timestamp,omitempty"`
+	// Compacted — true если сообщение скрыто компактизацией (головная часть)
+	// или output обрезан pruning-ом. В модель контекст такие сообщения не попадают.
+	Compacted bool `json:"compacted,omitempty"`
+	// TailStartID — индекс первого сообщения хвоста (tail), сохранённого при
+	// компактизации. Хранится на summary-сообщении; индекс является стабильным
+	// ID, т.к. сообщения в истории только добавляются.
+	TailStartID int       `json:"tail_start_id,omitempty"`
+	Timestamp   time.Time `json:"timestamp,omitempty"`
 }
 
 // ============================================================
@@ -284,6 +292,61 @@ func (s *Session) AddAssistantMessageWithSummary(content string) {
 	}
 }
 
+// MarkCompaction помечает головную часть истории как сжатую и добавляет маркер
+// компактизации в конец, не стирая историю (модель opencode: старые сообщения
+// остаются в БД, а при построении запроса GetContextMessages/FilterCompacted
+// переупорядочивает их в [compaction-user, summary, ...tail...]).
+// tailStartID — индекс первого сообщения сохранённого хвоста в s.messages.
+func (s *Session) MarkCompaction(tailStartID int, summary string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if tailStartID > 0 {
+		for i := 0; i < tailStartID && i < len(s.messages); i++ {
+			if s.messages[i].Role != SystemRole {
+				s.messages[i].Compacted = true
+			}
+		}
+	}
+
+	s.messages = append(s.messages, Message{
+		Role:      UserRole,
+		Content:   tokenizers.CompactionUserMessage,
+		Timestamp: time.Now(),
+	})
+	s.messages = append(s.messages, Message{
+		Role:        AssistantRole,
+		Content:     summary,
+		Summary:     true,
+		TailStartID: tailStartID,
+		Timestamp:   time.Now(),
+	})
+	s.updatedAt = time.Now()
+
+	if s.config.AutoSave {
+		s.saveNow()
+	}
+}
+
+// MarkMessageCompacted помечает сообщение по индексу как сжатое и заменяет его
+// контент (используется pruning-ом). Не удаляет сообщение — индексы истории
+// (в т.ч. tail_start_id маркеров) остаются стабильными.
+func (s *Session) MarkMessageCompacted(index int, content string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if index < 0 || index >= len(s.messages) {
+		return
+	}
+	s.messages[index].Content = content
+	s.messages[index].Compacted = true
+	s.updatedAt = time.Now()
+
+	if s.config.AutoSave {
+		s.saveNow()
+	}
+}
+
 // AddToolMessage добавляет результат выполнения инструмента в историю
 func (s *Session) AddToolMessage(toolCallID, toolName, content string) {
 	s.mu.Lock()
@@ -312,6 +375,27 @@ func (s *Session) GetHistory() []Message {
 	result := make([]Message, len(s.messages))
 	copy(result, s.messages)
 	return result
+}
+
+// RestoreMessages заменяет историю сообщений целиком, сохраняя все метаданные
+// (Summary/Compacted/TailStartID). Используется при восстановлении сессии
+// сабагента после рестарта — чтобы маркеры компактизации переживали резюм.
+func (s *Session) RestoreMessages(msgs []Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.messages = make([]Message, len(msgs))
+	copy(s.messages, msgs)
+
+	// Восстанавливаем системный промпт из первого system-сообщения.
+	for _, msg := range s.messages {
+		if msg.Role == SystemRole {
+			s.config.SystemPrompt = msg.Content
+			break
+		}
+	}
+
+	s.updatedAt = time.Now()
 }
 
 // ============================================================
@@ -361,22 +445,63 @@ func (s *Session) ClearPinned() {
 }
 
 // GetContextMessages возвращает сообщения для API: системное сообщение,
-// затем все pinned промпты (как user), затем остальная история. Pinned
-// промпт не дублируется: если его контент уже есть в истории (например,
-// сразу после /pin, когда промпт отправлен как обычное сообщение), он
-// не вставляется повторно и появляется в контексте только после
-// компактизации/reset, когда исходное сообщение очищено.
+// затем все pinned промпты (как user), затем остальная история. После
+// компактизации история переупорядочивается как в opencode filterCompacted():
+// [system, pinned..., compaction-user, summary, ...tail...]. Головная часть
+// (compacted) в контекст не попадает, но остаётся в истории (для последующих
+// компактизаций). Pinned промпт не дублируется: если его контент уже есть в
+// видимых сообщениях (например, сразу после /pin, когда промпт отправлен как
+// обычное сообщение), он не вставляется повторно и появляется в контексте
+// только после компактизации, когда исходное сообщение скрыто.
 func (s *Session) GetContextMessages() []Message {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	out := make([]Message, 0, len(s.messages)+len(s.pinned))
+	history := s.messages
+
+	// Собираем видимые сообщения (переупорядоченные после компактизации).
+	visible := make([]Message, 0, len(history))
+	markerIdx, markerTailStart := findLastCompactionMarkerLocked(history)
+	if markerIdx >= 0 {
+		compactionUserIdx := -1
+		for j := markerIdx - 1; j >= 0; j-- {
+			if history[j].Role == UserRole {
+				compactionUserIdx = j
+				break
+			}
+		}
+		tailStartID := markerTailStart
+		if tailStartID <= 0 || tailStartID >= len(history) {
+			tailStartID = compactionUserIdx + 1
+		}
+		if compactionUserIdx < 0 {
+			visible = history
+		} else {
+			visible = append(visible, history[compactionUserIdx])
+			visible = append(visible, history[markerIdx])
+			for i := tailStartID; i < len(history); i++ {
+				if i == compactionUserIdx || i == markerIdx {
+					continue
+				}
+				visible = append(visible, history[i])
+			}
+			// Системное сообщение (в начале истории) всегда идёт первым.
+			if len(history) > 0 && history[0].Role == SystemRole {
+				visible = append([]Message{history[0]}, visible...)
+			}
+		}
+	} else {
+		visible = history
+	}
+
+	// Вставляем pinned промпты после системного сообщения.
+	out := make([]Message, 0, len(visible)+len(s.pinned))
 	inserted := false
-	for _, msg := range s.messages {
+	for _, msg := range visible {
 		out = append(out, msg)
 		if !inserted && msg.Role == SystemRole && len(s.pinned) > 0 {
 			for _, p := range s.pinned {
-				if s.hasUserMessageContentLocked(p) {
+				if hasUserMessageContent(visible, p) {
 					continue
 				}
 				out = append(out, Message{
@@ -390,7 +515,7 @@ func (s *Session) GetContextMessages() []Message {
 	}
 	if !inserted && len(s.pinned) > 0 {
 		for _, p := range s.pinned {
-			if s.hasUserMessageContentLocked(p) {
+			if hasUserMessageContent(visible, p) {
 				continue
 			}
 			out = append(out, Message{
@@ -403,10 +528,21 @@ func (s *Session) GetContextMessages() []Message {
 	return out
 }
 
-// hasUserMessageContentLocked возвращает true, если в истории уже есть
-// user-сообщение с таким же контентом. Вызывается только из locked-контекста.
-func (s *Session) hasUserMessageContentLocked(content string) bool {
-	for _, msg := range s.messages {
+// findLastCompactionMarkerLocked возвращает индекс и tail_start_id последнего
+// summary-сообщения компактизации (или -1/0, если его нет).
+func findLastCompactionMarkerLocked(msgs []Message) (markerIdx int, tailStartID int) {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == AssistantRole && msgs[i].Summary {
+			return i, msgs[i].TailStartID
+		}
+	}
+	return -1, 0
+}
+
+// hasUserMessageContent возвращает true, если в msgs уже есть user-сообщение
+// с таким же контентом.
+func hasUserMessageContent(msgs []Message, content string) bool {
+	for _, msg := range msgs {
 		if msg.Role == UserRole && strings.TrimSpace(msg.Content) == strings.TrimSpace(content) {
 			return true
 		}
@@ -627,12 +763,15 @@ type SessionData struct {
 
 // MessageData — сериализуемая версия Message
 type MessageData struct {
-	Role       string                   `json:"role"`
-	Content    string                   `json:"content"`
-	ToolCalls  []ToolCallData           `json:"tool_calls,omitempty"`
-	ToolCallID string                   `json:"tool_call_id,omitempty"`
-	Name       string                   `json:"name,omitempty"`
-	Timestamp  string                   `json:"timestamp,omitempty"`
+	Role        string                   `json:"role"`
+	Content     string                   `json:"content"`
+	ToolCalls   []ToolCallData           `json:"tool_calls,omitempty"`
+	ToolCallID  string                   `json:"tool_call_id,omitempty"`
+	Name        string                   `json:"name,omitempty"`
+	Summary     bool                     `json:"summary,omitempty"`
+	Compacted   bool                     `json:"compacted,omitempty"`
+	TailStartID int                      `json:"tail_start_id,omitempty"`
+	Timestamp   string                   `json:"timestamp,omitempty"`
 }
 
 // ToolCallData — сериализуемая версия ToolCall
@@ -681,11 +820,14 @@ func (s *Session) saveInternal() error {
 	messages := make([]MessageData, len(s.messages))
 	for i, msg := range s.messages {
 		msgData := MessageData{
-			Role:       string(msg.Role),
-			Content:    msg.Content,
-			ToolCallID: msg.ToolCallID,
-			Name:       msg.Name,
-			Timestamp:  msg.Timestamp.Format(time.RFC3339),
+			Role:        string(msg.Role),
+			Content:     msg.Content,
+			ToolCallID:  msg.ToolCallID,
+			Name:        msg.Name,
+			Summary:     msg.Summary,
+			Compacted:   msg.Compacted,
+			TailStartID: msg.TailStartID,
+			Timestamp:   msg.Timestamp.Format(time.RFC3339),
 		}
 		// Сериализуем tool_calls если есть
 		if len(msg.ToolCalls) > 0 {
@@ -767,11 +909,14 @@ func (s *Session) Load() error {
 	for i, msg := range session.Messages {
 		timestamp, _ := time.Parse(time.RFC3339, msg.Timestamp)
 		message := Message{
-			Role:       Role(msg.Role),
-			Content:    msg.Content,
-			ToolCallID: msg.ToolCallID,
-			Name:       msg.Name,
-			Timestamp:  timestamp,
+			Role:        Role(msg.Role),
+			Content:     msg.Content,
+			ToolCallID:  msg.ToolCallID,
+			Name:        msg.Name,
+			Summary:     msg.Summary,
+			Compacted:   msg.Compacted,
+			TailStartID: msg.TailStartID,
+			Timestamp:   timestamp,
 		}
 		// Восстанавливаем tool_calls если есть
 		if len(msg.ToolCalls) > 0 {

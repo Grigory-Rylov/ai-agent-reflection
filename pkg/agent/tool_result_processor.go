@@ -78,15 +78,9 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 
 			a.compactIfNeeded(ctx, session)
 
-			// Восстанавливаем tool calls/results после компактизации
-			history := session.GetHistory()
-			hasLastResult := false
-			if len(history) > 1 {
-				if history[len(history)-2].Role == sess.AssistantRole {
-					hasLastResult = true
-				}
-			}
-			if !hasLastResult {
+			// Восстанавливаем tool calls/results после компактизации, если они
+			// не сохранились в сохранённом хвосте (проверяем видимый контекст).
+			if !a.sessionHasToolResults(session, toolResults) {
 				sessionToolCalls := make([]sess.MsgToolCall, len(toolCalls))
 				for i, tc := range toolCalls {
 					sessionToolCalls[i] = sess.MsgToolCall{
@@ -336,27 +330,11 @@ func (a *agentImpl) compactIfNeededBeforeLLM(ctx context.Context, session *sess.
 	// Компактируем сессию — она уже содержит tool calls/results (добавлены выше)
 	a.compactIfNeeded(ctx, session)
 
-	// После компактизации сессия сброшена, но tool calls/results добавленные до compactIfNeeded
-	// могут быть утеряны. Нужно убедиться, что последние tool results восстановлены.
-	// compactIfNeeded использует tailTurns — если tool messages попали в tail, они сохранятся.
-	// Но если не попали — нужно добавить их заново.
-
-	history := session.GetHistory()
-	historyLen := len(history)
-
-	// Проверяем, есть ли в истории tool message (последний добавленный)
-	hasLastToolResult := false
-	if historyLen > 0 {
-		last := history[historyLen-1]
-		// Tool messages добавляются как user role в сессии
-		if last.Role == sess.UserRole && historyLen > 1 {
-			prev := history[historyLen-2]
-			if prev.Role == sess.AssistantRole {
-				// Это assistant + tool result пара — есть в сессии
-				hasLastToolResult = true
-			}
-		}
-	}
+	// После компактизации tool calls/results, добавленные до compactIfNeeded,
+	// сохраняются в хвосте (tailTurns), но если не попали — их нужно добавить
+	// заново. Проверяем видимый контекст (GetContextMessages), а не позицию в
+	// сырой истории: при append-only компактизации последними идут маркер+summary.
+	hasLastToolResult := a.sessionHasToolResults(session, toolResults)
 
 	// Если tool results утеряны — добавляем их заново
 	if !hasLastToolResult {
@@ -380,6 +358,28 @@ func (a *agentImpl) compactIfNeededBeforeLLM(ctx context.Context, session *sess.
 
 	// Пересобираем messages из обновлённой сессии
 	return a.buildToolResultMessagesFromSession(session)
+}
+
+// sessionHasToolResults возвращает true, если все указанные tool results уже
+// присутствуют в видимом контексте сессии (после компактизации).
+func (a *agentImpl) sessionHasToolResults(session *sess.Session, toolResults []ToolCallResult) bool {
+	if len(toolResults) == 0 {
+		return true
+	}
+	visible := session.GetContextMessages()
+	for _, tr := range toolResults {
+		found := false
+		for _, m := range visible {
+			if m.Role == sess.ToolRole && m.ToolCallID == tr.ToolCallID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // buildToolResultMessagesFromSession пересобирает messages из истории сессии

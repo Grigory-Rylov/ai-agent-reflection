@@ -371,22 +371,9 @@ func (o *Orchestrator) restoreSessionMessages(s *session.Session, messagesJSON s
 		o.debugLog("Resume: failed to parse saved messages: %v", err)
 		return
 	}
-	for _, m := range msgs {
-		switch m.Role {
-		case session.SystemRole:
-			s.UpdateSystemPrompt(m.Content)
-		case session.UserRole:
-			s.AddUserMessage(m.Content)
-		case session.AssistantRole:
-			if len(m.ToolCalls) > 0 {
-				s.AddAssistantMessageWithToolCalls(m.Content, m.ToolCalls)
-			} else {
-				s.AddAssistantMessage(m.Content)
-			}
-		case session.ToolRole:
-			s.AddToolMessage(m.ToolCallID, m.Name, m.Content)
-		}
-	}
+	// Восстанавливаем историю целиком, сохраняя метаданные компактизации
+	// (Summary/Compacted/TailStartID) — маркеры переживают резюм после рестарта.
+	s.RestoreMessages(msgs)
 }
 
 func (o *Orchestrator) isLeafAgent(name string) bool {
