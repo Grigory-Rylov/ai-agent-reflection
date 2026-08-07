@@ -22,9 +22,9 @@ func TestRunAgentBeginEndRootSession(t *testing.T) {
 	orchestrator := NewOrchestrator(OrchestratorConfig{Store: st})
 	peerID := int64(1)
 
-	rootID := orchestrator.beginRootSession("lead", "lead system prompt", "build project", peerID)
-	if rootID == "" {
-		t.Fatal("expected non-empty root session ID")
+	rootID := orchestrator.beginRootSession("lead", "lead system prompt", "build project", peerID, "root-uuid")
+	if rootID != "root-uuid" {
+		t.Fatalf("expected rootID root-uuid, got %q", rootID)
 	}
 
 	sd, err := st.GetAgentSession(rootID)
@@ -53,7 +53,7 @@ func TestRunAgentBeginEndRootSession(t *testing.T) {
 
 func TestRunAgentNoStoreIsNoop(t *testing.T) {
 	orchestrator := NewOrchestrator(OrchestratorConfig{})
-	if id := orchestrator.beginRootSession("lead", "sys", "t", 1); id != "" {
+	if id := orchestrator.beginRootSession("lead", "sys", "t", 1, "root-uuid"); id != "" {
 		t.Errorf("expected empty root ID without store, got %q", id)
 	}
 	orchestrator.endRootSession(1, "") // must not panic
@@ -75,7 +75,7 @@ func TestRunAgentWiresRootIntoSubAgentTool(t *testing.T) {
 		AgentManager: am,
 	})
 
-	a, err := orchestrator.makeSubAgent("lead", "lead prompt", 1)
+	a, _, err := orchestrator.makeSubAgent("lead", "lead prompt", 1)
 	if err != nil {
 		t.Fatalf("makeSubAgent: %v", err)
 	}

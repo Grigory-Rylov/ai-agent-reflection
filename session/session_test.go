@@ -580,3 +580,71 @@ func TestPinnedPromptsPersistence(t *testing.T) {
 		t.Errorf("pinned prompts should persist, got %v", got)
 	}
 }
+
+// ============================================================
+// Тесты SessionID
+// ============================================================
+
+func TestSessionIDGeneration(t *testing.T) {
+	config := DefaultConfig()
+	config.PeerID = 12345
+	s := NewSession(config)
+
+	id := s.GetSessionID()
+	if id == "" {
+		t.Error("session ID should not be empty")
+	}
+}
+
+func TestSessionIDFromConfig(t *testing.T) {
+	config := DefaultConfig()
+	config.PeerID = 12345
+	config.SessionID = "custom-session-id"
+	s := NewSession(config)
+
+	if s.GetSessionID() != "custom-session-id" {
+		t.Errorf("expected 'custom-session-id', got %q", s.GetSessionID())
+	}
+}
+
+func TestSessionIDChangesOnReset(t *testing.T) {
+	config := DefaultConfig()
+	config.PeerID = 12345
+	s := NewSession(config)
+
+	idBefore := s.GetSessionID()
+	s.Reset()
+	idAfter := s.GetSessionID()
+
+	if idBefore == idAfter {
+		t.Error("session ID should change after reset")
+	}
+}
+
+func TestGenerateSessionIDUnique(t *testing.T) {
+	ids := make(map[string]bool)
+	for i := 0; i < 100; i++ {
+		id := generateSessionID("")
+		if ids[id] {
+			t.Errorf("duplicate session ID generated: %s", id)
+		}
+		ids[id] = true
+	}
+}
+
+func TestGenerateSessionIDFormat(t *testing.T) {
+	id := generateSessionID("")
+	if len(id) == 0 {
+		t.Error("session ID should not be empty")
+	}
+	if !strings.Contains(id, "-") {
+		t.Errorf("session ID should contain dashes, got %q", id)
+	}
+}
+
+func TestGenerateSessionIDWithProvided(t *testing.T) {
+	result := generateSessionID("my-id")
+	if result != "my-id" {
+		t.Errorf("expected 'my-id', got %q", result)
+	}
+}

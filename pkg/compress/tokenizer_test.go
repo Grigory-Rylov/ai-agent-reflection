@@ -50,68 +50,6 @@ func (m *mockTokenizer) Name() string {
 }
 
 // ============================================================
-// Test: EstimateWithTokenizer returns correct count when tokenizer available
-// ============================================================
-
-func TestEstimateWithTokenizer_UsesRealTokenizer(t *testing.T) {
-	msgs := []tokenizers.Message{
-		{Role: "user", Content: "Hello world"},
-		{Role: "assistant", Content: "Hi there!"},
-	}
-
-	mock := &mockTokenizer{
-		countMsgTokens: func(messages []tokenizers.Message) (int, error) {
-			return 42, nil
-		},
-	}
-
-	got := EstimateWithTokenizer(mock, msgs)
-	if got != 42 {
-		t.Errorf("EstimateWithTokenizer() = %d, want 42", got)
-	}
-}
-
-// ============================================================
-// Test: fallback to heuristic when tokenizer is nil
-// ============================================================
-
-func TestEstimateWithTokenizer_FallbackToHeuristic(t *testing.T) {
-	msgs := []tokenizers.Message{
-		{Role: "user", Content: "Hello world"},
-		{Role: "assistant", Content: "Hi there!"},
-	}
-
-	got := EstimateWithTokenizer(nil, msgs)
-	want := EstimateMessagesTokensSimple(msgs)
-	if got != want {
-		t.Errorf("EstimateWithTokenizer(nil) = %d, want heuristic %d", got, want)
-	}
-}
-
-// ============================================================
-// Test: fallback to heuristic when tokenizer returns error
-// ============================================================
-
-func TestEstimateWithTokenizer_FallbackOnError(t *testing.T) {
-	msgs := []tokenizers.Message{
-		{Role: "user", Content: "Hello world"},
-		{Role: "assistant", Content: "Hi there!"},
-	}
-
-	mock := &mockTokenizer{
-		countMsgTokens: func(messages []tokenizers.Message) (int, error) {
-			return 0, errors.New("tokenizer unavailable")
-		},
-	}
-
-	got := EstimateWithTokenizer(mock, msgs)
-	want := EstimateMessagesTokensSimple(msgs)
-	if got != want {
-		t.Errorf("EstimateWithTokenizer(err) = %d, want heuristic %d", got, want)
-	}
-}
-
-// ============================================================
 // Test: RealEstimator uses tokenizer for EstimateMessages
 // ============================================================
 
@@ -223,7 +161,7 @@ func TestOverflow_RealTokenizerVsHeuristic(t *testing.T) {
 			}
 
 			heuristicTokens := EstimateMessagesTokensSimple(tt.messages)
-			realTokens := EstimateWithTokenizer(mock, tt.messages)
+			realTokens := NewRealEstimator(mock).EstimateMessages(tt.messages)
 
 			reservedPtr := tt.reserved
 
@@ -329,7 +267,7 @@ func TestCompactor_WithTokenizer(t *testing.T) {
 	}
 
 	llm := &stubCompressor{}
-	c := NewCompactorWithTokenizer(llm, mock)
+	c := NewCompactorWithEstimator(llm, NewRealEstimator(mock))
 
 	// Verify the compactor's estimator uses the real tokenizer
 	msgs := []tokenizers.Message{
@@ -352,23 +290,6 @@ func TestCompactor_WithoutTokenizer(t *testing.T) {
 	want := EstimateMessagesTokensSimple(msgs)
 	if tokens != want {
 		t.Errorf("Compactor estimator returned %d, want heuristic %d", tokens, want)
-	}
-}
-
-// ============================================================
-// Test: EstimateWithTokenizer empty messages
-// ============================================================
-
-func TestEstimateWithTokenizer_EmptyMessages(t *testing.T) {
-	mock := &mockTokenizer{
-		countMsgTokens: func(messages []tokenizers.Message) (int, error) {
-			return 0, nil
-		},
-	}
-
-	got := EstimateWithTokenizer(mock, []tokenizers.Message{})
-	if got != 0 {
-		t.Errorf("EstimateWithTokenizer(empty) = %d, want 0", got)
 	}
 }
 

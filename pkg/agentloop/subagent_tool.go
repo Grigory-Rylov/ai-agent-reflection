@@ -39,6 +39,8 @@ type SubAgentTool struct {
 	ParentAgent     agent.Agent // агент-родитель (для сохранения истории перед запуском ребёнка)
 	AgentSessionID  string      // UUID текущей сессии сабагента
 	Chain           []string    // Цепочка вызовов (список UUID от корня до текущего)
+	SlotManager     *SlotManager
+	Slots           *SlotClient
 }
 
 func (t *SubAgentTool) Name() string {
@@ -203,17 +205,21 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 
 	response, err := a.ProcessMessage(ctx, task, t.PeerID)
 	if err != nil {
+		// Слот освобождаем всегда (даже без Store), иначе утекает. БД/цепочка
+		// чистятся только при наличии Store (для resume).
 		if t.Store != nil {
 			t.saveSessionHistory(a, t.AgentSessionID, task)
-			t.cancelAgentSession()
 		}
+		t.cancelAgentSession()
 		return tools.ToolResult{Success: false, Error: fmt.Sprintf("sub-agent %q failed: %v", name, err)}, nil
 	}
 
 	if t.Store != nil {
 		t.saveSessionHistory(a, t.AgentSessionID, task)
-		t.completeAgentSession()
 	}
+	// KV-cache сохраняется per-response внутри agent_impl (SlotSaver);
+	// здесь только освобождаем слот (erase in-memory + release в пул).
+	t.completeAgentSession()
 
 	return tools.ToolResult{
 		Success: true,
@@ -337,15 +343,41 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 	cfg.EnableCompression = true
 	cfg.MaxToolCalls = 10
 	cfg.AgentName = name
+	cfg.SlotID = -1 // Default: no slot pinning
+	cfg.SlotSave = false
+
+	// Генерируем собственный UUID сессии сабагента. makeSubAgentTool мог
+	// оставить placeholder (родительский ID) — перегенерируем в свежий, чтобы
+	// сабагент получил отдельную сессию и слот, не перетирая данные родителя.
+	// Этот же ID прокидываем в cfg.SessionConfig.SessionID, поэтому
+	// a.GetSession().GetSessionID() совпадает с DB/slot ID — единый идентификатор
+	// сессии (как в главном цикле). Иначе slot-менеджер привяжет слот к одному
+	// ID, а cleanupAgentSession освободит по другому (slot leak).
+	t.AgentSessionID = t.generateUUID()
+	sessionID := t.AgentSessionID
+	cfg.SessionConfig.SessionID = sessionID
+
+	// Назначаем слот через общий хелпер: проверка доступности, LRU-вытеснение
+	// (save+clear), восстановление собственного кэша. cfg.SlotID прокидывается
+	// в agent, пиня каждый LLM-запрос сабагента к его слоту — пока сабагент
+	// жив, серверный KV-cache слота переиспользуется между вызовами инструментов.
+	// SlotSaver сохраняет кэш после каждого ответа LLM (только при slot-save).
+	if t.ModelHolder != nil && t.ModelHolder.GetCurrentSlotSave() {
+		cfg.SlotSave = true
+		if slotID := AssignSessionSlot(t.SlotManager, t.Slots, t.ModelHolder, sessionID, t.Log); slotID >= 0 {
+			cfg.SlotID = slotID
+			cfg.SlotSaver = NewSlotSaver(t.SlotManager, t.Slots, t.ModelHolder, sessionID, t.Log)
+			if t.Log != nil {
+				t.Log.InfoLogf("[SLOT] assigned slot %d to sub-agent %s (session %s)", slotID, name, sessionID)
+			}
+		}
+	}
 
 	a := agent.NewAgent(cfg)
 	a.GetSession(t.PeerID).UpdateSystemPrompt(systemPrompt)
 
-	// Генерируем UUID для сессии сабагента и сохраняем в БД
+	// Сохраняем сессию сабагента и цепочку в БД (sessionID уже сгенерирован выше).
 	if t.Store != nil {
-		sessionID := t.generateUUID()
-		t.AgentSessionID = sessionID
-
 		// Строим цепочку: родительская цепочка + текущая сессия
 		chain := make([]string, len(t.Chain))
 		copy(chain, t.Chain)
@@ -426,6 +458,8 @@ func (t *SubAgentTool) registerSubAgentTool(name string, a agent.Agent) {
 		ParentSessionID: t.AgentSessionID,
 		ParentAgent:     a,
 		Chain:           t.Chain,
+		SlotManager:     t.SlotManager,
+		Slots:           t.Slots,
 	})
 	if inserter, ok := a.(toolInserter); ok {
 		inserter.RegisterTools(subReg)
@@ -538,8 +572,9 @@ func (t *SubAgentTool) saveParentHistory() {
 	}
 }
 
-// completeAgentSession удаляет сессию и «всплывает» цепочку к родителю
+// completeAgentSession удаляет сессию, освобождает слот и «всплывает» цепочку к родителю
 func (t *SubAgentTool) completeAgentSession() {
+	t.cleanupAgentSession()
 	if t.Store == nil || t.AgentSessionID == "" {
 		return
 	}
@@ -547,13 +582,22 @@ func (t *SubAgentTool) completeAgentSession() {
 	t.popChain()
 }
 
-// cancelAgentSession удаляет сессию и «всплывает» цепочку к родителю
+// cancelAgentSession удаляет сессию, освобождает слот и «всплывает» цепочку к родителю
 func (t *SubAgentTool) cancelAgentSession() {
+	t.cleanupAgentSession()
 	if t.Store == nil || t.AgentSessionID == "" {
 		return
 	}
 	t.Store.DeleteAgentSession(t.AgentSessionID)
 	t.popChain()
+}
+
+// cleanupAgentSession освобождает слот сабагента при завершении: удаляет
+// файл KV-cache, очищает серверный слот и возвращает слот в свободный пул.
+// Использует t.AgentSessionID — тот же ID, что был привязан к слоту в createAgent
+// (и к строке в БД), поэтому освобождается именно тот слот.
+func (t *SubAgentTool) cleanupAgentSession() {
+	ReleaseSessionSlot(t.SlotManager, t.Slots, t.ModelHolder, t.AgentSessionID, t.Log)
 }
 
 // popChain удаляет текущую сессию из активной цепочки (возврат к родителю)

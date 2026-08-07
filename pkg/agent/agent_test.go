@@ -528,3 +528,39 @@ func TestWorkingDirNotOverwrittenWhenEmpty(t *testing.T) {
 		t.Errorf("expected tools.WorkingDir unchanged %q, got %q", fakeDefaultDir, tools.WorkingDir)
 	}
 }
+
+func TestBuildBaseRequestJSON_IncludesSlotID(t *testing.T) {
+	a := NewAgent(Config{
+		LlamaServerURL: "http://127.0.0.1:8080",
+		Model:          "test",
+		MaxTokens:      100,
+		SlotID:         2,
+		SlotSave:       true,
+	})
+
+	req := a.buildBaseRequestJSON("test", []Message{
+		{Role: "user", Content: "hello"},
+	}, true)
+
+	if req["slot_id"] != 2 {
+		t.Errorf("expected slot_id 2, got %v", req["slot_id"])
+	}
+}
+
+func TestBuildBaseRequestJSON_NoSlotIDWhenDisabled(t *testing.T) {
+	a := NewAgent(Config{
+		LlamaServerURL: "http://127.0.0.1:8080",
+		Model:          "test",
+		MaxTokens:      100,
+		SlotID:         -1,
+		SlotSave:       false,
+	})
+
+	req := a.buildBaseRequestJSON("test", []Message{
+		{Role: "user", Content: "hello"},
+	}, true)
+
+	if _, exists := req["slot_id"]; exists {
+		t.Error("slot_id should not be present when SlotID is -1")
+	}
+}

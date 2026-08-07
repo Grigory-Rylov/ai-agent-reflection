@@ -7,7 +7,7 @@ import (
 )
 
 // ============================================================
-// Compactor — компакция контекста в стиле opencode
+// Compactor — контекстная компакция в стиле opencode
 // ============================================================
 
 // LLMCompressorInterface — интерфейс для LLM-сжатия.
@@ -15,8 +15,8 @@ type LLMCompressorInterface interface {
 	Compress(ctx context.Context, req *CompressionRequest) (*CompressionResult, error)
 }
 
-// Compactor выполняет компакцию контекста по стратегии opencode:
-// при переполнении контекста старые сообщения суммируются LLM,
+// Compactor выполняет контекстную компакцию в стиле opencode:
+// при переполнении старые сообщения суммируются через LLM,
 // а последние tailTurns ходов сохраняются дословно (tail).
 type Compactor struct {
 	estimator TokenEstimator
@@ -27,6 +27,14 @@ type Compactor struct {
 func NewCompactor(llm LLMCompressorInterface) *Compactor {
 	return &Compactor{
 		estimator: &SimpleEstimator{},
+		llm:       llm,
+	}
+}
+
+// NewCompactorWithEstimator creates a compactor with a custom token estimator.
+func NewCompactorWithEstimator(llm LLMCompressorInterface, estimator TokenEstimator) *Compactor {
+	return &Compactor{
+		estimator: estimator,
 		llm:       llm,
 	}
 }
