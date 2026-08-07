@@ -52,6 +52,33 @@ type BotHandler struct {
 	cancelFuncs    map[int64]context.CancelFunc
 	cancelMu       sync.RWMutex
 	attachmentsDir string
+	// peerProcessors — очередь сообщений для каждого peerID: только одно сообщение
+	// обрабатывается за раз, предотвращает race condition при /clear и других командах.
+	peerProcessors map[int64]*messageProcessor
+	processorsMu   sync.RWMutex
+}
+
+type messageProcessor struct {
+	mu      sync.Mutex
+	active  bool
+	pending chan struct{} // semaphore for single concurrent execution
+}
+
+func (mp *messageProcessor) acquire() {
+	mp.mu.Lock()
+	for mp.active {
+		mp.mu.Unlock()
+		time.Sleep(10 * time.Millisecond)
+		mp.mu.Lock()
+	}
+	mp.active = true
+	mp.mu.Unlock()
+}
+
+func (mp *messageProcessor) release() {
+	mp.mu.Lock()
+	mp.active = false
+	mp.mu.Unlock()
 }
 
 func NewBotHandler(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger.Logger) *BotHandler {
@@ -62,6 +89,7 @@ func NewBotHandler(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger
 		sessions:       make(map[int64]*session.Session),
 		cancelFuncs:    make(map[int64]context.CancelFunc),
 		attachmentsDir: "./attachments",
+		peerProcessors: make(map[int64]*messageProcessor),
 	}
 }
 
@@ -77,7 +105,27 @@ func NewBotHandlerWithPeerID(vkClient *BotClient, aiAgent agentloop.AgentLoop, l
 		modelHolder:    modelHolder,
 		cancelFuncs:    make(map[int64]context.CancelFunc),
 		attachmentsDir: "./attachments",
+		peerProcessors: make(map[int64]*messageProcessor),
 	}
+}
+
+func (h *BotHandler) getOrCreateProcessor(peerID int64) *messageProcessor {
+	h.processorsMu.RLock()
+	if mp, ok := h.peerProcessors[peerID]; ok {
+		h.processorsMu.RUnlock()
+		return mp
+	}
+	h.processorsMu.RUnlock()
+
+	h.processorsMu.Lock()
+	defer h.processorsMu.Unlock()
+	// double-check after write lock
+	if mp, ok := h.peerProcessors[peerID]; ok {
+		return mp
+	}
+	mp := &messageProcessor{}
+	h.peerProcessors[peerID] = mp
+	return mp
 }
 
 func (h *BotHandler) agentNames() []string {
@@ -726,10 +774,16 @@ func (h *BotHandler) handleIncomingMessage(
 	targetPeer int64,
 	fullMsgMap map[int64]VKMessage,
 ) {
+	mp := h.getOrCreateProcessor(msg.PeerID)
+	
 	tools.SetQuestionPeerID(msg.PeerID)
 	fullText := h.buildFullText(&msg, fullMsgMap)
 	logger.DebugToFile("[handler] goroutine: peerID=%d, targetPeer=%d, text=%s",
 		msg.PeerID, targetPeer, truncateStr(fullText, 100))
+
+	defer mp.release()
+	mp.acquire()
+
 	response := h.ProcessMessage(fullText, msg.PeerID)
 	if response == "" {
 		return
