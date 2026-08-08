@@ -61,7 +61,7 @@ func TestPinnedPromptsSurviveCompaction(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	agent.compactIfNeeded(ctx, s)
+	agent.compactIfNeeded(ctx, s, false)
 
 	pinned := s.GetPinned()
 	if len(pinned) != 1 || pinned[0] != "Pin that must survive" {
@@ -93,7 +93,7 @@ func TestSystemPromptAndInstructionsSurviveCompaction(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	agent.compactIfNeeded(ctx, s)
+	agent.compactIfNeeded(ctx, s, false)
 
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("Work in the tests directory"), 0o644); err != nil {
@@ -137,7 +137,7 @@ func TestPinnedPromptsInContextAfterCompaction(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	agent.compactIfNeeded(ctx, s)
+	agent.compactIfNeeded(ctx, s, false)
 
 	apiMessages := agent.convertHistoryToAPIMessages(s.GetContextMessages())
 

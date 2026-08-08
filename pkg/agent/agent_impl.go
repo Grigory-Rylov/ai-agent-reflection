@@ -244,7 +244,7 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 
 	// Проверяем и при необходимости сжимаем контекст (opencode-style)
 	if a.compactor != nil {
-		a.compactIfNeeded(ctx, s)
+		a.compactIfNeeded(ctx, s, true)
 		history = s.GetHistory()
 	}
 
@@ -273,14 +273,17 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 	return a.processStreaming(ctx, apiMessages, s)
 }
 
-// compactIfNeeded выполняет opencode-style компакцию при переполнении контекста
-func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session) {
+// compactIfNeeded выполняет opencode-style компакцию при переполнении контекста.
+// addAutoContinue — если true, добавляет CompactionAutoContinueText после успешной
+// компактизации (для ProcessMessage path); если false — не добавляет (tool loop).
+// Возвращает true если компактизация успешно выполнена (summary не пустой).
+func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session, addAutoContinue bool) bool {
 	history := s.GetHistory()
 
 	visible := a.convertSessionHistory(history)
 	tokensBefore := compress.EstimateMessagesTokensSimple(visible)
 	if !compress.IsOverflowWithLimits(tokensBefore, a.config.MaxTokens, a.config.ModelLimitInput, a.config.CompactionReserved) {
-		return
+		return false
 	}
 
 	tailTurns := a.config.TailTurns
@@ -288,34 +291,44 @@ func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session) {
 		tailTurns = 2
 	}
 
-	// Компактируем по сырой истории (без FilterCompacted): TailStartID из
-	// select() должен совпадать с индексами session.messages для MarkCompaction.
 	result, err := a.compactor.CompactWithOpenCode(ctx, a.convertSessionHistoryRaw(history), a.config.MaxTokens, tailTurns, a.config.PreserveRecentTokens)
 	if err != nil {
 		a.debugLog.Warn("LLM compaction failed: %v, falling back to aggressive head pruning", err)
 
-		// Fallback: суммаризация не уместилась в контекст — агрессивно прораним
-		// head и добавим минимальный placeholder вместо LLM-суммаризации.
 		fbResult := a.compactionFallback(history, tailTurns, a.config.MaxTokens)
 		if fbResult != nil {
-			a.debugLog.Info("Compaction fallback: marked %d head messages as compacted", len(fbResult.Head))
-			for i := 0; i < fbResult.TailStartID && i < len(s.GetHistory()); i++ {
-				msg := s.GetHistory()[i]
-				if msg.Role != session.SystemRole {
-					s.MarkMessageCompacted(i, compress.PRUNED_OUTPUT_PLACEHOLDER)
-				}
-			}
-			const compactionFallbackSummary = "## Goal\n- [context compacted — summary unavailable]\n\n## Constraints & Preferences\n- (none)\n\n## Progress\n### Done\n- (compact failed)\n\n### In Progress\n- (truncated)\n\n### Blocked\n- context overflow during summarization\n\n## Key Decisions\n- (lost during compaction fallback)\n\n## Next Steps\n- continue current task\n\n## Critical Context\n- [compaction summary could not be generated]\n\n## Relevant Files\n- (none)"
+			a.markCompactedHead(s, fbResult.TailStartID)
 			s.MarkCompaction(fbResult.TailStartID, compactionFallbackSummary)
 		}
-		return
+		return false
 	}
 
 	if result.Summary == "" {
-		return
+		return false
 	}
+
 	s.MarkCompaction(result.TailStartID, result.Summary)
+
+	if addAutoContinue && shouldAddAutoContinue(s) {
+		s.AddUserMessage(tokenizers.CompactionAutoContinueText)
+	}
+
+	return true
 }
+
+// markCompactedHead помечает головные сообщения сессии как compacted.
+func (a *agentImpl) markCompactedHead(s *session.Session, tailStartID int) {
+	for i := 0; i < tailStartID && i < len(s.GetHistory()); i++ {
+		msg := s.GetHistory()[i]
+		if msg.Role != session.SystemRole {
+			s.MarkMessageCompacted(i, compress.PRUNED_OUTPUT_PLACEHOLDER)
+		}
+	}
+	a.debugLog.Info("Compaction fallback: marked %d head messages as compacted", tailStartID)
+}
+
+// compactionFallbackSummary — placeholder summary когда LLM-суммаризация не удалась.
+const compactionFallbackSummary = "## Goal\n- [context compacted — summary unavailable]\n\n## Constraints & Preferences\n- (none)\n\n## Progress\n### Done\n- (compact failed)\n\n### In Progress\n- (truncated)\n\n### Blocked\n- context overflow during summarization\n\n## Key Decisions\n- (lost during compaction fallback)\n\n## Next Steps\n- continue current task\n\n## Critical Context\n- [compaction summary could not be generated]\n\n## Relevant Files\n- (none)"
 
 // convertSessionHistory конвертирует историю сессии в tokenizers.Message
 // Tool call аргументы добавляются к контенту для корректной оценки токенов

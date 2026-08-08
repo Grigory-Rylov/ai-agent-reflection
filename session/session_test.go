@@ -648,3 +648,196 @@ func TestGenerateSessionIDWithProvided(t *testing.T) {
 		t.Errorf("expected 'my-id', got %q", result)
 	}
 }
+
+// ============================================================
+// Тесты Pinned + MarkCompaction — pinned переживают компактизацию
+// ============================================================
+
+func TestPinnedAfterMarkCompaction(t *testing.T) {
+	config := DefaultConfig()
+	config.PeerID = 12345
+	config.SystemPrompt = "You are helpful."
+	s := NewSession(config)
+
+	// Добавляем pinned и историю
+	s.AddPinned("Always answer in Russian")
+	s.AddUserMessage("Hello")
+	s.AddAssistantMessage("Hi there!")
+	s.AddUserMessage("How are you?")
+	s.AddAssistantMessage("I'm fine, thanks!")
+
+	// Маркируем компактизацию (tail начинается с индекса 4)
+	tailStartID := 4
+	s.MarkCompaction(tailStartID, "Earlier: user said hello and how are you")
+
+	msgs := s.GetContextMessages()
+
+	// system, pinned, compaction-user, summary, ...tail...
+	foundPinned := false
+	for _, msg := range msgs {
+		if msg.Role == UserRole && msg.Content == "Always answer in Russian" {
+			foundPinned = true
+			break
+		}
+	}
+	if !foundPinned {
+		t.Errorf("pinned prompt should be in context messages after compaction, got: %v", msgs)
+	}
+}
+
+func TestPinnedAfterMarkCompactionOrder(t *testing.T) {
+	config := DefaultConfig()
+	config.PeerID = 12345
+	config.SystemPrompt = "You are helpful."
+	s := NewSession(config)
+
+	s.AddPinned("Pin A")
+	s.AddPinned("Pin B")
+	s.AddUserMessage("Msg 1")
+	s.AddAssistantMessage("Reply 1")
+	s.AddUserMessage("Msg 2")
+
+	// TailStartID=5 — original tail не попадает в контекст, тестируем порядок pinned + marker
+	tailStartID := 5
+	s.MarkCompaction(tailStartID, "Summary of earlier conversation")
+
+	msgs := s.GetContextMessages()
+
+	// system(0), pin A(1), pin B(2), compaction-user(3), summary(4), Msg 2(5)
+	if len(msgs) < 5 {
+		t.Fatalf("expected at least 5 context messages, got %d", len(msgs))
+	}
+
+	if msgs[0].Role != SystemRole {
+		t.Errorf("first message should be system, got %v", msgs[0])
+	}
+
+	pinIndices := []int{}
+	for i, msg := range msgs {
+		if msg.Role == UserRole && (msg.Content == "Pin A" || msg.Content == "Pin B") {
+			pinIndices = append(pinIndices, i)
+		}
+	}
+	if len(pinIndices) != 2 {
+		t.Errorf("expected 2 pinned messages in context, got %d", len(pinIndices))
+	}
+
+	// Pinned должны идти после system (index 0), до compaction marker
+	for _, idx := range pinIndices {
+		if idx > 3 {
+			t.Errorf("pinned message at index %d should come before compaction marker", idx)
+		}
+	}
+}
+
+func TestPinnedAfterMultipleMarkCompactions(t *testing.T) {
+	config := DefaultConfig()
+	config.PeerID = 12345
+	config.SystemPrompt = "You are helpful."
+	s := NewSession(config)
+
+	s.AddPinned("Stay on topic")
+	s.AddUserMessage("First question")
+	s.AddAssistantMessage("First answer")
+
+	// Первая компактизация
+	tailStartID := 2
+	s.MarkCompaction(tailStartID, "Summary 1")
+
+	s.AddUserMessage("Second question")
+	s.AddAssistantMessage("Second answer")
+
+	// Вторая компактизация (tail с нового хвоста)
+	msgsBefore := s.GetHistory()
+	tailStartID2 := len(msgsBefore) - 2
+	s.MarkCompaction(tailStartID2, "Summary 2")
+
+	msgs := s.GetContextMessages()
+
+	foundPinned := false
+	for _, msg := range msgs {
+		if msg.Role == UserRole && msg.Content == "Stay on topic" {
+			foundPinned = true
+			break
+		}
+	}
+	if !foundPinned {
+		t.Errorf("pinned prompt should survive multiple compactions, got: %v", msgs)
+	}
+}
+
+func TestPinnedNotDuplicatedAfterMarkCompaction(t *testing.T) {
+	config := DefaultConfig()
+	config.PeerID = 12345
+	config.SystemPrompt = "You are helpful."
+	s := NewSession(config)
+
+	promptText := "Always answer in Russian"
+	s.AddPinned(promptText)
+	s.AddUserMessage(promptText) // то же самое как обычное сообщение
+	s.AddAssistantMessage("Ok")
+
+	// Tail начинается после pinned message (индекс 3)
+	tailStartID := 3
+	s.MarkCompaction(tailStartID, "Summary")
+
+	msgs := s.GetContextMessages()
+
+	count := 0
+	for _, msg := range msgs {
+		if msg.Role == UserRole && msg.Content == promptText {
+			count++
+		}
+	}
+	// Pinned не дублируется, т.к. исходное сообщение скрыто компактизацией (compacted=true)
+	// и hasUserMessageContent проверяет только видимые сообщения
+	if count != 1 {
+		t.Errorf("pinned prompt should appear exactly once after compaction (hidden original), got %d occurrences: %v", count, msgs)
+	}
+}
+
+func TestPinnedWithCompactedMessagesInHistory(t *testing.T) {
+	config := DefaultConfig()
+	config.PeerID = 12345
+	config.SystemPrompt = "You are helpful."
+	s := NewSession(config)
+
+	s.AddPinned("Be concise")
+	s.AddUserMessage("Long question...")
+	s.AddAssistantMessage("Long answer...")
+	s.AddUserMessage("Follow up")
+	s.AddAssistantMessage("Response to follow up")
+
+	tailStartID := 2
+	s.MarkCompaction(tailStartID, "Earlier conversation summary")
+
+	history := s.GetHistory()
+	compactedCount := 0
+	for _, msg := range history {
+		if msg.Compacted {
+			compactedCount++
+		}
+	}
+	if compactedCount < 1 {
+		t.Errorf("expected at least 1 compacted message in raw history, got %d", compactedCount)
+	}
+
+	msgs := s.GetContextMessages()
+
+	foundPinned := false
+	for _, msg := range msgs {
+		if msg.Role == UserRole && msg.Content == "Be concise" {
+			foundPinned = true
+			break
+		}
+	}
+	if !foundPinned {
+		t.Error("pinned should be in context messages when history has compacted messages")
+	}
+
+	for _, msg := range msgs {
+		if msg.Compacted {
+			t.Errorf("context messages should not include compacted messages, got: %v", msg)
+		}
+	}
+}

@@ -85,7 +85,7 @@ func TestRepeatedCompaction_TailStartIDAlignment(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	agent.compactIfNeeded(ctx, s)
+	agent.compactIfNeeded(ctx, s, false)
 
 	histAfterFirst := s.GetHistory()
 	firstMarker := findLastSummaryIndex(t, histAfterFirst)
@@ -103,7 +103,7 @@ func TestRepeatedCompaction_TailStartIDAlignment(t *testing.T) {
 	}
 
 	// Повторная компактизация
-	agent.compactIfNeeded(ctx, s)
+	agent.compactIfNeeded(ctx, s, false)
 
 	hist := s.GetHistory()
 
@@ -152,12 +152,12 @@ func TestRepeatedCompaction_RawIndexAlignment(t *testing.T) {
 		s.AddUserMessage(bigUserMsg(i))
 		s.AddAssistantMessage(bigAssistantMsg(i))
 	}
-	agent.compactIfNeeded(context.Background(), s)
+	agent.compactIfNeeded(context.Background(), s, false)
 	for i := 8; i < 14; i++ {
 		s.AddUserMessage(bigUserMsg(i))
 		s.AddAssistantMessage(bigAssistantMsg(i))
 	}
-	agent.compactIfNeeded(context.Background(), s)
+	agent.compactIfNeeded(context.Background(), s, false)
 
 	history := s.GetHistory()
 	raw := agent.convertSessionHistoryRaw(history)

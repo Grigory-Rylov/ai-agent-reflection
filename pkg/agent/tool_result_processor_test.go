@@ -400,7 +400,6 @@ func TestShouldAddAutoContinue_GuardWorks(t *testing.T) {
 		t.Error("expected true: model responded to previous auto-continue")
 	}
 }
-}
 
 // countUserMessages возвращает количество user-сообщений с указанным контентом.
 func countUserMessages(msgs []sess.Message, content string) int {

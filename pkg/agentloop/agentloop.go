@@ -915,6 +915,13 @@ func (al *agentLoop) checkAndCompressOpenCode(ctx context.Context, sess *session
 
 	al.applyOpenCodeCompactResult(sess, result)
 
+	// Auto-continuation: после авто-компактизации добавляем синтетическое
+	// user-сообщение (как в opencode compaction.ts:444-526), чтобы цикл агента
+	// продолжался автоматически после инъекции summary.
+	if result.Summary != "" {
+		sess.AddUserMessage(tokenizers.CompactionAutoContinueText)
+	}
+
 	// After compaction, the KV-cache in the slot is stale: history was rewritten,
 	// so cached prompt tokens no longer match. Invalidate the slot fully —
 	// delete the cache file and clear the server slot — then release it in the

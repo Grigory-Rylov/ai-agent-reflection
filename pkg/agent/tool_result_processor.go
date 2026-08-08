@@ -76,7 +76,7 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 			fmt.Printf(prefix+"[OPENCODE-COMPACT] Reactive overflow recovery for peer %d\n", session.GetPeerID())
 			logger.DebugToFile(prefix+"[OPENCODE-COMPACT] Peer %d: Reactive overflow recovery, compacting", session.GetPeerID())
 
-			a.compactIfNeeded(ctx, session)
+			a.compactIfNeeded(ctx, session, false)
 
 			// Восстанавливаем tool calls/results после компактизации, если они
 			// не сохранились в сохранённом хвосте (проверяем видимый контекст).
@@ -310,7 +310,6 @@ func (a *agentImpl) buildToolResultMessages(originalMessages []Message, assistan
 
 // compactIfNeededBeforeLLM проверяет, не переполнит ли текущий набор сообщений контекст.
 // Если да — компактирует сессию и пересобирает messages (сохраняя tool calls/results).
-// Опционально, проверяет не переполнит ли context — если да, выполняет компакцию.
 func (a *agentImpl) compactIfNeededBeforeLLM(ctx context.Context, session *sess.Session, messages []Message, assistantContent string, toolCalls []ToolCall, toolResults []ToolCallResult) []Message {
 	tokenMessages := make([]tokenizers.Message, len(messages))
 	for i, m := range messages {
@@ -336,12 +335,11 @@ func (a *agentImpl) compactIfNeededBeforeLLM(ctx context.Context, session *sess.
 		session.GetPeerID(), tokens, a.config.MaxTokens)
 
 	// Компактируем сессию — она уже содержит tool calls/results (добавлены выше)
-	a.compactIfNeeded(ctx, session)
+	a.compactIfNeeded(ctx, session, false)
 
 	// После компактизации tool calls/results, добавленные до compactIfNeeded,
 	// сохраняются в хвосте (tailTurns), но если не попали — их нужно добавить
-	// заново. Проверяем видимый контекст (GetContextMessages), а не позицию в
-	// сырой истории: при append-only компактизации последними идут маркер+summary.
+	// заново. Проверяем видимый контекст (GetContextMessages).
 	hasLastToolResult := a.sessionHasToolResults(session, toolResults)
 
 	// Если tool results утеряны — добавляем их заново

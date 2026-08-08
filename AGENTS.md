@@ -52,8 +52,9 @@
 - Grouped with blank lines between groups
 
 ### Logging
-- `[TOOL] Call:` / `[TOOL] Result:` for tool calls (brief, no full content)
-- `fmt.Printf` for console, thinking callback for VK thinking_peer_id
+- **Log file: `debug.log`** — все логи агента (tool calls, LLM запросы/ответы, ошибки). Всегда смотри сюда первым делом при расследовании проблем.
+- `[TOOL] Call:` / `[TOOL] Result:` для tool вызовов (кратко, без полного контента)
+- `fmt.Printf` в консоль, thinking callback → VK thinking_peer_id
 
 ## Tools system
 
@@ -72,4 +73,9 @@ type Tool interface {
     Schema() map[string]interface{}
     Execute(ctx context.Context, inputs map[string]string) (ToolResult, error)
 }
+
+## Git workflow
+
+### Commits
+- **NEVER commit changes without explicit user permission** — always ask before committing
 ```

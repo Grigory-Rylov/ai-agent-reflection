@@ -52,6 +52,11 @@ type BotHandler struct {
 	cancelFuncs    map[int64]context.CancelFunc
 	cancelMu       sync.RWMutex
 	attachmentsDir string
+	// peerProcessors — per-peer mutex для сериализации обработки сообщений.
+	// Когда агент занят, новые сообщения от того же peerID встают в очередь и ждут
+	// завершения текущей задачи без отмены контекста.
+	peerProcessors     map[int64]*sync.Mutex
+	peerProcessorsMu   sync.RWMutex
 }
 
 func NewBotHandler(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger.Logger) *BotHandler {
@@ -61,6 +66,7 @@ func NewBotHandler(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger
 		log:            log,
 		sessions:       make(map[int64]*session.Session),
 		cancelFuncs:    make(map[int64]context.CancelFunc),
+		peerProcessors: make(map[int64]*sync.Mutex),
 		attachmentsDir: "./attachments",
 	}
 }
@@ -76,6 +82,7 @@ func NewBotHandlerWithPeerID(vkClient *BotClient, aiAgent agentloop.AgentLoop, l
 		thinkingPeerID: thinkingPeerID,
 		modelHolder:    modelHolder,
 		cancelFuncs:    make(map[int64]context.CancelFunc),
+		peerProcessors: make(map[int64]*sync.Mutex),
 		attachmentsDir: "./attachments",
 	}
 }
@@ -110,6 +117,7 @@ func ParseAgentHashMention(text string, knownNames []string) (agentName string, 
 
 func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	h.ensureSession(peerID)
+	mu := h.getPeerMutex(peerID)
 
 	command := extractCommand(message)
 
@@ -125,32 +133,15 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 		logger.DebugToFile("[ProcessMessage] HasPendingQuestion=false for peer %d, command=%s", peerID, truncateStr(command, 100))
 	}
 
-	agentName, task := ParseAgentHashMention(command, h.agentNames())
-	if agentName != "" {
-		if h.log != nil {
-			h.log.InfoLogf("Agent #%s invoked by peer %d with task: %s", agentName, peerID, truncateStr(task, 100))
-		}
+	mu.Lock()
+	defer mu.Unlock()
 
-		if task == "" {
-			return fmt.Sprintf("Укажите задачу для #%s. Например: #%s создай простой HTTP сервер", agentName, agentName)
-		}
-
-		if h.orchestrator != nil {
-			ctx, cancel := context.WithCancel(context.Background())
-			h.setCancelFunc(peerID, cancel)
-			defer h.clearCancelFunc(peerID)
-			response, err := h.orchestrator.RunAgent(ctx, agentName, task, peerID)
-			if err != nil {
-				if h.log != nil {
-					h.log.ErrorLogf("Orchestrator error for #%s: %v", agentName, err)
-				}
-				return fmt.Sprintf("❌ Ошибка при выполнении задачи через #%s: %v", agentName, err)
-			}
-			return response
-		}
-
-		message = fmt.Sprintf("[Задача для #%s]\n\n%s", agentName, task)
-	}
+	h.clearCancelFunc(peerID)
+	ctx, cancel := context.WithCancel(context.Background())
+	h.cancelMu.Lock()
+	h.cancelFuncs[peerID] = cancel
+	h.cancelMu.Unlock()
+	defer h.clearCancelFunc(peerID)
 
 	if strings.HasPrefix(command, "/") {
 		result := h.handleCommand(command, peerID)
@@ -163,6 +154,56 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 		return fmt.Sprintf("Неизвестная команда: %s. Напишите /help для списка команд.", command)
 	}
 
+	if agentName, task := ParseAgentHashMention(command, h.agentNames()); agentName != "" {
+		if h.log != nil {
+			h.log.InfoLogf("Agent #%s invoked by peer %d with task: %s", agentName, peerID, truncateStr(task, 100))
+		}
+
+		if task == "" {
+			return fmt.Sprintf("Укажите задачу для #%s. Например: #%s создай простой HTTP сервер", agentName, agentName)
+		}
+
+		if h.orchestrator != nil {
+			response, err := h.orchestrator.RunAgent(ctx, agentName, task, peerID)
+			if err != nil {
+				if errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "context canceled") {
+					return ""
+				}
+				if h.log != nil {
+					h.log.ErrorLogf("Orchestrator error for #%s: %v", agentName, err)
+				}
+				return fmt.Sprintf("❌ Ошибка при выполнении задачи через #%s: %v", agentName, err)
+			}
+			return response
+		}
+
+		message = fmt.Sprintf("[Задача для #%s]\n\n%s", agentName, task)
+	} else {
+		s := h.aiAgent.GetSession(peerID)
+		if s != nil && s.IsLoopDetected() {
+			alert := s.GetLoopAlertMessage()
+			if alert != "" {
+				message = "[LOOP DETECTED] " + alert + "\n\n" + message
+			}
+		}
+
+		response, err := h.aiAgent.ProcessMessage(ctx, message, peerID)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				if h.log != nil {
+					h.log.InfoLogf("AI Agent request canceled for peer %d", peerID)
+				}
+				return ""
+			}
+			if h.log != nil {
+				h.log.ErrorLogf("AI Agent error: %v", err)
+			}
+			return fmt.Sprintf("❌ Ошибка: %v", err)
+		}
+
+		return response
+	}
+
 	s := h.aiAgent.GetSession(peerID)
 	if s != nil && s.IsLoopDetected() {
 		alert := s.GetLoopAlertMessage()
@@ -171,9 +212,6 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 		}
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	h.setCancelFunc(peerID, cancel)
-	defer h.clearCancelFunc(peerID)
 	response, err := h.aiAgent.ProcessMessage(ctx, message, peerID)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -191,6 +229,27 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	return response
 }
 
+// getPeerMutex возвращает mutex для сериализации обработки сообщений одного peerID.
+// Если для peerID ещё нет мьютекса — создаёт новый. Обеспечивает безопасную работу
+// нескольких goroutine через sync.Map паттерн с RWMutex.
+func (h *BotHandler) getPeerMutex(peerID int64) *sync.Mutex {
+	h.peerProcessorsMu.RLock()
+	mu, ok := h.peerProcessors[peerID]
+	h.peerProcessorsMu.RUnlock()
+	if ok {
+		return mu
+	}
+
+	h.peerProcessorsMu.Lock()
+	defer h.peerProcessorsMu.Unlock()
+	if mu, ok = h.peerProcessors[peerID]; ok {
+		return mu
+	}
+	mu = &sync.Mutex{}
+	h.peerProcessors[peerID] = mu
+	return mu
+}
+
 func extractCommand(message string) string {
 	message = strings.TrimSpace(message)
 
@@ -206,15 +265,17 @@ func extractCommand(message string) string {
 }
 
 func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, timeout time.Duration) string {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	h.setCancelFunc(peerID, cancel)
-	defer h.clearCancelFunc(peerID)
-
 	h.ensureSession(peerID)
+	mu := h.getPeerMutex(peerID)
 
 	command := extractCommand(message)
 
-	if strings.HasPrefix(command, "/") {
+	if tools.HasPendingQuestion(peerID) {
+		logger.DebugToFile("[ProcessMessageWithTimeout] HasPendingQuestion=true for peer %d, command=%s", peerID, truncateStr(command, 100))
+		if tools.ResolvePendingQuestion(peerID, command) {
+			return ""
+		}
+	} else if strings.HasPrefix(command, "/") {
 		result := h.handleCommand(command, peerID)
 		if result != "" {
 			return result
@@ -224,6 +285,16 @@ func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, tim
 		}
 		return fmt.Sprintf("Неизвестная команда: %s. Напишите /help для списка команд.", command)
 	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	h.clearCancelFunc(peerID)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	h.cancelMu.Lock()
+	h.cancelFuncs[peerID] = cancel
+	h.cancelMu.Unlock()
+	defer h.clearCancelFunc(peerID)
 
 	s := h.aiAgent.GetSession(peerID)
 	if s != nil && s.IsLoopDetected() {
@@ -538,7 +609,8 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 		return fmt.Sprintf("Ошибка: не удалось получить абсолютный путь: %v", err)
 	}
 
-	h.cancelActiveRequest(peerID)
+	// Очередь гарантирует что этот код выполняется только когда предыдущий запрос завершён.
+	// cancelActiveRequest не нужен — контекст уже свободен (или отменён сам по себе).
 	tools.UnregisterPendingQuestion(peerID)
 	h.aiAgent.ResetSession(peerID)
 	tools.ClearGrants(peerID)
@@ -608,8 +680,8 @@ func (h *BotHandler) cancelActiveRequest(peerID int64) {
 func (h *BotHandler) setCancelFunc(peerID int64, cancel context.CancelFunc) {
 	h.cancelMu.Lock()
 	defer h.cancelMu.Unlock()
-	if cancel, ok := h.cancelFuncs[peerID]; ok {
-		cancel()
+	if prev, ok := h.cancelFuncs[peerID]; ok {
+		prev()
 	}
 	h.cancelFuncs[peerID] = cancel
 }
