@@ -292,12 +292,25 @@ func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session) {
 	// select() должен совпадать с индексами session.messages для MarkCompaction.
 	result, err := a.compactor.CompactWithOpenCode(ctx, a.convertSessionHistoryRaw(history), a.config.MaxTokens, tailTurns, a.config.PreserveRecentTokens)
 	if err != nil {
-		a.debugLog.Warn("Compaction skipped: %v", err)
+		a.debugLog.Warn("LLM compaction failed: %v, falling back to aggressive head pruning", err)
+
+		// Fallback: суммаризация не уместилась в контекст — агрессивно прораним
+		// head и добавим минимальный placeholder вместо LLM-суммаризации.
+		fbResult := a.compactionFallback(history, tailTurns, a.config.MaxTokens)
+		if fbResult != nil {
+			a.debugLog.Info("Compaction fallback: marked %d head messages as compacted", len(fbResult.Head))
+			for i := 0; i < fbResult.TailStartID && i < len(s.GetHistory()); i++ {
+				msg := s.GetHistory()[i]
+				if msg.Role != session.SystemRole {
+					s.MarkMessageCompacted(i, compress.PRUNED_OUTPUT_PLACEHOLDER)
+				}
+			}
+			const compactionFallbackSummary = "## Goal\n- [context compacted — summary unavailable]\n\n## Constraints & Preferences\n- (none)\n\n## Progress\n### Done\n- (compact failed)\n\n### In Progress\n- (truncated)\n\n### Blocked\n- context overflow during summarization\n\n## Key Decisions\n- (lost during compaction fallback)\n\n## Next Steps\n- continue current task\n\n## Critical Context\n- [compaction summary could not be generated]\n\n## Relevant Files\n- (none)"
+			s.MarkCompaction(fbResult.TailStartID, compactionFallbackSummary)
+		}
 		return
 	}
 
-	// Не сбрасываем сессию (модель opencode): head помечается как compacted,
-	// tail сохраняется через tail_start_id, GetContextMessages переупорядочивает.
 	if result.Summary == "" {
 		return
 	}
@@ -338,6 +351,25 @@ func (a *agentImpl) convertSessionHistoryRaw(history []session.Message) []tokeni
 func (a *agentImpl) ResetSession(peerID int64) {
 	s := a.getSession(peerID)
 	s.Reset()
+}
+
+// compactionFallback возвращает SelectResult для агрессивного проранинга head,
+// когда LLM-суммаризация не уместилась в контекст. Использует тот же select(),
+// чтобы сохранить tail и максимально сократить head.
+func (a *agentImpl) compactionFallback(history []session.Message, tailTurns int, maxTokens int) *compress.SelectResult {
+	if len(history) == 0 {
+		return nil
+	}
+
+	raw := a.convertSessionHistoryRaw(history)
+	budget := compress.PreserveRecentBudget(maxTokens, a.config.PreserveRecentTokens)
+	selected := compress.SelectMessages(raw, tailTurns, budget)
+
+	if selected.TailStartID <= 0 || len(selected.Head) == 0 {
+		return nil
+	}
+
+	return &selected
 }
 
 // GetSession возвращает сессию пользователя

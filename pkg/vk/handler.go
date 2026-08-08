@@ -539,6 +539,7 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 	}
 
 	h.cancelActiveRequest(peerID)
+	tools.UnregisterPendingQuestion(peerID)
 	h.aiAgent.ResetSession(peerID)
 	tools.ClearGrants(peerID)
 	if h.orchestrator != nil {

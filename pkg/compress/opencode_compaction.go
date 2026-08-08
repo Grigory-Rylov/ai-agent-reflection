@@ -86,6 +86,11 @@ type SelectResult struct {
 	TailStartID int                  // индекс первого сообщения хвоста
 }
 
+// PreserveRecentBudget вычисляет бюджет для сохранения последних сообщений.
+func PreserveRecentBudget(maxTokens int, preserveRecent *int) int {
+	return preserveRecentBudget(maxTokens, preserveRecent)
+}
+
 // preserveRecentBudget вычисляет бюджет для сохранения последних сообщений.
 func preserveRecentBudget(maxTokens int, preserveRecent *int) int {
 	if preserveRecent != nil && *preserveRecent > 0 {

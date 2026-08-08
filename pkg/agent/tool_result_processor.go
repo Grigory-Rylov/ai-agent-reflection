@@ -98,15 +98,23 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 				}
 			}
 
+			// Авто-продолжение после реактивной компактизации при переполнении.
+			if shouldAddAutoContinue(session) {
+				session.AddUserMessage(tokenizers.CompactionOverflowContinueText)
+			}
+
 			messages = a.buildToolResultMessagesFromSession(session)
 
 			// Повторный запрос после компактизации
 			responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err = a.streamAndCollect(ctx, streamConfig, messages)
 			if err != nil {
-				// Если после реактивной компактизации снова ошибка — это терминальная
-				prefix := a.agentPrefix()
-				fmt.Printf(prefix+"[ERROR] Context overflow after reactive compaction: %v\n", err)
-				return "", fmt.Errorf("context overflow after compaction: %w", err)
+				err = a.handleOverflowAfterCompaction(ctx, session, streamConfig, &messages, &err, &responseText, &reasoningText, &finishReason, &streamToolCalls, &promptTokens, &completionTokens)
+				if err != nil {
+					// Терминальная ошибка — даже pruning не помог
+					prefix := a.agentPrefix()
+					fmt.Printf(prefix+"[ERROR] Context overflow after reactive compaction: %v\n", err)
+					return "", fmt.Errorf("context overflow after compaction: %w", err)
+				}
 			}
 		} else {
 			return "", err
@@ -382,8 +390,119 @@ func (a *agentImpl) sessionHasToolResults(session *sess.Session, toolResults []T
 	return true
 }
 
+// shouldAddAutoContinue возвращает true, если в последних сообщениях сессии
+// нет auto-continue (защита от дублирования при повторной компактизации).
+func shouldAddAutoContinue(session *sess.Session) bool {
+	history := session.GetHistory()
+
+	// Find last auto-continue message
+	autoContinueIdx := -1
+	for i := len(history) - 1; i >= 0; i-- {
+		m := history[i]
+		if m.Role == sess.UserRole && (m.Content == tokenizers.CompactionAutoContinueText ||
+			m.Content == tokenizers.CompactionOverflowContinueText) {
+			autoContinueIdx = i
+			break
+		}
+	}
+
+	// No auto-continue in history → safe to add
+	if autoContinueIdx < 0 {
+		return true
+	}
+
+	// Check for any non-summary assistant response after the auto-continue.
+	// If model responded, it's safe to add a new one. Otherwise — duplicate.
+	for j := autoContinueIdx + 1; j < len(history); j++ {
+		m := history[j]
+		if m.Role == sess.AssistantRole && !m.Summary {
+			return true
+		}
+	}
+
+	return false
+}
+
 // buildToolResultMessagesFromSession пересобирает messages из истории сессии
 // после компактизации.
 func (a *agentImpl) buildToolResultMessagesFromSession(session *sess.Session) []Message {
 	return a.convertHistoryToAPIMessages(session.GetContextMessages())
+}
+
+// handleOverflowAfterCompaction обрабатывает повторный overflow после
+// реактивной компактизации: применяет агрессивный pruning и делает retry.
+// Возвращает nil, если retry удался (результат записан в указатели).
+// Возвращает ошибку, если терминальная ситуация.
+func (a *agentImpl) handleOverflowAfterCompaction(
+	ctx context.Context,
+	session *sess.Session,
+	config StreamingConfig,
+	messages *[]Message,
+	errPtr *error,
+	responseText *string,
+	reasoningText *string,
+	finishReason *string,
+	toolCalls *[]ToolCall,
+	promptTokens *int,
+	completionTokens *int,
+) error {
+	err := *errPtr
+	if !IsContextOverflowError(err) || a.compactor == nil {
+		return err
+	}
+
+	prefix := a.agentPrefix()
+	fmt.Printf("%s[OPENCODE-COMPACT] Aggressive pruning after overflow post-compaction\n", prefix)
+
+	prunedCount := a.applyAggressivePruning(session)
+	if prunedCount == 0 {
+		// Если pruning ничего не обрезал — терминальная ошибка
+		fmt.Printf("%s[ERROR] Context overflow after reactive compaction and pruning: %v\n", prefix, err)
+		return fmt.Errorf("context overflow after compaction and aggressive pruning: %w", err)
+	}
+
+	fmt.Printf("%s[OPENCODE-COMPACT] Pruned %d tool outputs, retrying\n", prefix, prunedCount)
+
+	// Пересобираем messages и пробуем ещё раз
+	*messages = a.buildToolResultMessagesFromSession(session)
+	*responseText, *reasoningText, *finishReason, *toolCalls, *promptTokens, *completionTokens, err = a.streamAndCollect(ctx, config, *messages)
+	if err != nil {
+		return fmt.Errorf("context overflow after compaction and aggressive pruning: %w", err)
+	}
+
+	*errPtr = nil
+	return nil
+}
+
+// applyAggressivePruning применяет pruning к истории сессии.
+// Возвращает количество обрезанных сообщений.
+func (a *agentImpl) applyAggressivePruning(session *sess.Session) int {
+	history := session.GetHistory()
+	raw := make([]tokenizers.Message, len(history))
+
+	for i, msg := range history {
+		content := msg.Content
+		for _, tc := range msg.ToolCalls {
+			content += tc.Function.Arguments
+		}
+		raw[i] = tokenizers.Message{
+			Role:        string(msg.Role),
+			Content:     content,
+			Summary:     msg.Summary,
+			Compacted:   msg.Compacted,
+			TailStartID: msg.TailStartID,
+		}
+	}
+
+	pruned := compress.PruneMessages(raw, compress.PRUNE_PROTECTED_TOOLS...)
+
+	prunedCount := 0
+	for i, m := range pruned {
+		if m.Compacted && !raw[i].Compacted {
+			session.MarkMessageCompacted(i, compress.PRUNED_OUTPUT_PLACEHOLDER)
+			prunedCount++
+		}
+	}
+
+	return prunedCount
 }

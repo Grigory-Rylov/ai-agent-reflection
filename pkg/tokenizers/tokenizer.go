@@ -77,6 +77,14 @@ func EstimateCompletionTokens(maxTokens int) int {
 // модели как естественный текст-рекап, а не как технический маркер.
 const CompactionUserMessage = "What did we do so far? Respond in the same language as the conversation."
 
+// CompactionAutoContinueText — синтетическое user-сообщение после проактивной
+// компактизации в tool loop. Модель понимает, что нужно продолжить работу.
+const CompactionAutoContinueText = "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed. Respond in the same language as the conversation."
+
+// CompactionOverflowContinueText — синтетическое user-сообщение после реактивной
+// компактизации при переполнении контекста (overflow).
+const CompactionOverflowContinueText = "The previous request exceeded the provider's size limit due to large context. Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed. Respond in the same language as the conversation."
+
 // Message представляет сообщение в чате
 type Message struct {
 	Role       string `json:"role"`

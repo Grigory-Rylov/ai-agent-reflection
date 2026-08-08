@@ -49,7 +49,7 @@
 ### 8. Обработка overflow при компактизации
 - **opencode**: если компактизация не вписалась в контекст — `result === "compact"` повторно вызывает компактизацию; если не получается — помечает ошибку `ContextOverflowError`, завершает (compaction.ts:426-435). Также есть `replay` предыдущего user-сообщения при overflow (compaction.ts:320-336).
 - **агент**: `CompactWithOpenCode()` при ошибке суммаризации просто логирует warning и возвращает (agentloop.go:897-902) — без fallback и без повтора.
-- **TODO**: добавить обработку повторного overflow после компактизации и fallback.
+- **DONE**: добавлена обработка повторного overflow после компактизации и fallback. В `compactIfNeeded` (agent_impl.go): если CompactWithOpenCode вернул ошибку, выполняем fallback — прораним head агрессивно через SelectMessages + помечаем все head-сообщения как compacted с placeholder-summary. В реактивном блоке `processToolResults` (tool_result_processor.go): при повторном overflow после компактизации запускаем агрессивный pruning через `handleOverflowAfterCompaction` → `applyAggressivePruning`, пересобираем messages, делаем retry. Если и это не помогло — терминальная ошибка.
 
 ### 9. Единая оценка токенов
 - **opencode**: везде `Token.estimate = len(chars)/4`, включая `select()` и проверку `isOverflow`.
@@ -93,7 +93,7 @@
 |-----------|-------|----------|--------|
 | P0 | 1, 2, 3 | Core-логика выбора head/tail и переупорядочивания = базовое совпадение с opencode | DONE |
 | P0 | 5, 6 | Качество summary (правильная структура промпта, сохранение recent) | DONE |
-| P1 | 7, 8 | Устойчивость: авто-продолжение и fallback при overflow | TODO |
+| P1 | 7, 8 | Устойчивость: авто-продолжение и fallback при overflow | DONE (8) / TODO (7) |
 | P1 | 9, 10, 11 | Консистентность оценок и работы с tool-выводами | DONE |
 | P2 | 4, 12 | Точность границ оборота и восстановление system-контекста | DONE |
 | P2 | 13 | Подтверждение поведения `/pin` тестами (обязательно к сохранению) | DONE (тесты есть) |
