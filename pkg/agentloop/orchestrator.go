@@ -40,18 +40,51 @@ type OrchestratorConfig struct {
 	Slots                *SlotClient
 }
 
+// agentCtxEntry — записан контекст активного агента для принудительной отмены.
+type agentCtxEntry struct {
+	cancel    context.CancelFunc
+	sessionID string
+	peerID    int64
+}
+
 type Orchestrator struct {
 	config      OrchestratorConfig
 	thoughtPeer int64
 	activeAgent string
 	activeMu    sync.RWMutex
+	// activeAgents — трекер активных агентов для принудительной отмены при /clear.
+	activeAgents   map[string]*agentCtxEntry // sessionID → entry
+	activeAgentsMu sync.Mutex
 }
 
 func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 	return &Orchestrator{
-		config:      cfg,
-		thoughtPeer: cfg.ThinkingPeerID,
+		config:         cfg,
+		thoughtPeer:    cfg.ThinkingPeerID,
+		activeAgents:   make(map[string]*agentCtxEntry),
 	}
+}
+
+// registerAgentContext регистрирует контекст агента для принудительной отмены.
+func (o *Orchestrator) registerAgentContext(sessionID string, peerID int64, cancel context.CancelFunc) {
+	o.activeAgentsMu.Lock()
+	defer o.activeAgentsMu.Unlock()
+	o.activeAgents[sessionID] = &agentCtxEntry{cancel: cancel, sessionID: sessionID, peerID: peerID}
+	if o.config.Logger != nil {
+		o.config.Logger.DebugLogf("[AGENT] registered context for %s (peer %d)", sessionID, peerID)
+	}
+}
+
+// unregisterAgentContext удаляет регистрацию контекста агента после завершения.
+func (o *Orchestrator) unregisterAgentContext(sessionID string) {
+	o.activeAgentsMu.Lock()
+	defer o.activeAgentsMu.Unlock()
+	delete(o.activeAgents, sessionID)
+}
+
+// unregisterAndReleaseOnCancel — deferred-хелпер: deregистрирует контекст и освобождает слот.
+func (o *Orchestrator) unregisterAndReleaseOnCancel(sessionID string) {
+	o.unregisterAgentContext(sessionID)
 }
 
 func (o *Orchestrator) GetCurrentAgent() string {
@@ -113,6 +146,11 @@ func (o *Orchestrator) RunAgent(ctx context.Context, agentName, task string, pee
 		return "", err
 	}
 
+	// Регистрируем контекст для принудительной отмены при /clear.
+	ctx, cancel := context.WithCancel(ctx)
+	o.registerAgentContext(sessionID, peerID, cancel)
+	defer o.unregisterAndReleaseOnCancel(sessionID)
+
 	// Персистим корневую сессию и стартовую цепочку, чтобы после рестарта
 	// цепочка lead → worker → reviewer восстановилась вплоть до лида.
 	rootID := o.beginRootSession(agentName, prompt, task, peerID, sessionID)
@@ -122,12 +160,14 @@ func (o *Orchestrator) RunAgent(ctx context.Context, agentName, task string, pee
 	}
 
 	if err := o.setupAgentTools(agentName, a, peerID, rootID, rootChain); err != nil {
+		cancel()
 		o.releaseAgentSlot(sessionID)
 		return "", err
 	}
 
 	response, err := a.ProcessMessage(ctx, task, peerID)
 	if err != nil {
+		cancel()
 		// Слот освобождаем (KV-cache после падения всё равно устарел), но
 		// цепочку/БД не чистим — незавершённую работу восстановит ResumeActiveChains.
 		// Сохраняем историю, чтобы восстановленная сессия не была пустой.
@@ -138,6 +178,7 @@ func (o *Orchestrator) RunAgent(ctx context.Context, agentName, task string, pee
 		return "", fmt.Errorf("agent %q failed: %w", agentName, err)
 	}
 
+	cancel()
 	// KV-cache сохраняется per-response внутри agent_impl (через SlotSaver),
 	// поэтому здесь только освобождаем слот.
 	if rootID != "" {
@@ -276,6 +317,27 @@ func (o *Orchestrator) GetActiveAgentSessions(peerID int64) (string, error) {
 }
 
 func (o *Orchestrator) ClearActiveSessions(peerID int64) {
+	// Отменяем все зарегистрированные контексты агентов для этого peer,
+	// чтобы работающие сабагенты получили context.Canceled и остановились.
+	var cancelled []string
+	o.activeAgentsMu.Lock()
+	for id, entry := range o.activeAgents {
+		if entry.peerID == peerID {
+			entry.cancel()
+			cancelled = append(cancelled, id)
+			delete(o.activeAgents, id)
+		}
+	}
+	o.activeAgentsMu.Unlock()
+
+	// Освобождаем слоты отменённых агентов (KV-cache stale после cancel).
+	for _, id := range cancelled {
+		o.releaseAgentSlot(id)
+		if o.config.Logger != nil {
+			o.config.Logger.InfoLogf("[AGENT] ClearActiveSessions: cancelled and released slot for %s", id)
+		}
+	}
+
 	if o.config.Store == nil {
 		return
 	}
