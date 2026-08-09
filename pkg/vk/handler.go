@@ -121,18 +121,6 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 
 	command := extractCommand(message)
 
-	if tools.HasPendingQuestion(peerID) {
-		logger.DebugToFile("[ProcessMessage] HasPendingQuestion=true for peer %d, command=%s", peerID, truncateStr(command, 100))
-		if tools.ResolvePendingQuestion(peerID, command) {
-			logger.DebugToFile("[ProcessMessage] Resolved pending question for peer %d with: %s", peerID, truncateStr(command, 50))
-			return ""
-		} else {
-			logger.DebugToFile("[ProcessMessage] ResolvePendingQuestion returned false for peer %d, command=%s", peerID, truncateStr(command, 50))
-		}
-	} else {
-		logger.DebugToFile("[ProcessMessage] HasPendingQuestion=false for peer %d, command=%s", peerID, truncateStr(command, 100))
-	}
-
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -153,6 +141,17 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 			return ""
 		}
 		return fmt.Sprintf("Неизвестная команда: %s. Напишите /help для списка команд.", command)
+	}
+
+	// Не-команды могут быть ответами на pending вопросы (права доступа, уточнения).
+	if tools.HasPendingQuestion(peerID) {
+		logger.DebugToFile("[ProcessMessage] HasPendingQuestion=true for peer %d, command=%s", peerID, truncateStr(command, 100))
+		if tools.ResolvePendingQuestion(peerID, command) {
+			logger.DebugToFile("[ProcessMessage] Resolved pending question for peer %d with: %s", peerID, truncateStr(command, 50))
+			return ""
+		} else {
+			logger.DebugToFile("[ProcessMessage] ResolvePendingQuestion returned false for peer %d, command=%s", peerID, truncateStr(command, 50))
+		}
 	}
 
 	if agentName, task := ParseAgentHashMention(command, h.agentNames()); agentName != "" {
@@ -271,12 +270,7 @@ func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, tim
 
 	command := extractCommand(message)
 
-	if tools.HasPendingQuestion(peerID) {
-		logger.DebugToFile("[ProcessMessageWithTimeout] HasPendingQuestion=true for peer %d, command=%s", peerID, truncateStr(command, 100))
-		if tools.ResolvePendingQuestion(peerID, command) {
-			return ""
-		}
-	} else if strings.HasPrefix(command, "/") {
+	if strings.HasPrefix(command, "/") {
 		result := h.handleCommand(command, peerID)
 		if result != "" {
 			return result
@@ -296,6 +290,13 @@ func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, tim
 	h.cancelFuncs[peerID] = cancel
 	h.cancelMu.Unlock()
 	defer h.clearCancelFunc(peerID)
+
+	if tools.HasPendingQuestion(peerID) {
+		logger.DebugToFile("[ProcessMessageWithTimeout] HasPendingQuestion=true for peer %d, command=%s", peerID, truncateStr(command, 100))
+		if tools.ResolvePendingQuestion(peerID, command) {
+			return ""
+		}
+	}
 
 	s := h.aiAgent.GetSession(peerID)
 	if s != nil && s.IsLoopDetected() {

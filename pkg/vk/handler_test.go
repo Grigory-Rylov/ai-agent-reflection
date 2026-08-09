@@ -13,6 +13,7 @@ import (
 	"github.com/opencode/llama-client/pkg/agentloop"
 	"github.com/opencode/llama-client/pkg/logger"
 	"github.com/opencode/llama-client/pkg/modelsconfig"
+	"github.com/opencode/llama-client/pkg/tools"
 	"github.com/opencode/llama-client/session"
 )
 
@@ -120,10 +121,11 @@ type mockOrchestrator struct {
 	fixedResponse string
 	fixedErr      error
 	callCount     int
+	clearedPeers  map[int64]bool
 }
 
 func newMockOrchestrator(response string) *mockOrchestrator {
-	return &mockOrchestrator{fixedResponse: response}
+	return &mockOrchestrator{fixedResponse: response, clearedPeers: make(map[int64]bool)}
 }
 
 func (m *mockOrchestrator) ExecuteTask(_ context.Context, task string, peerID int64) (string, error) {
@@ -152,7 +154,11 @@ func (m *mockOrchestrator) GetCurrentAgent() string {
 	return "mock-agent"
 }
 
-func (m *mockOrchestrator) ClearActiveSessions(peerID int64) {}
+func (m *mockOrchestrator) ClearActiveSessions(peerID int64) {
+	if m.clearedPeers != nil {
+		m.clearedPeers[peerID] = true
+	}
+}
 
 func (m *mockOrchestrator) GetActiveAgentSessions(peerID int64) (string, error) {
 	return "", nil
@@ -613,6 +619,73 @@ func TestParseAgentHashMention(t *testing.T) {
 // ============================================================
 // Tests for handleNewSession (/n command)
 // ============================================================
+
+func TestClearCancelsPendingQuestionAndGrants(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+
+	orch := &mockOrchestrator{clearedPeers: make(map[int64]bool)}
+	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, orch, nil)
+
+	peerID := int64(987)
+
+	// Регистрируем pending question и грант пути.
+	ch := tools.RegisterPendingQuestion(peerID)
+	tools.ApplyPathGrant(peerID, "/some/path/")
+
+	if !tools.HasPendingQuestion(peerID) {
+		t.Fatal("expected pending question to be registered")
+	}
+	if !tools.IsPathGranted(peerID, "/some/path/file.txt") {
+		t.Fatal("expected path grant to be applied")
+	}
+
+	handler.ProcessMessage("/clear", peerID)
+
+	if tools.HasPendingQuestion(peerID) {
+		t.Error("expected pending question cleared after /clear")
+	}
+	if tools.IsPathGranted(peerID, "/some/path/file.txt") {
+		t.Error("expected path grants cleared after /clear")
+	}
+	if !orch.clearedPeers[peerID] {
+		t.Error("expected ClearActiveSessions called for peer after /clear")
+	}
+
+	// Закрываем канал pending question.
+	close(ch)
+}
+
+func TestClearCancelsRunningAgent(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+
+	orch := &mockOrchestrator{clearedPeers: make(map[int64]bool)}
+	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, orch, nil)
+
+	peerID := int64(456)
+
+	// Сессия создана.
+	sess := mock.GetSession(peerID)
+	if sess == nil {
+		t.Fatal("expected session after /clear")
+	}
+
+	handler.ProcessMessage("/clear", peerID)
+
+	if !orch.clearedPeers[peerID] {
+		t.Error("expected ClearActiveSessions called for peer 456")
+	}
+
+	// Сессия должна быть сброшена.
+	sessAfter := mock.GetSession(peerID)
+	if sessAfter == nil {
+		t.Fatal("session should exist after /clear (recreated)")
+	}
+	if sessAfter.HistoryLength() != 0 {
+		t.Errorf("expected history cleared, got %d messages", sessAfter.HistoryLength())
+	}
+}
 
 func TestClearKeepsWorkingDir(t *testing.T) {
 	log, _ := logger.New(logger.DefaultConfig())
