@@ -162,7 +162,7 @@ func (o *Orchestrator) RunAgent(ctx context.Context, agentName, task string, pee
 	if err := o.setupAgentTools(agentName, a, peerID, rootID, rootChain); err != nil {
 		cancel()
 		o.releaseAgentSlot(sessionID)
-		return "", err
+		return "", fmt.Errorf("setup tools for agent %q: %w", agentName, err)
 	}
 
 	response, err := a.ProcessMessage(ctx, task, peerID)
@@ -304,10 +304,12 @@ func (o *Orchestrator) GetActiveAgentSessions(peerID int64) (string, error) {
 	b.WriteString("Active agent sessions:\n\n")
 	for _, s := range sessions {
 		arrow := "  "
-		for i, id := range chainData.Chain {
-			if id == s.ID {
-				arrow = strings.Repeat("  ", i) + "→ "
-				break
+		if chainData != nil {
+			for i, id := range chainData.Chain {
+				if id == s.ID {
+					arrow = strings.Repeat("  ", i) + "→ "
+					break
+				}
 			}
 		}
 		b.WriteString(fmt.Sprintf("%s[%s] %s (id: %s)\n", arrow, s.Status, s.AgentName, s.ID))
@@ -372,7 +374,7 @@ func (o *Orchestrator) resumeChain(ctx context.Context, chain store.AgentChainDa
 		id := chain.Chain[i]
 		sd, err := o.config.Store.GetAgentSession(id)
 		if err != nil {
-			return err
+			return fmt.Errorf("get session %s: %w", id, err)
 		}
 		if sd == nil {
 			o.config.Store.SaveAgentChain(chain.PeerID, chain.Chain[:i])
@@ -405,7 +407,7 @@ func (o *Orchestrator) runResumedAgent(ctx context.Context, sd *store.AgentSessi
 	// продолжалась от того же корня; слот же — у свежей сессии sessionID.
 	if err := o.setupAgentTools(sd.AgentName, a, sd.PeerID, sd.ID, chain); err != nil {
 		o.releaseAgentSlot(sessionID)
-		return "", err
+		return "", fmt.Errorf("setup tools for resumed agent %q: %w", sd.AgentName, err)
 	}
 	o.restoreSessionMessages(a.GetSession(sd.PeerID), sd.Messages)
 
@@ -417,15 +419,17 @@ func (o *Orchestrator) runResumedAgent(ctx context.Context, sd *store.AgentSessi
 		prompt = fmt.Sprintf("Continue your task: %s", sd.LastPrompt)
 	}
 	result, err := a.ProcessMessage(ctx, prompt, sd.PeerID)
-	// KV-cache сохраняется per-response внутри agent_impl (SlotSaver).
 	o.releaseAgentSlot(sessionID)
-	return result, err
+	if err != nil {
+		return "", fmt.Errorf("resumed agent %q failed: %w", sd.AgentName, err)
+	}
+	return result, nil
 }
 
 // restoreSessionMessages восстанавливает историю сообщений в сессии агента
 // из сохранённого JSON (формат []session.Message).
 func (o *Orchestrator) restoreSessionMessages(s *session.Session, messagesJSON string) {
-	if messagesJSON == "" {
+	if s == nil || messagesJSON == "" {
 		return
 	}
 	var msgs []session.Message

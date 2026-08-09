@@ -138,6 +138,7 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 
 	h.clearCancelFunc(peerID)
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	h.cancelMu.Lock()
 	h.cancelFuncs[peerID] = cancel
 	h.cancelMu.Unlock()
@@ -499,12 +500,13 @@ func (h *BotHandler) handlePinCommand(input string, peerID int64) string {
 			h.log.InfoLogf("User %d pinned prompt: %s", peerID, truncateStr(content, 100))
 		}
 
-		ctx := context.Background()
-		response, err := h.aiAgent.ProcessMessage(ctx, content, peerID)
+		pinCtx, pinCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer pinCancel()
+		response, err := h.aiAgent.ProcessMessage(pinCtx, content, peerID)
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Sprintf("✓ Промпт закреплён: %s\n\nОперация отменена или истёк таймаут.", truncateStr(content, 100))
+		}
 		if err != nil {
-			if h.log != nil {
-				h.log.ErrorLogf("AI Agent error after /pin: %v", err)
-			}
 			return fmt.Sprintf("✓ Промпт закреплён: %s\n\n❌ Ошибка при выполнении: %v", truncateStr(content, 100), err)
 		}
 		return fmt.Sprintf("✓ Промпт закреплён: %s\n\n%s", truncateStr(content, 100), response)
@@ -522,9 +524,13 @@ func (h *BotHandler) handleAgentCommand(input string, peerID int64) string {
 		if h.log != nil {
 			h.log.InfoLogf("Starting /agent mode for peer %d: %s", peerID, truncateStr(instruction, 100))
 		}
-		ctx := context.Background()
+		ctx, agCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer agCancel()
 		response, err := h.orchestrator.ExecuteTask(ctx, instruction, peerID)
 		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return "Операция отменена или истёк таймаут."
+			}
 			if h.log != nil {
 				h.log.ErrorLogf("Orchestrator error in /agent: %v", err)
 			}
@@ -536,8 +542,12 @@ func (h *BotHandler) handleAgentCommand(input string, peerID int64) string {
 		return response
 	}
 
-	ctx := context.Background()
+	ctx, agCancel2 := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer agCancel2()
 	response, err := h.aiAgent.ProcessMessage(ctx, instruction, peerID)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "Операция отменена или истёк таймаут."
+	}
 	if err != nil {
 		if h.log != nil {
 			h.log.ErrorLogf("AI Agent error in /agent: %v", err)

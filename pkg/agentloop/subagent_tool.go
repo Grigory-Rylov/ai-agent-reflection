@@ -203,6 +203,13 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 		t.SetActiveAgent(name)
 	}
 
+	defer func() {
+		if r := recover(); r != nil {
+			t.cancelAgentSession()
+			panic(r)
+		}
+	}()
+
 	response, err := a.ProcessMessage(ctx, task, t.PeerID)
 	if err != nil {
 		// Слот освобождаем всегда (даже без Store), иначе утекает. БД/цепочка
