@@ -117,21 +117,10 @@ func ParseAgentHashMention(text string, knownNames []string) (agentName string, 
 
 func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	h.ensureSession(peerID)
-	mu := h.getPeerMutex(peerID)
 
 	command := extractCommand(message)
 
-	mu.Lock()
-	defer mu.Unlock()
-
-	h.clearCancelFunc(peerID)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	h.cancelMu.Lock()
-	h.cancelFuncs[peerID] = cancel
-	h.cancelMu.Unlock()
-	defer h.clearCancelFunc(peerID)
-
+	// Команды обрабатываются немедленно — без блокировки peer mutex'ом.
 	if strings.HasPrefix(command, "/") {
 		result := h.handleCommand(command, peerID)
 		if result != "" {
@@ -142,6 +131,18 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 		}
 		return fmt.Sprintf("Неизвестная команда: %s. Напишите /help для списка команд.", command)
 	}
+
+	mu := h.getPeerMutex(peerID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	h.clearCancelFunc(peerID)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.cancelMu.Lock()
+	h.cancelFuncs[peerID] = cancel
+	h.cancelMu.Unlock()
+	defer h.clearCancelFunc(peerID)
 
 	// Не-команды могут быть ответами на pending вопросы (права доступа, уточнения).
 	if tools.HasPendingQuestion(peerID) {
