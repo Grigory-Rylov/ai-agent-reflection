@@ -23,6 +23,7 @@ import (
 	"github.com/opencode/llama-client/pkg/modelsconfig"
 	"github.com/opencode/llama-client/pkg/store"
 	"github.com/opencode/llama-client/pkg/tools"
+	"github.com/opencode/llama-client/pkg/util/stringutil"
 	"github.com/opencode/llama-client/pkg/vk"
 	"github.com/opencode/llama-client/session"
 )
@@ -91,9 +92,8 @@ func main() {
 	logConfig := logger.DefaultConfig()
 	logConfig.Level = logger.LevelDebug
 	logConfig.MaxSizeMB = 5
-	if *debug {
-		logConfig.File = "debug.log"
-	} else {
+	logConfig.File = "debug.log"
+	if !*debug {
 		logConfig.Level = logger.LevelInfo
 	}
 	log, err := logger.New(logConfig)
@@ -201,7 +201,7 @@ func main() {
 	// Лимит контекста: из models.json, иначе реальный контекст с llama-server.
 	// Кэшируется по алиасу модели; при /r <alias> для новой модели запрашивается заново.
 	ctxResolver := agentloop.NewModelContextResolver(modelHolder, log)
-	maxTokens, err := ctxResolver.Resolve()
+	maxTokens, err := retryResolveContext(ctxResolver, log)
 	if err != nil {
 		println("Error resolving model context:", err.Error())
 		os.Exit(1)
@@ -395,7 +395,7 @@ func main() {
 	go func() {
 		if err := botHandler.Start(handlerCtx); err != nil {
 			log.ErrorLogf("Bot handler error: %v", err)
-			os.Exit(1)
+			cancel()
 		}
 	}()
 
@@ -403,12 +403,37 @@ func main() {
 		prompt := *initialPrompt
 
 		knownNames := agentManager.ListAgentNames()
-		if len(knownNames) == 0 {
-			knownNames = []string{"worker", "qa", "explore", "general", "agent", "coordinator"}
-		}
 		agentName, task := vk.ParseAgentHashMention(prompt, knownNames)
 		if agentName != "" && orchestrator != nil && task != "" {
-			log.InfoLogf("Processing initial prompt via RunAgent (#%s): %s", agentName, truncate(task, 100))
+			if orchestrator.IsPrimary(agentName) {
+				// Primary-агент — на главном персистентном агенте с общим
+				// контекстом и временно добавленным системным промптом.
+				log.InfoLogf("Processing initial prompt via main agent (#%s): %s", agentName, stringutil.Truncate(task, 100, "..."))
+				extraPrompt, perr := orchestrator.GetSystemPrompt(agentName)
+				if perr != nil {
+					errMsg := fmt.Sprintf("Initial prompt failed: %v", perr)
+					log.ErrorLogf("Initial prompt failed: %v", perr)
+					vkClient.SendMessage(config.PeerID, "❌ "+errMsg)
+					return
+				}
+				promptCtx, promptCancel := context.WithTimeout(ctx, 15*time.Minute)
+				response, err := agentLoop.ProcessPromptWithExtraSystem(promptCtx, task, config.PeerID, extraPrompt)
+				promptCancel()
+
+				if err != nil {
+					errMsg := fmt.Sprintf("Initial prompt failed: %v", err)
+					log.ErrorLogf("Initial prompt failed: %v", err)
+					vkClient.SendMessage(config.PeerID, "❌ "+errMsg)
+				} else if response != "" {
+log.InfoLogf("Initial prompt response: %s", stringutil.Truncate(response, 200, "..."))
+				vkClient.SendMessage(config.PeerID, "✅ Result:\n"+response)
+			} else {
+				vkClient.SendMessage(config.PeerID, "⚠️ Initial prompt returned empty response")
+			}
+			return
+		}
+
+		log.InfoLogf("Processing initial prompt via RunAgent (#%s): %s", agentName, stringutil.Truncate(task, 100, "..."))
 
 			promptCtx, promptCancel := context.WithTimeout(ctx, 15*time.Minute)
 			response, err := orchestrator.RunAgent(promptCtx, agentName, task, config.PeerID)
@@ -419,13 +444,13 @@ func main() {
 				log.ErrorLogf("Initial prompt failed: %v", err)
 				vkClient.SendMessage(config.PeerID, "❌ "+errMsg)
 			} else if response != "" {
-				log.InfoLogf("Initial prompt response: %s", truncate(response, 200))
+				log.InfoLogf("Initial prompt response: %s", stringutil.Truncate(response, 200, "..."))
 				vkClient.SendMessage(config.PeerID, "✅ Result:\n"+response)
 			} else {
 				vkClient.SendMessage(config.PeerID, "⚠️ Initial prompt returned empty response")
 			}
 		} else {
-			log.InfoLogf("Processing initial prompt: %s", truncate(prompt, 100))
+			log.InfoLogf("Processing initial prompt: %s", stringutil.Truncate(prompt, 100, "..."))
 
 			promptCtx, promptCancel := context.WithTimeout(ctx, 10*time.Minute)
 			response, err := agentLoop.ProcessPrompt(promptCtx, prompt, config.PeerID)
@@ -436,7 +461,7 @@ func main() {
 				log.ErrorLogf("Initial prompt failed: %v", err)
 				vkClient.SendMessage(config.PeerID, "❌ "+errMsg)
 			} else if response != "" {
-				log.InfoLogf("Initial prompt response: %s", truncate(response, 200))
+				log.InfoLogf("Initial prompt response: %s", stringutil.Truncate(response, 200, "..."))
 				vkClient.SendMessage(config.PeerID, "✅ Result:\n"+response)
 			} else {
 				vkClient.SendMessage(config.PeerID, "⚠️ Initial prompt returned empty response")
@@ -577,6 +602,22 @@ func truncateQuestion(text string) string {
 	return string(head) + "..." + optionsPart
 }
 
+// retryResolveContext пытается получить лимит контекста модели, ретрая
+// бесконечно с паузой 5 секунд при недоступности llama-server.
+// Ретрай прерывается только при отмене контекста (Ctrl+C / SIGTERM).
+func retryResolveContext(resolver *agentloop.ModelContextResolver, log *logger.Logger) (int, error) {
+	const retryDelay = 5 * time.Second
+	for attempt := 1; ; attempt++ {
+		ctx, err := resolver.Resolve()
+		if err == nil {
+			return ctx, nil
+		}
+		log.WarnLogf("Failed to resolve model context (attempt %d): %v", attempt, err)
+		log.WarnLogf("Retrying in %v... (is llama-server running?)", retryDelay)
+		time.Sleep(retryDelay)
+	}
+}
+
 func registerTools(r *tools.Registry) {
 	r.Register(&tools.FileReadTool{})
 	r.Register(&tools.FileWriteTool{})
@@ -656,9 +697,3 @@ func initAgentManager(agents map[string]agentpolicy.AgentCfg, agentDir string, l
 	return am
 }
 
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "..."
-}

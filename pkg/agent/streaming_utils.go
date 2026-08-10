@@ -17,12 +17,9 @@ func (a *agentImpl) collectStreamResponseWithToolCalls(chunkChan <-chan StreamCh
 		if event.IsError {
 			return "", "", "", nil, 0, 0, fmt.Errorf("API error: %s (code: %s)", event.Content, event.ErrorCode)
 		}
-		if event.IsDone {
-			finishReason = event.FinishReason
-			promptTokens = event.PromptTokens
-			completionTokens = event.CompletionTokens
-			break
-		}
+		// Контент/reasoning/tool_calls обрабатываем ДО проверки IsDone: модель
+		// может прислать финальный фрагмент контента вместе с finish_reason,
+		// иначе он был бы потерян.
 		if event.Content != "" {
 			fullResponse.WriteString(event.Content)
 		}
@@ -31,6 +28,12 @@ func (a *agentImpl) collectStreamResponseWithToolCalls(chunkChan <-chan StreamCh
 		}
 		if len(event.ToolCalls) > 0 {
 			allToolCalls = MergeToolCalls(allToolCalls, event.ToolCalls)
+		}
+		if event.IsDone {
+			finishReason = event.FinishReason
+			promptTokens = event.PromptTokens
+			completionTokens = event.CompletionTokens
+			break
 		}
 	}
 

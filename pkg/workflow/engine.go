@@ -290,9 +290,5 @@ func (e *WorkflowEngine) saveWorkflow(wf *Workflow) {
 	os.WriteFile(filepath.Join(dir, "workflow.json"), data, 0644)
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
+
+

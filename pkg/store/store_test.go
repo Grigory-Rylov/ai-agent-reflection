@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/opencode/llama-client/pkg/tokenizers"
 )
 
 func newTestStore(t *testing.T) Store {
@@ -148,6 +150,43 @@ func TestMessageCRUD(t *testing.T) {
 	}
 	if loaded[2].ToolCallID != "1" || loaded[2].ToolName != "file_read" {
 		t.Errorf("unexpected tool message")
+	}
+}
+
+func TestMessageCRUD_CompactionMetadata(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	s.SaveSession(&SessionData{PeerID: 2, CreatedAt: now, UpdatedAt: now})
+
+	msgs := []MessageData{
+		{PeerID: 2, Role: "user", Content: "head", Compacted: true, Timestamp: "t1"},
+		{PeerID: 2, Role: "user", Content: tokenizers.CompactionUserMessage, Timestamp: "t2"},
+		{PeerID: 2, Role: "assistant", Content: "summary", Summary: true, TailStartID: 13, Timestamp: "t3"},
+		{PeerID: 2, Role: "user", Content: "tail", Timestamp: "t4"},
+	}
+
+	for _, m := range msgs {
+		if err := s.AddMessage(2, m); err != nil {
+			t.Fatalf("AddMessage: %v", err)
+		}
+	}
+
+	loaded, err := s.GetMessages(2)
+	if err != nil {
+		t.Fatalf("GetMessages: %v", err)
+	}
+	if len(loaded) != len(msgs) {
+		t.Fatalf("expected %d messages, got %d", len(msgs), len(loaded))
+	}
+
+	if !loaded[0].Compacted {
+		t.Error("expected Compacted=true to survive round-trip")
+	}
+	if !loaded[2].Summary {
+		t.Error("expected Summary=true to survive round-trip")
+	}
+	if loaded[2].TailStartID != 13 {
+		t.Errorf("expected TailStartID=13, got %d", loaded[2].TailStartID)
 	}
 }
 

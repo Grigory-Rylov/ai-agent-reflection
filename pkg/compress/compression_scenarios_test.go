@@ -224,6 +224,44 @@ func TestScenario_PruningWithAlreadyCompacted(t *testing.T) {
 	}
 }
 
+// Scenario 5b: PRUNE_PROTECTED_TOOLS — tool-выводы защищённых инструментов
+// (например "skill") не обрезаются, даже если выходят за PRUNE_PROTECT.
+// Как в opencode prune(): if (PRUNE_PROTECTED_TOOLS.includes(part.tool)) continue.
+func TestScenario_PruningProtectedTools(t *testing.T) {
+	large := createLongOutput(200000) // ~50k токенов каждый
+	msgs := []tokenizers.Message{}
+	for i := 0; i < 4; i++ {
+		name := "file_read"
+		if i == 0 {
+			name = "skill"
+		}
+		msgs = append(msgs,
+			tokenizers.Message{Role: "user", Content: "request"},
+			tokenizers.Message{Role: "tool", Content: large, Name: name},
+			tokenizers.Message{Role: "assistant", Content: "response"},
+		)
+	}
+
+	result := PruneMessages(msgs, PRUNE_PROTECTED_TOOLS...)
+
+	skillPruned := false
+	fileReadPruned := false
+	for i, m := range msgs {
+		if m.Name == "skill" && result[i].Compacted {
+			skillPruned = true
+		}
+		if m.Name == "file_read" && result[i].Compacted {
+			fileReadPruned = true
+		}
+	}
+	if skillPruned {
+		t.Error("protected tool 'skill' must not be pruned")
+	}
+	if !fileReadPruned {
+		t.Error("expected non-protected tool outputs to be pruned")
+	}
+}
+
 // Scenario 6: FilterCompacted with multiple summaries
 func TestScenario_MultipleSummaries(t *testing.T) {
 	msgs := []tokenizers.Message{
@@ -387,7 +425,7 @@ func TestScenario_EmptyMessages(t *testing.T) {
 	}{
 		{"nil messages", nil, 2, true},
 		{"empty messages", []tokenizers.Message{}, 2, true},
-		{"single user", []tokenizers.Message{{Role: "user", Content: "hi"}}, 2, true},                 // head empty, no previous summary
+		{"single user", []tokenizers.Message{{Role: "user", Content: "hi"}}, 2, false},                 // head = все сообщения (opencode: keepStart==0)
 		{"only system", []tokenizers.Message{{Role: "system", Content: "You are helpful"}}, 2, false}, // system messages go to head
 		{"two user messages with tail 1", []tokenizers.Message{
 			{Role: "user", Content: "old"},
@@ -515,12 +553,13 @@ func TestScenario_MaxTailTurns(t *testing.T) {
 	t.Logf("Tail turns: %d, budget: %d", tailTurns, budget)
 	t.Logf("Head: %d, TailStartID: %d", len(selected.Head), selected.TailStartID)
 
-	// Все сообщения должны быть в tail
-	if selected.TailStartID != 0 {
-		t.Errorf("Expected all messages in tail (TailStartID=0), got %d", selected.TailStartID)
+	// Как в opencode select(): если всё помещается в бюджет, keepStart == 0 —
+	// компактится всё (head = все сообщения), хвост не сохраняется.
+	if selected.TailStartID != -1 {
+		t.Errorf("Expected no tail (TailStartID=-1), got %d", selected.TailStartID)
 	}
-	if len(selected.Head) != 0 {
-		t.Errorf("Expected empty head, got %d messages", len(selected.Head))
+	if len(selected.Head) != len(msgs) {
+		t.Errorf("Expected all messages in head, got %d of %d", len(selected.Head), len(msgs))
 	}
 }
 

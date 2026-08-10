@@ -202,11 +202,13 @@ func TestSelectMessages(t *testing.T) {
 			{Role: "assistant", Content: "world"},
 		}
 		got := SelectMessages(msgs, 2, 8000)
-		if got.TailStartID != 0 {
-			t.Errorf("expected all messages as tail (TailStartID=0), got %d", got.TailStartID)
+		// opencode select(): keep.start === 0 → head = все сообщения,
+		// tail_start_id = undefined (-1), компактится всё.
+		if got.TailStartID != -1 {
+			t.Errorf("expected no tail (TailStartID=-1), got %d", got.TailStartID)
 		}
-		if got.Head != nil {
-			t.Errorf("expected empty head when all fits, got %d head messages", len(got.Head))
+		if len(got.Head) != 2 {
+			t.Errorf("expected all messages in head, got %d", len(got.Head))
 		}
 	})
 
@@ -226,6 +228,46 @@ func TestSelectMessages(t *testing.T) {
 			t.Error("expected at least old messages in head")
 		}
 	})
+
+	// splitTurn может остановиться на не-user сообщении (tool/assistant внутри
+	// оборота). Head не должен заканчиваться до split-точки, иначе остаток
+	// оборота выпадает и из head, и из tail — потеря данных. Регрессия:
+	// раньше Head = messages[:keepStart] терял messages[keepStart:tailStartID].
+	t.Run("split turn keeps no gap between head and tail", func(t *testing.T) {
+		msgs := []tokenizers.Message{
+			{Role: "system", Content: "sys"},
+			{Role: "user", Content: "turn0"},
+			{Role: "assistant", Content: "resp0"},
+			{Role: "user", Content: "turn1"},
+			{Role: "assistant", Content: "short"},
+			{Role: "tool", Content: createLongOutput(3000)}, // большой tool-вывод
+			{Role: "assistant", Content: "tail-of-split"},
+			{Role: "user", Content: "turn2"},
+			{Role: "assistant", Content: "resp2"},
+		}
+		est := EstimateMessagesTokensSimple
+		// budget = turn2 целиком + одно сообщение из оборота turn1 →
+		// splitTurn остановится на индексе 6 (не-user), tailStartID = 7.
+		budget := est(msgs[7:9]) + est(msgs[6:7])
+		got := SelectMessages(msgs, 2, budget)
+
+		if got.TailStartID != 7 {
+			t.Fatalf("expected split tail to start at user index 7, got TailStartID=%d", got.TailStartID)
+		}
+		// Head должен доходить до границы хвоста, а не заканчиваться на split-точке.
+		if len(got.Head) != got.TailStartID {
+			t.Errorf("gap between head and tail: head ends at %d, tail starts at %d", len(got.Head), got.TailStartID)
+		}
+		found := false
+		for _, m := range got.Head {
+			if strings.Contains(m.Content, "tail-of-split") {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("split-turn remainder was dropped from head and tail")
+		}
+	})
 }
 
 // ============================================================
@@ -233,25 +275,31 @@ func TestSelectMessages(t *testing.T) {
 // ============================================================
 
 func TestBuildSummaryPrompt(t *testing.T) {
-	t.Run("includes conversation history", func(t *testing.T) {
-		head := []tokenizers.Message{
-			{Role: "user", Content: "hello"},
-			{Role: "assistant", Content: "world"},
-		}
-		prompt := BuildSummaryPrompt("", head)
+	t.Run("includes context after template", func(t *testing.T) {
+		prompt := BuildSummaryPrompt("", []string{"[user]: hello", "[assistant]: world"})
 		if !strings.Contains(prompt, "hello") || !strings.Contains(prompt, "world") {
-			t.Error("prompt should include conversation history")
+			t.Error("prompt should include context")
 		}
 		if !strings.Contains(prompt, "Goal") {
 			t.Error("prompt should include SUMMARY_TEMPLATE")
 		}
+		// Как opencode buildPrompt: instruction → template → context.
+		tIdx := strings.Index(prompt, "Goal")
+		cIdx := strings.Index(prompt, "hello")
+		if cIdx < tIdx {
+			t.Error("context should come after SUMMARY_TEMPLATE")
+		}
+	})
+
+	t.Run("does not embed raw head messages", func(t *testing.T) {
+		prompt := BuildSummaryPrompt("", nil)
+		if strings.Contains(prompt, "[user]") || strings.Contains(prompt, "[assistant]") {
+			t.Error("prompt should not embed raw head messages")
+		}
 	})
 
 	t.Run("includes previous summary when available", func(t *testing.T) {
-		head := []tokenizers.Message{
-			{Role: "user", Content: "continue"},
-		}
-		prompt := BuildSummaryPrompt("Previous summary here", head)
+		prompt := BuildSummaryPrompt("Previous summary here", []string{"[user]: continue"})
 		if !strings.Contains(prompt, "Previous summary here") {
 			t.Error("prompt should include previous summary")
 		}
@@ -261,14 +309,58 @@ func TestBuildSummaryPrompt(t *testing.T) {
 	})
 
 	t.Run("new summary prompt for first compaction", func(t *testing.T) {
-		head := []tokenizers.Message{
-			{Role: "user", Content: "start"},
-		}
-		prompt := BuildSummaryPrompt("", head)
+		prompt := BuildSummaryPrompt("", []string{"[user]: start"})
 		if !strings.Contains(prompt, "Create a new anchored summary") {
 			t.Error("new prompt should be used for first compaction")
 		}
 	})
+}
+
+// TestCompactWithOpenCode_IncludesPreviousRecent проверяет, что при повторной
+// компактизации в промпт суммаризации попадает recent — хвост, сохранённый
+// предыдущей компактизацией (как previousSummary.recent в opencode core).
+func TestCompactWithOpenCode_IncludesPreviousRecent(t *testing.T) {
+	var lastReq *CompressionRequest
+	mockLLM := &mockLLMCompressor{
+		compressFunc: func(ctx context.Context, req *CompressionRequest) (*CompressionResult, error) {
+			lastReq = req
+			return &CompressionResult{
+				Summary:            "[SUMMARY] updated",
+				CompressedMessages: []tokenizers.Message{{Role: "user", Content: "[SUMMARY] updated"}},
+			}, nil
+		},
+	}
+	compactor := NewCompactor(mockLLM)
+
+	// Предыдущая компактизация: [tail..., marker, summary(TailStartID=2)].
+	msgs := []tokenizers.Message{
+		{Role: "user", Content: "old head"},
+		{Role: "assistant", Content: "old resp"},
+		{Role: "user", Content: "tail-1"},
+		{Role: "assistant", Content: "tail-resp-1"},
+		{Role: "user", Content: "tail-2"},
+		{Role: "assistant", Content: "tail-resp-2"},
+		{Role: "user", Content: tokenizers.CompactionUserMessage},
+		{Role: "assistant", Content: "## Goal\n- prev", Summary: true, TailStartID: 2},
+		{Role: "user", Content: "new turn"},
+		{Role: "assistant", Content: "new resp"},
+	}
+
+	_, err := compactor.CompactWithOpenCode(nil, msgs, 200_000, 2, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if lastReq == nil {
+		t.Fatal("expected summarization request")
+	}
+
+	last := lastReq.Messages[len(lastReq.Messages)-1].Content
+	if !strings.Contains(last, "tail-1") || !strings.Contains(last, "tail-resp-2") {
+		t.Errorf("expected previous recent tail in summary prompt, got: %q", last)
+	}
+	if !strings.Contains(last, "## Goal\n- prev") {
+		t.Errorf("expected previous summary in prompt, got: %q", last)
+	}
 }
 
 // ============================================================

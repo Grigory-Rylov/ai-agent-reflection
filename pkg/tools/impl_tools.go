@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -825,16 +826,16 @@ func (t *GrepTool) Execute(ctx context.Context, inputs map[string]string) (ToolR
 
 	var results []map[string]interface{}
 
-	walkFn := func(path string, info os.FileInfo, err error) error {
+	walkFn := func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if info.IsDir() {
+		if d.IsDir() {
 			return nil
 		}
 
 		if include != "" {
-			match, err := filepath.Match(include, info.Name())
+			match, err := filepath.Match(include, d.Name())
 			if err != nil || !match {
 				return nil
 			}
@@ -863,7 +864,7 @@ func (t *GrepTool) Execute(ctx context.Context, inputs map[string]string) (ToolR
 		return nil
 	}
 
-	filepath.Walk(resolvedPath, walkFn)
+	filepath.WalkDir(resolvedPath, walkFn)
 
 	return ToolResult{
 		Success: true,

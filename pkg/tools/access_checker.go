@@ -68,17 +68,20 @@ const (
 func FileToolPaths(toolName string, args map[string]string) []string {
 	switch toolName {
 	case "file_read", "read_file":
-		if p, ok := args["path"]; ok {
+		if p, ok := args["path"]; ok && p != "" {
 			return []string{p}
 		}
+		return []string{"."}
 	case "file_write", "write_file":
-		if p, ok := args["path"]; ok {
+		if p, ok := args["path"]; ok && p != "" {
 			return []string{p}
 		}
+		return []string{"."}
 	case "edit", "edit_file":
-		if p, ok := args["path"]; ok {
+		if p, ok := args["path"]; ok && p != "" {
 			return []string{p}
 		}
+		return []string{"."}
 	case "file_list", "list_dir", "dir_list":
 		if p, ok := args["path"]; ok && p != "" {
 			return []string{p}

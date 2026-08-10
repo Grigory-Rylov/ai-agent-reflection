@@ -244,7 +244,7 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 
 	// Проверяем и при необходимости сжимаем контекст (opencode-style)
 	if a.compactor != nil {
-		a.compactIfNeeded(ctx, s)
+		a.compactIfNeeded(ctx, s, true)
 		history = s.GetHistory()
 	}
 
@@ -273,14 +273,17 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 	return a.processStreaming(ctx, apiMessages, s)
 }
 
-// compactIfNeeded выполняет opencode-style компакцию при переполнении контекста
-func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session) {
+// compactIfNeeded выполняет opencode-style компакцию при переполнении контекста.
+// addAutoContinue — если true, добавляет CompactionAutoContinueText после успешной
+// компактизации (для ProcessMessage path); если false — не добавляет (tool loop).
+// Возвращает true если компактизация успешно выполнена (summary не пустой).
+func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session, addAutoContinue bool) bool {
 	history := s.GetHistory()
-	messages := a.convertSessionHistory(history)
 
-	tokensBefore := compress.EstimateMessagesTokensSimple(messages)
+	visible := a.convertSessionHistory(history)
+	tokensBefore := compress.EstimateMessagesTokensSimple(visible)
 	if !compress.IsOverflowWithLimits(tokensBefore, a.config.MaxTokens, a.config.ModelLimitInput, a.config.CompactionReserved) {
-		return
+		return false
 	}
 
 	tailTurns := a.config.TailTurns
@@ -288,30 +291,44 @@ func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session) {
 		tailTurns = 2
 	}
 
-	result, err := a.compactor.CompactWithOpenCode(ctx, messages, a.config.MaxTokens, tailTurns, a.config.PreserveRecentTokens)
+	result, err := a.compactor.CompactWithOpenCode(ctx, a.convertSessionHistoryRaw(history), a.config.MaxTokens, tailTurns, a.config.PreserveRecentTokens)
 	if err != nil {
-		a.debugLog.Warn("Compaction skipped: %v", err)
-		return
+		a.debugLog.Warn("LLM compaction failed: %v, falling back to aggressive head pruning", err)
+
+		fbResult := a.compactionFallback(history, tailTurns, a.config.MaxTokens)
+		if fbResult != nil {
+			a.markCompactedHead(s, fbResult.TailStartID)
+			s.MarkCompaction(fbResult.TailStartID, compactionFallbackSummary)
+		}
+		return false
 	}
 
-	s.Reset()
-	if result.SummaryMsg.Content != "" {
-		s.AddUserMessage("<<CONVERSATION COMPACTED>>")
-		s.AddAssistantMessageWithSummary(result.Summary)
+	if result.Summary == "" {
+		return false
 	}
-	for _, msg := range result.KeptTail {
-		switch msg.Role {
-		case "system":
-			s.UpdateSystemPrompt(msg.Content)
-		case "user":
-			s.AddUserMessage(msg.Content)
-		case "assistant":
-			s.AddAssistantMessage(msg.Content)
-		case "tool":
-			s.AddUserMessage(msg.Content)
+
+	s.MarkCompaction(result.TailStartID, result.Summary)
+
+	if addAutoContinue && shouldAddAutoContinue(s) {
+		s.AddUserMessage(tokenizers.CompactionAutoContinueText)
+	}
+
+	return true
+}
+
+// markCompactedHead помечает головные сообщения сессии как compacted.
+func (a *agentImpl) markCompactedHead(s *session.Session, tailStartID int) {
+	for i := 0; i < tailStartID && i < len(s.GetHistory()); i++ {
+		msg := s.GetHistory()[i]
+		if msg.Role != session.SystemRole {
+			s.MarkMessageCompacted(i, compress.PRUNED_OUTPUT_PLACEHOLDER)
 		}
 	}
+	a.debugLog.Info("Compaction fallback: marked %d head messages as compacted", tailStartID)
 }
+
+// compactionFallbackSummary — placeholder summary когда LLM-суммаризация не удалась.
+const compactionFallbackSummary = "## Goal\n- [context compacted — summary unavailable]\n\n## Constraints & Preferences\n- (none)\n\n## Progress\n### Done\n- (compact failed)\n\n### In Progress\n- (truncated)\n\n### Blocked\n- context overflow during summarization\n\n## Key Decisions\n- (lost during compaction fallback)\n\n## Next Steps\n- continue current task\n\n## Critical Context\n- [compaction summary could not be generated]\n\n## Relevant Files\n- (none)"
 
 // convertSessionHistory конвертирует историю сессии в tokenizers.Message
 // Tool call аргументы добавляются к контенту для корректной оценки токенов
@@ -319,6 +336,12 @@ func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session) {
 // После конвертации применяет FilterCompacted для корректного порядка
 // сообщений после компактизации: [compaction-user, summary, tail, after-summary]
 func (a *agentImpl) convertSessionHistory(history []session.Message) []tokenizers.Message {
+	return compress.FilterCompacted(a.convertSessionHistoryRaw(history))
+}
+
+// convertSessionHistoryRaw конвертирует историю 1:1 (без FilterCompacted),
+// сохраняя выравнивание индексов с session.messages для TailStartID.
+func (a *agentImpl) convertSessionHistoryRaw(history []session.Message) []tokenizers.Message {
 	messages := make([]tokenizers.Message, len(history))
 	for i, msg := range history {
 		content := msg.Content
@@ -327,18 +350,39 @@ func (a *agentImpl) convertSessionHistory(history []session.Message) []tokenizer
 			content += tc.Function.Arguments
 		}
 		messages[i] = tokenizers.Message{
-			Role:    string(msg.Role),
-			Content: content,
-			Summary: msg.Summary,
+			Role:        string(msg.Role),
+			Content:     content,
+			Summary:     msg.Summary,
+			Compacted:   msg.Compacted,
+			TailStartID: msg.TailStartID,
 		}
 	}
-	return compress.FilterCompacted(messages)
+	return messages
 }
 
 // ResetSession сбрасывает сессию пользователя
 func (a *agentImpl) ResetSession(peerID int64) {
 	s := a.getSession(peerID)
 	s.Reset()
+}
+
+// compactionFallback возвращает SelectResult для агрессивного проранинга head,
+// когда LLM-суммаризация не уместилась в контекст. Использует тот же select(),
+// чтобы сохранить tail и максимально сократить head.
+func (a *agentImpl) compactionFallback(history []session.Message, tailTurns int, maxTokens int) *compress.SelectResult {
+	if len(history) == 0 {
+		return nil
+	}
+
+	raw := a.convertSessionHistoryRaw(history)
+	budget := compress.PreserveRecentBudget(maxTokens, a.config.PreserveRecentTokens)
+	selected := compress.SelectMessages(raw, tailTurns, budget)
+
+	if selected.TailStartID <= 0 || len(selected.Head) == 0 {
+		return nil
+	}
+
+	return &selected
 }
 
 // GetSession возвращает сессию пользователя
@@ -498,9 +542,13 @@ func (a *agentImpl) injectInstructions(messages []Message, workingDir string) []
 func (a *agentImpl) convertHistoryToAPIMessages(history []session.Message) []Message {
 	apiMessages := make([]Message, len(history))
 	for i, msg := range history {
+		content := msg.Content
+		if msg.Role == session.ToolRole {
+			content = compress.TruncateToolOutput(content)
+		}
 		apiMsg := Message{
 			Role:       string(msg.Role),
-			Content:    msg.Content,
+			Content:    content,
 			ToolCallID: msg.ToolCallID,
 			Name:       msg.Name,
 		}

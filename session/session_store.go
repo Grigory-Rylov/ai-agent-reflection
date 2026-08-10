@@ -96,11 +96,14 @@ func (s *Session) saveToStore(st store.Store) error {
 
 func messageToStoreMsg(msg Message) store.MessageData {
 	d := store.MessageData{
-		Role:       string(msg.Role),
-		Content:    msg.Content,
-		ToolCallID: msg.ToolCallID,
-		ToolName:   msg.Name,
-		Timestamp:  msg.Timestamp.Format(time.RFC3339),
+		Role:        string(msg.Role),
+		Content:     msg.Content,
+		ToolCallID:  msg.ToolCallID,
+		ToolName:    msg.Name,
+		Timestamp:   msg.Timestamp.Format(time.RFC3339),
+		Summary:     msg.Summary,
+		Compacted:   msg.Compacted,
+		TailStartID: msg.TailStartID,
 	}
 	if len(msg.ToolCalls) > 0 {
 		data, _ := json.Marshal(msg.ToolCalls)
@@ -112,11 +115,14 @@ func messageToStoreMsg(msg Message) store.MessageData {
 func storeMsgToMessage(d store.MessageData) (Message, error) {
 	ts, _ := time.Parse(time.RFC3339, d.Timestamp)
 	msg := Message{
-		Role:       Role(d.Role),
-		Content:    d.Content,
-		ToolCallID: d.ToolCallID,
-		Name:       d.ToolName,
-		Timestamp:  ts,
+		Role:        Role(d.Role),
+		Content:     d.Content,
+		ToolCallID:  d.ToolCallID,
+		Name:        d.ToolName,
+		Timestamp:   ts,
+		Summary:     d.Summary,
+		Compacted:   d.Compacted,
+		TailStartID: d.TailStartID,
 	}
 	if d.ToolCalls != "" {
 		var calls []MsgToolCall

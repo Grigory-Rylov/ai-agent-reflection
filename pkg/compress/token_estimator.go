@@ -1,8 +1,6 @@
 package compress
 
 import (
-	"strings"
-
 	"github.com/opencode/llama-client/pkg/tokenizers"
 )
 
@@ -24,30 +22,15 @@ type TokenEstimator interface {
 type SimpleEstimator struct{}
 
 // EstimateTokensSimple оценивает количество токенов по тексту.
-// Использует эвристику: 1 токен ≈ 4 символа для английского, 2-3 для кода.
+// Единая стратегия (как opencode Token.estimate): 1 токен ≈ 4 символа,
+// без codeFactor/структурных бонусов — чтобы выбор head/tail, pruning и
+// overflow-проверка использовали одну и ту же оценку.
 func EstimateTokensSimple(text string) int {
 	if len(text) == 0 {
 		return 0
 	}
-
-	// Базовая оценка: 4 символа на токен
-	charCount := len(text)
-
-	// Корректировка для разных типов контента
-	newlines := strings.Count(text, "\n")
-	spaces := strings.Count(text, " ")
-
-	// Код и структурированный текст имеют больше токенов
-	codeFactor := 1.0
-	if strings.Contains(text, "{") || strings.Contains(text, "func ") {
-		codeFactor = 1.3
-	}
-
-	// Эвристика: (символы / 4) + поправка на структуру
-	baseTokens := float64(charCount) / 4.0
-	structureBonus := float64(newlines+spaces) / 20.0
-
-	return int((baseTokens + structureBonus) * codeFactor)
+	// Math.ceil(len/4) в opencode
+	return (len(text) + 3) / 4
 }
 
 // EstimateMessagesTokensSimple оценивает токены в сообщениях.

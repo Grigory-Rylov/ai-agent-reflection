@@ -22,6 +22,7 @@ type AgentInfo struct {
 	Leaf        bool                     `json:"leaf"`
 	Review      bool                     `json:"review"`
 	Coordinator bool                   `json:"coordinator"`
+	SubagentTypes []string             `json:"subagentTypes"`
 	Prompt      string                   `json:"prompt"`
 	Model       string                   `json:"model"`
 	Temperature *float64                 `json:"temperature"`
@@ -94,17 +95,6 @@ func (am *AgentManager) initDefaults() {
 ## Rules
 - You can create files and run commands as needed
 - Return complete results — the caller has no other context`,
-		Options:     map[string]interface{}{},
-	}
-
-	// Worker agent — leaf agent для выполнения задач
-	am.agents["worker"] = AgentInfo{
-		Name:        "worker",
-		Description: "Implements code changes, writes files, runs commands. Has full tool access.",
-		Mode:        ModeSubagent,
-		Leaf:        true,
-		Native:      true,
-		Permission:  DefaultPermission(),
 		Options:     map[string]interface{}{},
 	}
 
@@ -181,6 +171,19 @@ func (am *AgentManager) ListAgents() []AgentInfo {
 	return agents
 }
 
+// SubagentTypesFor возвращает список агентов, которым разрешено делегировать
+// агенту name. Пустой список означает «любые доступные сабагенты».
+func (am *AgentManager) SubagentTypesFor(name string) []string {
+	if am == nil {
+		return nil
+	}
+	a, err := am.GetAgent(name)
+	if err != nil {
+		return nil
+	}
+	return a.SubagentTypes
+}
+
 // CanAccess проверяет может ли агент использовать инструмент
 func (am *AgentManager) CanAccess(agentName, toolName string) (bool, error) {
 	a, err := am.GetAgent(agentName)
@@ -251,6 +254,7 @@ func (am *AgentManager) LoadFromConfig(cfg map[string]AgentCfg) {
 			Leaf:        ac.Leaf,
 			Review:      ac.Review,
 			Coordinator: ac.Coordinator,
+			SubagentTypes: ac.SubagentTypes,
 			Prompt:      ac.Prompt,
 			Permission:  perm,
 		})
@@ -267,5 +271,6 @@ type AgentCfg struct {
 	Leaf        bool       `json:"leaf"`
 	Review      bool       `json:"review"`
 	Coordinator bool       `json:"coordinator"`
+	SubagentTypes []string `json:"subagentTypes"`
 	Permission  Permission `json:"permission"`
 }

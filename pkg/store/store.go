@@ -31,6 +31,11 @@ type MessageData struct {
 	ToolName   string `json:"tool_name,omitempty"`
 	ToolCalls  string `json:"tool_calls,omitempty"`
 	Timestamp  string `json:"timestamp,omitempty"`
+	// Summary/Compacted/TailStartID — метаданные компактизации, чтобы маркеры
+	// переживали перезагрузку сессии (резюм после рестарта).
+	Summary     bool `json:"summary,omitempty"`
+	Compacted   bool `json:"compacted,omitempty"`
+	TailStartID int  `json:"tail_start_id,omitempty"`
 }
 
 type TodoItem struct {

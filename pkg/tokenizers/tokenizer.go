@@ -72,6 +72,19 @@ func EstimateCompletionTokens(maxTokens int) int {
 	return maxTokens
 }
 
+// CompactionUserMessage — контент user-сообщения-маркера компактизации.
+// Как в opencode message-v2.ts toModelMessagesEffect: compaction-part рендерится
+// модели как естественный текст-рекап, а не как технический маркер.
+const CompactionUserMessage = "What did we do so far? Respond in the same language as the conversation."
+
+// CompactionAutoContinueText — синтетическое user-сообщение после проактивной
+// компактизации в tool loop. Модель понимает, что нужно продолжить работу.
+const CompactionAutoContinueText = "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed. Respond in the same language as the conversation."
+
+// CompactionOverflowContinueText — синтетическое user-сообщение после реактивной
+// компактизации при переполнении контекста (overflow).
+const CompactionOverflowContinueText = "The previous request exceeded the provider's size limit due to large context. Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed. Respond in the same language as the conversation."
+
 // Message представляет сообщение в чате
 type Message struct {
 	Role       string `json:"role"`
@@ -79,7 +92,11 @@ type Message struct {
 	ToolCallID string `json:"tool_call_id,omitempty"` // ID инструмента для role=tool
 	Name       string `json:"name,omitempty"`         // имя инструмента для role=tool
 	Compacted  bool   `json:"compacted,omitempty"`    // output обрезан pruning-ом
-	Summary    bool   `json:"summary,omitempty"`       // сообщение-суммаризация компакшена
+	Summary    bool   `json:"summary,omitempty"`      // сообщение-суммаризация компакшена
+	// TailStartID — индекс первого сообщения хвоста (tail), сохранённого при
+	// компактизации. Хранится на summary-сообщении; в агенте индекс сообщения
+	// в slice истории является стабильным ID (сообщения только добавляются).
+	TailStartID int `json:"tail_start_id,omitempty"`
 }
 
 // String возвращает строковое представление сообщения

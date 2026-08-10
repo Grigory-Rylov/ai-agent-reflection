@@ -32,12 +32,29 @@ func runMigrations(db *sql.DB) error {
 		}
 	}
 
+	// Метаданные компактизации в messages (opencode-модель: маркеры переживают
+	// перезагрузку сессии).
+	for _, col := range []struct{ name, ddl string }{
+		{"summary", "INTEGER DEFAULT 0"},
+		{"compacted", "INTEGER DEFAULT 0"},
+		{"tail_start_id", "INTEGER DEFAULT 0"},
+	} {
+		if err := ensureColumnTyped(db, "messages", col.name, col.ddl); err != nil {
+			return fmt.Errorf("migrate messages.%s column: %w", col.name, err)
+		}
+	}
+
 	return nil
 }
 
-// ensureColumn добавляет колонку в таблицу, если её ещё нет
+// ensureColumn добавляет текстовую колонку в таблицу, если её ещё нет
 // (SQLite не поддерживает ADD COLUMN IF NOT EXISTS).
 func ensureColumn(db *sql.DB, table, column string) error {
+	return ensureColumnTyped(db, table, column, "TEXT DEFAULT ''")
+}
+
+// ensureColumnTyped добавляет колонку с произвольным DDL, если её ещё нет.
+func ensureColumnTyped(db *sql.DB, table, column, ddl string) error {
 	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
 	if err != nil {
 		return err
@@ -56,7 +73,7 @@ func ensureColumn(db *sql.DB, table, column string) error {
 			return nil
 		}
 	}
-	_, err = db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` TEXT DEFAULT ''`)
+	_, err = db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + ddl)
 	return err
 }
 
@@ -81,6 +98,9 @@ const messagesTable = `CREATE TABLE IF NOT EXISTS messages (
 	tool_name TEXT DEFAULT '',
 	tool_calls TEXT DEFAULT '',
 	timestamp TEXT NOT NULL,
+	summary INTEGER DEFAULT 0,
+	compacted INTEGER DEFAULT 0,
+	tail_start_id INTEGER DEFAULT 0,
 	FOREIGN KEY (peer_id) REFERENCES sessions(peer_id)
 )`
 

@@ -16,12 +16,18 @@ import (
 	"github.com/opencode/llama-client/pkg/modelsconfig"
 	"github.com/opencode/llama-client/pkg/tokenizers"
 	"github.com/opencode/llama-client/pkg/tools"
+	"github.com/opencode/llama-client/pkg/util/stringutil"
 	"github.com/opencode/llama-client/session"
 )
 
 type AgentLoop interface {
 	ProcessPrompt(ctx context.Context, prompt string, peerID int64) (string, error)
 	ProcessMessage(ctx context.Context, prompt string, peerID int64) (string, error)
+	// ProcessPromptWithExtraSystem обрабатывает промпт на главном персистентном
+	// агенте, временно дополняя его системный промпт блоком extraSystem.
+	// История сессии сохраняется — контекст общий с обычными сообщениями в чат,
+	// а системный промпт после ответа возвращается к исходному.
+	ProcessPromptWithExtraSystem(ctx context.Context, prompt string, peerID int64, extraSystem string) (string, error)
 	Start(ctx context.Context)
 	Stop()
 	ResetSession(peerID int64)
@@ -371,6 +377,20 @@ func (al *agentLoop) ProcessMessage(ctx context.Context, prompt string, peerID i
 	return al.ProcessPrompt(ctx, prompt, peerID)
 }
 
+// ProcessPromptWithExtraSystem обрабатывает промпт на главном персистентном
+// агенте, временно дополняя системный промпт сессии блоком extraSystem.
+// История (пользователь/ассистент) сохраняется, системный промпт после ответа
+// возвращается к исходному — так контекст координатора и обычного чата общий.
+func (al *agentLoop) ProcessPromptWithExtraSystem(ctx context.Context, prompt string, peerID int64, extraSystem string) (string, error) {
+	sess := al.getOrCreateSession(peerID)
+	original := sess.GetSystemPrompt()
+	if strings.TrimSpace(extraSystem) != "" {
+		sess.UpdateSystemPrompt(original + "\n\n" + strings.TrimSpace(extraSystem))
+		defer sess.UpdateSystemPrompt(original)
+	}
+	return al.ProcessPrompt(ctx, prompt, peerID)
+}
+
 func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID int64) (string, error) {
 	if err := al.syncCurrentModel(); err != nil {
 		return "", err
@@ -383,7 +403,7 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 	defer sess.SetResumePrompt("")
 
 	if al.log != nil {
-		al.log.InfoLogf("Prompt received from peer %d: %s", peerID, truncate(prompt, 100))
+		al.log.InfoLogf("Prompt received from peer %d: %s", peerID, stringutil.Truncate(prompt, 100, "..."))
 	}
 
 	al.dispatcher.Emit(NewEvent(EventPromptReceived, peerID))
@@ -488,7 +508,7 @@ func (al *agentLoop) sendThinking(peerID int64, content string) {
 	al.dispatcher.Emit(NewEvent(EventThinking, peerID))
 
 	if al.log != nil {
-		al.log.InfoLogf("Thinking sent to peer %d: %s", al.config.ThinkingPeerID, truncate(content, 80))
+		al.log.InfoLogf("Thinking sent to peer %d: %s", al.config.ThinkingPeerID, stringutil.Truncate(content, 80, "..."))
 	}
 }
 
@@ -607,9 +627,13 @@ func (al *agentLoop) buildAPIMessages(sess *session.Session) []agent.Message {
 	messages := make([]agent.Message, len(history))
 
 	for i, msg := range history {
+		content := msg.Content
+		if msg.Role == session.ToolRole {
+			content = compress.TruncateToolOutput(content)
+		}
 		messages[i] = agent.Message{
 			Role:    string(msg.Role),
-			Content: msg.Content,
+			Content: content,
 		}
 	}
 
@@ -868,12 +892,12 @@ func getStringField(m map[string]interface{}, key string) string {
 func (al *agentLoop) checkAndCompressOpenCode(ctx context.Context, sess *session.Session, peerID int64) {
 	history := sess.GetHistory()
 
-	messages := al.convertHistoryToMessages(history)
-	tokensBefore := compress.EstimateMessagesTokensSimple(messages)
+	visible := al.convertHistoryToMessages(history)
+	tokensBefore := compress.EstimateMessagesTokensSimple(visible)
 
 	if al.log != nil {
 		al.log.DebugLogf("[OPENCODE-COMPACT] Peer %d: %d messages, ~%d tokens",
-			peerID, len(messages), tokensBefore)
+			peerID, len(visible), tokensBefore)
 	}
 
 	if !compress.IsOverflowWithLimits(tokensBefore, al.config.MaxTokens, al.config.ModelLimitInput, al.config.CompactionReserved) {
@@ -893,7 +917,9 @@ func (al *agentLoop) checkAndCompressOpenCode(ctx context.Context, sess *session
 		tailTurns = 2
 	}
 
-	result, err := al.compactor.CompactWithOpenCode(ctx, messages, al.config.MaxTokens, tailTurns, al.config.PreserveRecentTokens)
+	// Компактируем по сырой истории (без FilterCompacted): TailStartID из
+	// select() должен совпадать с индексами session.messages для MarkCompaction.
+	result, err := al.compactor.CompactWithOpenCode(ctx, al.convertHistoryToRawMessages(history), al.config.MaxTokens, tailTurns, al.config.PreserveRecentTokens)
 	if err != nil {
 		if al.log != nil {
 			al.log.WarnLogf("[OPENCODE-COMPACT] Peer %d: Compaction failed: %v", peerID, err)
@@ -908,6 +934,13 @@ func (al *agentLoop) checkAndCompressOpenCode(ctx context.Context, sess *session
 	}
 
 	al.applyOpenCodeCompactResult(sess, result)
+
+	// Auto-continuation: после авто-компактизации добавляем синтетическое
+	// user-сообщение (как в opencode compaction.ts:444-526), чтобы цикл агента
+	// продолжался автоматически после инъекции summary.
+	if result.Summary != "" {
+		sess.AddUserMessage(tokenizers.CompactionAutoContinueText)
+	}
 
 	// After compaction, the KV-cache in the slot is stale: history was rewritten,
 	// so cached prompt tokens no longer match. Invalidate the slot fully —
@@ -950,28 +983,13 @@ func (al *agentLoop) invalidateSessionSlot(ctx context.Context, sessionID string
 }
 
 func (al *agentLoop) applyOpenCodeCompactResult(sess *session.Session, result *compress.OpenCodeCompactResult) {
-	sess.Reset()
-
-	if result.SummaryMsg.Content != "" {
-		// Compaction user message — нужен для FilterCompacted (находит маркер)
-		sess.AddUserMessage("<<CONVERSATION COMPACTED>>")
-		sess.AddAssistantMessageWithSummary(
-			result.Summary,
-		)
+	// Не сбрасываем сессию (модель opencode): головная часть помечается как
+	// compacted, хвост сохраняется через tail_start_id, а в начале контекста
+	// после компактизации всегда идут /pin-промпты (см. GetContextMessages).
+	if result.Summary == "" {
+		return
 	}
-
-	for _, msg := range result.KeptTail {
-		switch msg.Role {
-		case "system":
-			sess.UpdateSystemPrompt(msg.Content)
-		case "user":
-			sess.AddUserMessage(msg.Content)
-		case "assistant":
-			sess.AddAssistantMessage(msg.Content)
-		case "tool":
-			sess.AddUserMessage(msg.Content)
-		}
-	}
+	sess.MarkCompaction(result.TailStartID, result.Summary)
 }
 
 func (al *agentLoop) runPruning(sess *session.Session) {
@@ -979,41 +997,45 @@ func (al *agentLoop) runPruning(sess *session.Session) {
 		return
 	}
 	history := sess.GetHistory()
-	messages := al.convertHistoryToMessages(history)
-	pruned := compress.PruneMessages(messages)
 
-	if len(pruned) == len(messages) {
+	// PruneMessages работает над сырой историей (без FilterCompacted), чтобы
+	// индексы совпадали с сессией, а маркеры компактизации сохранялись.
+	raw := al.convertHistoryToRawMessages(history)
+	pruned := compress.PruneMessages(raw, compress.PRUNE_PROTECTED_TOOLS...)
+
+	prunedCount := 0
+	for i, m := range pruned {
+		if m.Compacted && !raw[i].Compacted {
+			prunedCount++
+		}
+	}
+	if prunedCount == 0 {
 		return
 	}
 
 	if al.log != nil {
-		prunedCount := 0
-		for i, m := range pruned {
-			if m.Compacted && !messages[i].Compacted {
-				prunedCount++
-			}
-		}
-		if prunedCount > 0 {
-			al.log.DebugLogf("[PRUNE] Peer %d: Pruned %d tool outputs", sess.GetPeerID(), prunedCount)
-		}
+		al.log.DebugLogf("[PRUNE] Peer %d: Pruned %d tool outputs", sess.GetPeerID(), prunedCount)
 	}
 
-	sess.Reset()
-	for _, msg := range pruned {
-		switch msg.Role {
-		case "system":
-			sess.UpdateSystemPrompt(msg.Content)
-		case "user":
-			sess.AddUserMessage(msg.Content)
-		case "assistant":
-			sess.AddAssistantMessage(msg.Content)
-		case "tool":
-			sess.AddUserMessage(msg.Content)
+	// Применяем обрезку на месте — без Reset(): история, маркеры компактизации
+	// и tail_start_id остаются нетронутыми. Затрагиваем ТОЛЬКО новые обрезки:
+	// сообщения, уже помеченные compacted предыдущей компактизацией, содержат
+	// исходный head-контент (нужен для будущих summaries) — их не трогаем.
+	for i := range pruned {
+		if pruned[i].Compacted && !raw[i].Compacted {
+			sess.MarkMessageCompacted(i, compress.PRUNED_OUTPUT_PLACEHOLDER)
 		}
 	}
 }
 
 func (al *agentLoop) convertHistoryToMessages(history []session.Message) []tokenizers.Message {
+	return compress.FilterCompacted(al.convertHistoryToRawMessages(history))
+}
+
+// convertHistoryToRawMessages конвертирует историю 1:1 (без FilterCompacted),
+// сохраняя выравнивание индексов с session.messages — нужно для TailStartID
+// при повторной компактизации и для runPruning.
+func (al *agentLoop) convertHistoryToRawMessages(history []session.Message) []tokenizers.Message {
 	messages := make([]tokenizers.Message, len(history))
 	for i, msg := range history {
 		content := msg.Content
@@ -1022,12 +1044,14 @@ func (al *agentLoop) convertHistoryToMessages(history []session.Message) []token
 			content += tc.Function.Arguments
 		}
 		messages[i] = tokenizers.Message{
-			Role:    string(msg.Role),
-			Content: content,
-			Summary: msg.Summary,
+			Role:        string(msg.Role),
+			Content:     content,
+			Summary:     msg.Summary,
+			Compacted:   msg.Compacted,
+			TailStartID: msg.TailStartID,
 		}
 	}
-	return compress.FilterCompacted(messages)
+	return messages
 }
 
 func (al *agentLoop) Start(ctx context.Context) {
@@ -1138,7 +1162,7 @@ func (al *agentLoop) ResumeInterruptedTask(ctx context.Context, peerID int64) {
 		return
 	}
 	if al.log != nil {
-		al.log.InfoLogf("[RESUME] continuing interrupted task for peer %d (resume_prompt=%q)", peerID, truncate(sess.GetResumePrompt(), 80))
+		al.log.InfoLogf("[RESUME] continuing interrupted task for peer %d (resume_prompt=%q)", peerID, stringutil.Truncate(sess.GetResumePrompt(), 80, "..."))
 	}
 	const contPrompt = "The process was restarted. Continue your task from where you left off."
 	if _, err := al.ProcessPrompt(ctx, contPrompt, peerID); err != nil {
@@ -1158,12 +1182,6 @@ func (al *agentLoop) TestLlamaServer(ctx context.Context) (model string, respons
 	return result.Model, result.ResponseTime, result.TokensPerSec, result.Error
 }
 
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
-}
 
 func NewDefaultLogger(debug bool) Logger {
 	return newDefaultLogger(debug)

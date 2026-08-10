@@ -323,14 +323,8 @@ func extractFloat64(arr []interface{}, index int) float64 {
 	return 0
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
 
-// extractMessageID извлекает ID сообщения из ответа VK
+
 func extractMessageID(response interface{}) (int64, error) {
 	// Формат 1: { "response": 12345 } — просто число
 	if msgID, ok := response.(float64); ok {
