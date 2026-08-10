@@ -14,6 +14,7 @@ import (
 	"github.com/opencode/llama-client/pkg/logger"
 	"github.com/opencode/llama-client/pkg/modelsconfig"
 	"github.com/opencode/llama-client/pkg/tools"
+	"github.com/opencode/llama-client/pkg/util"
 	"github.com/opencode/llama-client/session"
 )
 
@@ -57,7 +58,11 @@ type BotHandler struct {
 	// завершения текущей задачи без отмены контекста.
 	peerProcessors     map[int64]*sync.Mutex
 	peerProcessorsMu   sync.RWMutex
+	// semaphore limits concurrent message processing goroutines.
+	semaphore chan struct{}
 }
+
+const maxConcurrentHandlers = 10
 
 func NewBotHandler(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger.Logger) *BotHandler {
 	return &BotHandler{
@@ -68,6 +73,7 @@ func NewBotHandler(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger
 		cancelFuncs:    make(map[int64]context.CancelFunc),
 		peerProcessors: make(map[int64]*sync.Mutex),
 		attachmentsDir: "./attachments",
+		semaphore:      make(chan struct{}, maxConcurrentHandlers),
 	}
 }
 
@@ -84,6 +90,7 @@ func NewBotHandlerWithPeerID(vkClient *BotClient, aiAgent agentloop.AgentLoop, l
 		cancelFuncs:    make(map[int64]context.CancelFunc),
 		peerProcessors: make(map[int64]*sync.Mutex),
 		attachmentsDir: "./attachments",
+		semaphore:      make(chan struct{}, maxConcurrentHandlers),
 	}
 }
 
@@ -146,18 +153,18 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 
 	// Не-команды могут быть ответами на pending вопросы (права доступа, уточнения).
 	if tools.HasPendingQuestion(peerID) {
-		logger.DebugToFile("[ProcessMessage] HasPendingQuestion=true for peer %d, command=%s", peerID, truncateStr(command, 100))
+		logger.DebugToFile("[ProcessMessage] HasPendingQuestion=true for peer %d, command=%s", peerID, util.Truncate(command, 100))
 		if tools.ResolvePendingQuestion(peerID, command) {
-			logger.DebugToFile("[ProcessMessage] Resolved pending question for peer %d with: %s", peerID, truncateStr(command, 50))
+			logger.DebugToFile("[ProcessMessage] Resolved pending question for peer %d with: %s", peerID, util.Truncate(command, 50))
 			return ""
 		} else {
-			logger.DebugToFile("[ProcessMessage] ResolvePendingQuestion returned false for peer %d, command=%s", peerID, truncateStr(command, 50))
+			logger.DebugToFile("[ProcessMessage] ResolvePendingQuestion returned false for peer %d, command=%s", peerID, util.Truncate(command, 50))
 		}
 	}
 
 	if agentName, task := ParseAgentHashMention(command, h.agentNames()); agentName != "" {
 		if h.log != nil {
-			h.log.InfoLogf("Agent #%s invoked by peer %d with task: %s", agentName, peerID, truncateStr(task, 100))
+			h.log.InfoLogf("Agent #%s invoked by peer %d with task: %s", agentName, peerID, util.Truncate(task, 100))
 		}
 
 		if task == "" {
@@ -293,7 +300,7 @@ func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, tim
 	defer h.clearCancelFunc(peerID)
 
 	if tools.HasPendingQuestion(peerID) {
-		logger.DebugToFile("[ProcessMessageWithTimeout] HasPendingQuestion=true for peer %d, command=%s", peerID, truncateStr(command, 100))
+		logger.DebugToFile("[ProcessMessageWithTimeout] HasPendingQuestion=true for peer %d, command=%s", peerID, util.Truncate(command, 100))
 		if tools.ResolvePendingQuestion(peerID, command) {
 			return ""
 		}
@@ -499,19 +506,19 @@ func (h *BotHandler) handlePinCommand(input string, peerID int64) string {
 	default:
 		s.AddPinned(content)
 		if h.log != nil {
-			h.log.InfoLogf("User %d pinned prompt: %s", peerID, truncateStr(content, 100))
+			h.log.InfoLogf("User %d pinned prompt: %s", peerID, util.Truncate(content, 100))
 		}
 
 		pinCtx, pinCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer pinCancel()
 		response, err := h.aiAgent.ProcessMessage(pinCtx, content, peerID)
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return fmt.Sprintf("✓ Промпт закреплён: %s\n\nОперация отменена или истёк таймаут.", truncateStr(content, 100))
+			return fmt.Sprintf("✓ Промпт закреплён: %s\n\nОперация отменена или истёк таймаут.", util.Truncate(content, 100))
 		}
 		if err != nil {
-			return fmt.Sprintf("✓ Промпт закреплён: %s\n\n❌ Ошибка при выполнении: %v", truncateStr(content, 100), err)
+			return fmt.Sprintf("✓ Промпт закреплён: %s\n\n❌ Ошибка при выполнении: %v", util.Truncate(content, 100), err)
 		}
-		return fmt.Sprintf("✓ Промпт закреплён: %s\n\n%s", truncateStr(content, 100), response)
+		return fmt.Sprintf("✓ Промпт закреплён: %s\n\n%s", util.Truncate(content, 100), response)
 	}
 }
 
@@ -524,7 +531,7 @@ func (h *BotHandler) handleAgentCommand(input string, peerID int64) string {
 
 	if h.orchestrator != nil {
 		if h.log != nil {
-			h.log.InfoLogf("Starting /agent mode for peer %d: %s", peerID, truncateStr(instruction, 100))
+			h.log.InfoLogf("Starting /agent mode for peer %d: %s", peerID, util.Truncate(instruction, 100))
 		}
 		ctx, agCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer agCancel()
@@ -558,13 +565,6 @@ func (h *BotHandler) handleAgentCommand(input string, peerID int64) string {
 	}
 
 	return response
-}
-
-func truncateStr(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }
 
 func extractBaseCommand(input string) string {
@@ -778,7 +778,7 @@ func (h *BotHandler) runLongPoll(ctx context.Context, server, key string, ts int
 				if h.mainPeerID > 0 {
 					replyPeerID = h.mainPeerID
 				}
-				go h.handleIncomingMessage(msg, replyPeerID, fullMsgMap)
+				h.launchMessageHandler(msg, replyPeerID, fullMsgMap)
 			}
 		}
 	}
@@ -814,7 +814,7 @@ func (h *BotHandler) handleIncomingMessage(
 	tools.SetQuestionPeerID(msg.PeerID)
 	fullText := h.buildFullText(&msg, fullMsgMap)
 	logger.DebugToFile("[handler] goroutine: peerID=%d, targetPeer=%d, text=%s",
-		msg.PeerID, targetPeer, truncateStr(fullText, 100))
+		msg.PeerID, targetPeer, util.Truncate(fullText, 100))
 
 	response := h.ProcessMessage(fullText, msg.PeerID)
 	if response == "" {
@@ -823,6 +823,26 @@ func (h *BotHandler) handleIncomingMessage(
 	_, err := h.vkClient.SendMessage(targetPeer, response)
 	if err != nil && h.log != nil {
 		h.log.ErrorLogf("Failed to send response to peer %d: %v", targetPeer, err)
+	}
+}
+
+// launchMessageHandler spawns a goroutine for message processing bounded by semaphore.
+// If the semaphore is full, it drops the message with a warning log.
+func (h *BotHandler) launchMessageHandler(
+	msg VKMessage,
+	replyPeerID int64,
+	fullMsgMap map[int64]VKMessage,
+) {
+	select {
+	case h.semaphore <- struct{}{}:
+		go func() {
+			defer func() { <-h.semaphore }()
+			h.handleIncomingMessage(msg, replyPeerID, fullMsgMap)
+		}()
+	default:
+		if h.log != nil {
+			h.log.WarnLogf("Dropping message from peer %d: max concurrent handlers (%d) reached", msg.PeerID, maxConcurrentHandlers)
+		}
 	}
 }
 

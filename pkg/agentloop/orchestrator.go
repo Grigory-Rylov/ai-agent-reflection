@@ -16,6 +16,7 @@ import (
 	"github.com/opencode/llama-client/pkg/modelsconfig"
 	"github.com/opencode/llama-client/pkg/store"
 	"github.com/opencode/llama-client/pkg/tools"
+	"github.com/opencode/llama-client/pkg/util/stringutil"
 	"github.com/opencode/llama-client/session"
 )
 
@@ -100,7 +101,7 @@ func (o *Orchestrator) setActiveAgent(name string) {
 }
 
 func (o *Orchestrator) ExecuteTask(ctx context.Context, task string, peerID int64) (string, error) {
-	o.debugLog("Mode activated. Task: %s", truncate(task, 200))
+	o.debugLog("Mode activated. Task: %s", stringutil.Truncate(task, 200, "..."))
 	startTime := time.Now()
 	defer o.setActiveAgent("")
 
@@ -127,18 +128,53 @@ func (o *Orchestrator) ExecuteTask(ctx context.Context, task string, peerID int6
 	return qaResult, nil
 }
 
-func (o *Orchestrator) RunAgent(ctx context.Context, agentName, task string, peerID int64) (string, error) {
-	o.debugLog("RunAgent: %s. Task: %s", agentName, truncate(task, 200))
-	o.setActiveAgent(agentName)
-	defer o.setActiveAgent("")
-
+// prepareAgentPrompt loads system prompt and appends max-review constraint if configured.
+func (o *Orchestrator) prepareAgentPrompt(agentName string) (string, error) {
 	prompt, err := o.loadSystemPrompt(agentName)
 	if err != nil {
 		return "", fmt.Errorf("failed to load prompt for agent %q: %w", agentName, err)
 	}
-
 	if o.config.MaxReviewIterations > 0 {
 		prompt += fmt.Sprintf("\n\nMaximum review iterations: %d. After this many developer↔reviewer cycles, move forward regardless.", o.config.MaxReviewIterations)
+	}
+	return prompt, nil
+}
+
+// handleAgentFailure cleans up after ProcessMessage error: cancels context,
+// saves history for recovery, and releases slot.
+func (o *Orchestrator) handleAgentFailure(cancel context.CancelFunc, a agent.Agent, rootID, sessionID string, peerID int64, task string) {
+	cancel()
+	// Слот освобождаем (KV-cache после падения всё равно устарел), но
+	// цепочку/БД не чистим — незавершённую работу восстановит ResumeActiveChains.
+	// Сохраняем историю, чтобы восстановленная сессия не была пустой.
+	if rootID != "" {
+		o.saveAgentHistory(a, rootID, peerID, task)
+	}
+	o.releaseAgentSlot(sessionID)
+}
+
+// finishAgentSession cleans up after successful agent execution: cancels context
+// and either ends the root session or releases the slot.
+func (o *Orchestrator) finishAgentSession(cancel context.CancelFunc, rootID, sessionID string, peerID int64) {
+	cancel()
+	// KV-cache сохраняется per-response внутри agent_impl (через SlotSaver),
+	// поэтому здесь только освобождаем слот.
+	if rootID != "" {
+		o.endRootSession(peerID, rootID)
+	} else {
+		// Стора нет, но слот мог быть выделен — освободим.
+		o.releaseAgentSlot(sessionID)
+	}
+}
+
+func (o *Orchestrator) RunAgent(ctx context.Context, agentName, task string, peerID int64) (string, error) {
+	o.debugLog("RunAgent: %s. Task: %s", agentName, stringutil.Truncate(task, 200, "..."))
+	o.setActiveAgent(agentName)
+	defer o.setActiveAgent("")
+
+	prompt, err := o.prepareAgentPrompt(agentName)
+	if err != nil {
+		return "", err
 	}
 
 	a, sessionID, err := o.makeSubAgent(agentName, prompt, peerID)
@@ -146,13 +182,10 @@ func (o *Orchestrator) RunAgent(ctx context.Context, agentName, task string, pee
 		return "", err
 	}
 
-	// Регистрируем контекст для принудительной отмены при /clear.
 	ctx, cancel := context.WithCancel(ctx)
 	o.registerAgentContext(sessionID, peerID, cancel)
 	defer o.unregisterAndReleaseOnCancel(sessionID)
 
-	// Персистим корневую сессию и стартовую цепочку, чтобы после рестарта
-	// цепочка lead → worker → reviewer восстановилась вплоть до лида.
 	rootID := o.beginRootSession(agentName, prompt, task, peerID, sessionID)
 	var rootChain []string
 	if rootID != "" {
@@ -167,27 +200,11 @@ func (o *Orchestrator) RunAgent(ctx context.Context, agentName, task string, pee
 
 	response, err := a.ProcessMessage(ctx, task, peerID)
 	if err != nil {
-		cancel()
-		// Слот освобождаем (KV-cache после падения всё равно устарел), но
-		// цепочку/БД не чистим — незавершённую работу восстановит ResumeActiveChains.
-		// Сохраняем историю, чтобы восстановленная сессия не была пустой.
-		if rootID != "" {
-			o.saveAgentHistory(a, rootID, peerID, task)
-		}
-		o.releaseAgentSlot(sessionID)
+		o.handleAgentFailure(cancel, a, rootID, sessionID, peerID, task)
 		return "", fmt.Errorf("agent %q failed: %w", agentName, err)
 	}
 
-	cancel()
-	// KV-cache сохраняется per-response внутри agent_impl (через SlotSaver),
-	// поэтому здесь только освобождаем слот.
-	if rootID != "" {
-		o.endRootSession(peerID, rootID)
-	} else {
-		// Стора нет, но слот мог быть выделен — освободим.
-		o.releaseAgentSlot(sessionID)
-	}
-
+	o.finishAgentSession(cancel, rootID, sessionID, peerID)
 	return response, nil
 }
 
@@ -555,10 +572,23 @@ func (o *Orchestrator) makeSubAgent(name, systemPrompt string, peerID int64) (ag
 	if err != nil {
 		return nil, "", err
 	}
+
+	sessionID := newSessionUUID(name, strconv.FormatInt(peerID, 10))
+	o.configureAgentBase(&cfg, name, sessionID)
+	o.assignAgentSlot(&cfg, name, sessionID)
+
+	a := agent.NewAgent(cfg)
+	o.setupAgentPermissions(a, name)
+	a.SetThinkingCallback(o.makeThinkingCallback(name))
+	a.GetSession(peerID).UpdateSystemPrompt(systemPrompt)
+	return a, sessionID, nil
+}
+
+// configureAgentBase sets base config fields: session settings and operational flags.
+func (o *Orchestrator) configureAgentBase(cfg *agent.Config, name string, sessionID string) {
 	cfg.SystemPromptFile = ""
 	// Предгенерируем sessionID и прокидываем в сессию: a.GetSession().GetSessionID()
 	// совпадёт с DB/slot ID — единый идентификатор сессии (как в главном цикле).
-	sessionID := newSessionUUID(name, strconv.FormatInt(peerID, 10))
 	cfg.SessionConfig = session.Config{
 		AutoSave:    false,
 		SessionFile: "",
@@ -570,34 +600,41 @@ func (o *Orchestrator) makeSubAgent(name, systemPrompt string, peerID int64) (ag
 	cfg.AgentName = name
 	cfg.SlotID = -1
 	cfg.SlotSave = false
+}
 
+// assignAgentSlot assigns a model slot to the agent if slot saving is enabled.
+func (o *Orchestrator) assignAgentSlot(cfg *agent.Config, name string, sessionID string) {
+	if o.config.ModelHolder == nil || !o.config.ModelHolder.GetCurrentSlotSave() {
+		return
+	}
+	cfg.SlotSave = true
 	// Назначаем слот агенту (lead/worker/qa). cfg.SlotID пинит каждый LLM-запрос
 	// к слоту этой сессии, пока агент жив — KV-cache переиспользуется между
 	// вызовами инструментов и не конфликтует с другими активными агентами.
 	// SlotSaver вызывается из agent_impl после каждого ответа LLM (только при
 	// slot-save: true в models.json), сохраняя актуальный кэш в {model}_slot{N}.bin.
-	if o.config.ModelHolder != nil && o.config.ModelHolder.GetCurrentSlotSave() {
-		cfg.SlotSave = true
-		if slotID := AssignSessionSlot(o.config.SlotManager, o.config.Slots, o.config.ModelHolder, sessionID, o.config.Logger); slotID >= 0 {
-			cfg.SlotID = slotID
-			cfg.SlotSaver = NewSlotSaver(o.config.SlotManager, o.config.Slots, o.config.ModelHolder, sessionID, o.config.Logger)
-			if o.config.Logger != nil {
-				o.config.Logger.InfoLogf("[SLOT] assigned slot %d to agent %s (session %s)", slotID, name, sessionID)
-			}
+	slotID := AssignSessionSlot(o.config.SlotManager, o.config.Slots, o.config.ModelHolder, sessionID, o.config.Logger)
+	if slotID >= 0 {
+		cfg.SlotID = slotID
+		cfg.SlotSaver = NewSlotSaver(o.config.SlotManager, o.config.Slots, o.config.ModelHolder, sessionID, o.config.Logger)
+		if o.config.Logger != nil {
+			o.config.Logger.InfoLogf("[SLOT] assigned slot %d to agent %s (session %s)", slotID, name, sessionID)
 		}
 	}
+}
 
-	a := agent.NewAgent(cfg)
-
-	if o.config.AgentManager != nil {
-		if info, err := o.config.AgentManager.GetAgent(name); err == nil && info.Permission != nil && len(info.Permission) > 0 {
-			a.SetPermissionChecker(agentpolicy.NewPermissionAdapter(info.Permission))
-		}
+// setupAgentPermissions configures permission checker for the agent.
+func (o *Orchestrator) setupAgentPermissions(a agent.Agent, name string) {
+	if o.config.AgentManager == nil {
+		return
 	}
-
-	a.SetThinkingCallback(o.makeThinkingCallback(name))
-	a.GetSession(peerID).UpdateSystemPrompt(systemPrompt)
-	return a, sessionID, nil
+	info, err := o.config.AgentManager.GetAgent(name)
+	if err != nil || info.Permission == nil || len(info.Permission) == 0 {
+		return
+	}
+	if ps, ok := a.(interface{ SetPermissionChecker(agent.PermissionChecker) }); ok {
+		ps.SetPermissionChecker(agentpolicy.NewPermissionAdapter(info.Permission))
+	}
 }
 
 func (o *Orchestrator) loadSystemPrompt(name string) (string, error) {

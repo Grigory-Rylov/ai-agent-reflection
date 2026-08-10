@@ -153,6 +153,17 @@ func (l *Logger) ErrorLog(msg string, args ...interface{}) {
 // FatalLog записывает фатальную ошибку и завершает программу
 func (l *Logger) FatalLog(msg string, args ...interface{}) {
 	l.log(LevelFatal, msg, args...)
+}
+
+// FatalLogExit is a standalone function that logs and exits.
+// Prefer calling this from the main goroutine only.
+// For use in goroutines, call FatalLog and signal shutdown via context/cancel instead.
+func FatalLogExit(msg string, args ...interface{}) {
+	if globalLogger != nil {
+		globalLogger.FatalLog(msg, args...)
+	} else {
+		fmt.Printf("[FATAL] "+msg+"\n", args...)
+	}
 	os.Exit(1)
 }
 

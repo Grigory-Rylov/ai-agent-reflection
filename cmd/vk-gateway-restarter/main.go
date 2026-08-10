@@ -16,6 +16,7 @@ import (
 	"flag"
 
 	"github.com/opencode/llama-client/pkg/buildinfo"
+	"github.com/opencode/llama-client/pkg/util"
 	"github.com/opencode/llama-client/pkg/vk"
 )
 
@@ -149,37 +150,54 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
+	done := make(chan struct{})
 	go func() {
 		<-sigChan
 		fmt.Println("[restarter] Shutting down...")
 		agent.stop()
 		cancel()
-		os.Exit(0)
+		close(done)
 	}()
 
-	go monitorAgent(&agent, agentPath, agentArgs)
+	go monitorAgent(ctx, &agent, agentPath, agentArgs)
 
 	runVKListener(ctx, vkClient, config, &agent, agentPath, agentArgs)
+	<-done
+	fmt.Println("[restarter] Shutdown complete")
 }
 
-func monitorAgent(ap *agentProc, agentPath string, agentArgs []string) {
+func monitorAgent(ctx context.Context, ap *agentProc, agentPath string, agentArgs []string) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
 	for {
-		time.Sleep(2 * time.Second)
-		if ap.isRunning() {
-			continue
+		select {
+		case <-ctx.Done():
+			fmt.Println("[restarter] monitorAgent stopping")
+			return
+		case <-ticker.C:
+			if !shouldRestart(ap) {
+				continue
+			}
+			restartAgent(ap, agentPath, agentArgs)
 		}
-		ap.mu.Lock()
-		if ap.restarting {
-			ap.mu.Unlock()
-			continue
-		}
-		ap.mu.Unlock()
+	}
+}
 
-		fmt.Println("[restarter] Agent died, restarting...")
-		if err := ap.start(agentPath, agentArgs); err != nil {
-			fmt.Fprintf(os.Stderr, "[restarter] Restart failed: %v\n", err)
-			time.Sleep(5 * time.Second)
-		}
+func shouldRestart(ap *agentProc) bool {
+	ap.mu.Lock()
+	defer ap.mu.Unlock()
+	if ap.restarting {
+		return false
+	}
+	isRunning := ap.cmd != nil && ap.cmd.Process != nil && ap.cmd.ProcessState == nil
+	return !isRunning
+}
+
+func restartAgent(ap *agentProc, agentPath string, agentArgs []string) {
+	fmt.Println("[restarter] Agent died, restarting...")
+	if err := ap.start(agentPath, agentArgs); err != nil {
+		fmt.Fprintf(os.Stderr, "[restarter] Restart failed: %v\n", err)
+		time.Sleep(5 * time.Second)
 	}
 }
 
@@ -249,7 +267,7 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 
 					output, err := exec.Command("git", "pull").CombinedOutput()
 					if err != nil {
-						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ git pull failed:\n%s", truncate(string(output), 500)))
+						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ git pull failed:\n%s", util.Truncate(string(output), 500)))
 						ap.start(agentPath, agentArgs)
 						ap.setRestarting(false)
 						break
@@ -281,7 +299,7 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 
 					output, err := exec.Command("git", "fetch", "--all").CombinedOutput()
 					if err != nil {
-						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ git fetch failed:\n%s", truncate(string(output), 500)))
+						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ git fetch failed:\n%s", util.Truncate(string(output), 500)))
 						ap.start(agentPath, agentArgs)
 						ap.setRestarting(false)
 						break
@@ -289,7 +307,7 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 
 					output, err = exec.Command("git", "checkout", branch).CombinedOutput()
 					if err != nil {
-						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ git checkout %s failed:\n%s", branch, truncate(string(output), 500)))
+						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ git checkout %s failed:\n%s", branch, util.Truncate(string(output), 500)))
 						ap.start(agentPath, agentArgs)
 						ap.setRestarting(false)
 						break
@@ -297,7 +315,7 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 
 					output, err = exec.Command("git", "pull").CombinedOutput()
 					if err != nil {
-						vkClient.SendMessage(replyPeerID, fmt.Sprintf("⚠️ git pull warning:\n%s", truncate(string(output), 500)))
+						vkClient.SendMessage(replyPeerID, fmt.Sprintf("⚠️ git pull warning:\n%s", util.Truncate(string(output), 500)))
 					}
 
 					if err := buildAgent(agentPath); err != nil {
@@ -387,9 +405,3 @@ func loadConfig(path string) (Config, error) {
 	return config, nil
 }
 
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "..."
-}

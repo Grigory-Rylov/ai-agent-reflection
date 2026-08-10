@@ -23,6 +23,7 @@ import (
 	"github.com/opencode/llama-client/pkg/modelsconfig"
 	"github.com/opencode/llama-client/pkg/store"
 	"github.com/opencode/llama-client/pkg/tools"
+	"github.com/opencode/llama-client/pkg/util"
 	"github.com/opencode/llama-client/pkg/vk"
 	"github.com/opencode/llama-client/session"
 )
@@ -394,7 +395,7 @@ func main() {
 	go func() {
 		if err := botHandler.Start(handlerCtx); err != nil {
 			log.ErrorLogf("Bot handler error: %v", err)
-			os.Exit(1)
+			cancel()
 		}
 	}()
 
@@ -407,7 +408,7 @@ func main() {
 		}
 		agentName, task := vk.ParseAgentHashMention(prompt, knownNames)
 		if agentName != "" && orchestrator != nil && task != "" {
-			log.InfoLogf("Processing initial prompt via RunAgent (#%s): %s", agentName, truncate(task, 100))
+			log.InfoLogf("Processing initial prompt via RunAgent (#%s): %s", agentName, util.Truncate(task, 100))
 
 			promptCtx, promptCancel := context.WithTimeout(ctx, 15*time.Minute)
 			response, err := orchestrator.RunAgent(promptCtx, agentName, task, config.PeerID)
@@ -418,13 +419,13 @@ func main() {
 				log.ErrorLogf("Initial prompt failed: %v", err)
 				vkClient.SendMessage(config.PeerID, "❌ "+errMsg)
 			} else if response != "" {
-				log.InfoLogf("Initial prompt response: %s", truncate(response, 200))
+				log.InfoLogf("Initial prompt response: %s", util.Truncate(response, 200))
 				vkClient.SendMessage(config.PeerID, "✅ Result:\n"+response)
 			} else {
 				vkClient.SendMessage(config.PeerID, "⚠️ Initial prompt returned empty response")
 			}
 		} else {
-			log.InfoLogf("Processing initial prompt: %s", truncate(prompt, 100))
+			log.InfoLogf("Processing initial prompt: %s", util.Truncate(prompt, 100))
 
 			promptCtx, promptCancel := context.WithTimeout(ctx, 10*time.Minute)
 			response, err := agentLoop.ProcessPrompt(promptCtx, prompt, config.PeerID)
@@ -435,7 +436,7 @@ func main() {
 				log.ErrorLogf("Initial prompt failed: %v", err)
 				vkClient.SendMessage(config.PeerID, "❌ "+errMsg)
 			} else if response != "" {
-				log.InfoLogf("Initial prompt response: %s", truncate(response, 200))
+				log.InfoLogf("Initial prompt response: %s", util.Truncate(response, 200))
 				vkClient.SendMessage(config.PeerID, "✅ Result:\n"+response)
 			} else {
 				vkClient.SendMessage(config.PeerID, "⚠️ Initial prompt returned empty response")
@@ -655,9 +656,3 @@ func initAgentManager(agents map[string]agentpolicy.AgentCfg, agentDir string, l
 	return am
 }
 
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "..."
-}

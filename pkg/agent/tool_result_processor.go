@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/opencode/llama-client/pkg/compress"
 	"github.com/opencode/llama-client/pkg/logger"
@@ -279,6 +280,35 @@ func (a *agentImpl) handleInvalidXMLToolCall(ctx context.Context, messages []Mes
 		return FunctionCallResult{}, fmt.Errorf("process format error: %w", err)
 	}
 	return FunctionCallResult{Success: true, Response: finalResponse}, nil
+}
+
+// isTerminalResponse возвращает true, если ответ модели — финальный и не стоит ретраить.
+func isTerminalResponse(responseText string, hasToolCalls bool) bool {
+	if len(strings.TrimSpace(responseText)) > 0 {
+		return true
+	}
+	return hasToolCalls
+}
+
+const maxEmptyRetries = 3
+
+// retryEmptyResponse делает повторный запрос, когда модель вернула пустой ответ.
+func (a *agentImpl) retryEmptyResponse(ctx context.Context, streamConfig StreamingConfig, messages []Message, session *sess.Session) (string, string, string, []ToolCall, int, int, error) {
+	for attempt := 0; attempt < maxEmptyRetries; attempt++ {
+		prefix := a.agentPrefix()
+		fmt.Printf(prefix+"[WARN] LLM returned empty response (attempt %d/%d), retrying\n", attempt+1, maxEmptyRetries)
+		
+		messages = append(messages, Message{
+			Role:    "user",
+			Content: "[SYSTEM] Your previous response was empty. Please generate a text response based on the tool results above.",
+		})
+		
+		return a.streamAndCollect(ctx, streamConfig, messages)
+	}
+	
+	prefix := a.agentPrefix()
+	fmt.Printf(prefix+"[WARN] LLM returned empty response after %d retries\n", maxEmptyRetries)
+	return "", "", "stop", nil, 0, 0, nil
 }
 
 // buildToolResultMessages собирает список сообщений для API из оригинальных + assistant + tool results.

@@ -7,6 +7,7 @@ import (
 
 	"github.com/opencode/llama-client/pkg/logger"
 	sess "github.com/opencode/llama-client/session"
+	"github.com/opencode/llama-client/pkg/util"
 )
 
 // ============================================================
@@ -355,7 +356,7 @@ func (a *agentImpl) handleJSONFallback(ctx context.Context, responseText string,
 // handleInvalidOrTextResponse обрабатывает финальный текстовый ответ или ошибки формата
 func (a *agentImpl) handleInvalidOrTextResponse(ctx context.Context, messages []Message, responseText, reasoningText, finishReason string, session *sess.Session, executedToolCalls map[string]bool) (*FunctionCallResult, error) {
 	if responseText == "" && reasoningText != "" && strings.Contains(reasoningText, "<tool_call>") && finishReason != "" {
-		reasoningSnippet := truncateStr(reasoningText, 300)
+		reasoningSnippet := util.Truncate(reasoningText, 300)
 		a.debugLog.Error("[TOOL] Invalid XML tool call in reasoning: %s", reasoningSnippet)
 		a.sendThinking(session.GetPeerID(), "[TOOL] Error: malformed XML tool call in reasoning, sending corrective feedback")
 		result, err := a.handleInvalidXMLToolCall(ctx, messages, session, executedToolCalls)
@@ -368,7 +369,7 @@ func (a *agentImpl) handleInvalidOrTextResponse(ctx context.Context, messages []
 	// Проверяем reasoning на partial/fragmented tool call XML (</tool_call>, <parameter=...> и т.п.)
 	if responseText == "" && reasoningText != "" && hasPartialToolCall(reasoningText) && !strings.Contains(reasoningText, "<tool_call>") && finishReason != "" {
 		prefix := a.agentPrefix()
-		snippet := truncateStr(reasoningText, 200)
+		snippet := util.Truncate(reasoningText, 200)
 		fmt.Printf("%s[TOOL] Partial/malformed tool call fragments in reasoning: %s\n", prefix, snippet)
 		logger.DebugToFile("%s[TOOL] Partial tool call fragments in reasoning: %s", prefix, snippet)
 		a.debugLog.Error("[TOOL] Partial/malformed tool call fragments in reasoning")
@@ -395,7 +396,7 @@ func (a *agentImpl) handleInvalidOrTextResponse(ctx context.Context, messages []
 	if strings.Contains(responseText, "<tool_call") {
 		stripped := ParseXMLToolCalls(responseText)
 		if len(stripped.ToolCalls) == 0 {
-			respSnippet := truncateStr(responseText, 300)
+			respSnippet := util.Truncate(responseText, 300)
 			a.debugLog.Error("[TOOL] Invalid XML tool call in response (no valid tools parsed): %s", respSnippet)
 			a.sendThinking(session.GetPeerID(), "[TOOL] Error: invalid XML tool call format, sending corrective feedback")
 			result, err := a.handleInvalidXMLToolCall(ctx, messages, session, executedToolCalls)

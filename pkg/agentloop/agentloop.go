@@ -16,6 +16,7 @@ import (
 	"github.com/opencode/llama-client/pkg/modelsconfig"
 	"github.com/opencode/llama-client/pkg/tokenizers"
 	"github.com/opencode/llama-client/pkg/tools"
+	"github.com/opencode/llama-client/pkg/util/stringutil"
 	"github.com/opencode/llama-client/session"
 )
 
@@ -383,7 +384,7 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 	defer sess.SetResumePrompt("")
 
 	if al.log != nil {
-		al.log.InfoLogf("Prompt received from peer %d: %s", peerID, truncate(prompt, 100))
+		al.log.InfoLogf("Prompt received from peer %d: %s", peerID, stringutil.Truncate(prompt, 100, "..."))
 	}
 
 	al.dispatcher.Emit(NewEvent(EventPromptReceived, peerID))
@@ -488,7 +489,7 @@ func (al *agentLoop) sendThinking(peerID int64, content string) {
 	al.dispatcher.Emit(NewEvent(EventThinking, peerID))
 
 	if al.log != nil {
-		al.log.InfoLogf("Thinking sent to peer %d: %s", al.config.ThinkingPeerID, truncate(content, 80))
+		al.log.InfoLogf("Thinking sent to peer %d: %s", al.config.ThinkingPeerID, stringutil.Truncate(content, 80, "..."))
 	}
 }
 
@@ -1142,7 +1143,7 @@ func (al *agentLoop) ResumeInterruptedTask(ctx context.Context, peerID int64) {
 		return
 	}
 	if al.log != nil {
-		al.log.InfoLogf("[RESUME] continuing interrupted task for peer %d (resume_prompt=%q)", peerID, truncate(sess.GetResumePrompt(), 80))
+		al.log.InfoLogf("[RESUME] continuing interrupted task for peer %d (resume_prompt=%q)", peerID, stringutil.Truncate(sess.GetResumePrompt(), 80, "..."))
 	}
 	const contPrompt = "The process was restarted. Continue your task from where you left off."
 	if _, err := al.ProcessPrompt(ctx, contPrompt, peerID); err != nil {
@@ -1162,12 +1163,6 @@ func (al *agentLoop) TestLlamaServer(ctx context.Context) (model string, respons
 	return result.Model, result.ResponseTime, result.TokensPerSec, result.Error
 }
 
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
-}
 
 func NewDefaultLogger(debug bool) Logger {
 	return newDefaultLogger(debug)

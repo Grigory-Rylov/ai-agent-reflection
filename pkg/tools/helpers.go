@@ -54,16 +54,8 @@ func NewHTTPRequest(ctx context.Context, method, url string) (string, error) {
 	return result, nil
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
 
-// ============================================================
-// Math Expression Evaluator
-// ============================================================
+
 
 // EvaluateExpression evaluates a simple arithmetic expression
 // Supports: +, -, *, /, %, ** (power), ( ), pi, e, sin, cos, tan, sqrt, abs, round, floor, ceil
