@@ -9,6 +9,7 @@ import (
 
 	"github.com/opencode/llama-client/pkg/modelsconfig"
 	"github.com/opencode/llama-client/pkg/tools"
+	"github.com/opencode/llama-client/pkg/util"
 )
 
 // ============================================================
@@ -281,15 +282,16 @@ func TestTruncate(t *testing.T) {
 	short := "hello"
 	long := "this is a very long string that should be truncated"
 
-	if truncate(short, 100) != short {
+	if util.Truncate(short, 100) != short {
 		t.Error("short string should not be truncated")
 	}
-	// truncate возвращает s[:maxLen] + "...", поэтому длина будет maxLen + 3
-	if len(truncate(long, 10)) != 13 {
-		t.Errorf("expected length 13, got %d", len(truncate(long, 10)))
+	// Truncate возвращает s[:maxLen] + "...", поэтому длина будет maxLen + 3
+	if len(util.Truncate(long, 10)) != 13 {
+		t.Errorf("expected length 13, got %d", len(util.Truncate(long, 10)))
 	}
 	// Проверяем что заканчивается на "..."
-	if truncate(long, 10)[10] != '.' || truncate(long, 10)[11] != '.' || truncate(long, 10)[12] != '.' {
+	truncated := util.Truncate(long, 10)
+	if truncated[10] != '.' || truncated[11] != '.' || truncated[12] != '.' {
 		t.Error("truncated string should end with ...")
 	}
 }

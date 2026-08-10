@@ -22,10 +22,17 @@ import (
 // ============================================================
 
 type mockAgentLoop struct {
-	lastMessage string
-	lastPeerID  int64
-	sessions    map[int64]*session.Session
-	returnErr   error
+	lastMessage     string
+	lastPeerID      int64
+	lastExtraSystem string
+	sessions        map[int64]*session.Session
+	returnErr       error
+	// blockCh — если не nil, ProcessMessage блокируется на этом канале,
+	// симулируя долгий LLM-запрос. Закрытие канала разблокирует вызов.
+	// Используется для тестов отмены контекста.
+	blockCh chan struct{}
+	// cancelled — true если контекст был отменён во время блокировки.
+	cancelled bool
 }
 
 func newMockAgentLoop() *mockAgentLoop {
@@ -50,6 +57,21 @@ func (m *mockAgentLoop) ProcessMessage(ctx context.Context, prompt string, peerI
 	if m.returnErr != nil {
 		return "", m.returnErr
 	}
+	// Если задан канал блокировки — ждём отмены контекста или разблокировки.
+	if m.blockCh != nil {
+		select {
+		case <-ctx.Done():
+			m.cancelled = true
+			return "", ctx.Err()
+		case <-m.blockCh:
+			// разблокирован — продолжаем как обычно
+		}
+	}
+	return m.ProcessPrompt(ctx, prompt, peerID)
+}
+
+func (m *mockAgentLoop) ProcessPromptWithExtraSystem(ctx context.Context, prompt string, peerID int64, extraSystem string) (string, error) {
+	m.lastExtraSystem = extraSystem
 	return m.ProcessPrompt(ctx, prompt, peerID)
 }
 
@@ -122,6 +144,9 @@ type mockOrchestrator struct {
 	fixedErr      error
 	callCount     int
 	clearedPeers  map[int64]bool
+	primaryAgents map[string]bool
+	systemPrompts map[string]string
+	agentNames    []string
 }
 
 func newMockOrchestrator(response string) *mockOrchestrator {
@@ -147,7 +172,10 @@ func (m *mockOrchestrator) RunAgent(_ context.Context, agentName, task string, p
 }
 
 func (m *mockOrchestrator) ListAgentNames() []string {
-	return []string{"worker", "qa", "explore", "general", "agent", "coordinator"}
+	if m.agentNames != nil {
+		return m.agentNames
+	}
+	return []string{"worker", "qa", "explore", "general", "agent", "lead"}
 }
 
 func (m *mockOrchestrator) GetCurrentAgent() string {
@@ -162,6 +190,19 @@ func (m *mockOrchestrator) ClearActiveSessions(peerID int64) {
 
 func (m *mockOrchestrator) GetActiveAgentSessions(peerID int64) (string, error) {
 	return "", nil
+}
+
+func (m *mockOrchestrator) IsPrimary(agentName string) bool {
+	return m.primaryAgents != nil && m.primaryAgents[agentName]
+}
+
+func (m *mockOrchestrator) GetSystemPrompt(agentName string) (string, error) {
+	if m.systemPrompts != nil {
+		if p, ok := m.systemPrompts[agentName]; ok {
+			return p, nil
+		}
+	}
+	return "system prompt for " + agentName, nil
 }
 
 // ============================================================
@@ -552,6 +593,64 @@ func TestFollowUpAfterAgentSeesCoordinatorResult(t *testing.T) {
 // Tests for ParseAgentHashMention
 // ============================================================
 
+func TestPrimaryAgentSharesMainContext(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+	mockOrch := newMockOrchestrator("ephemeral")
+	mockOrch.primaryAgents = map[string]bool{"lead": true}
+	mockOrch.systemPrompts = map[string]string{"lead": "You are a Lead Agent."}
+	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, mockOrch, nil)
+
+	// 1. #lead → главный персистентный агент с дополненным системным промптом
+	response := handler.ProcessMessage("#lead создай проект", 12345)
+	if !strings.Contains(response, "processed: ") {
+		t.Fatalf("expected main-agent response, got: %s", response)
+	}
+	if mock.lastExtraSystem != "You are a Lead Agent." {
+		t.Errorf("expected lead system prompt to be passed, got: %q", mock.lastExtraSystem)
+	}
+
+	// 2. Контекст сохранился в общей сессии
+	sess := mock.GetSession(12345)
+	if sess == nil {
+		t.Fatal("expected shared session")
+	}
+	var hasLeadTask bool
+	for _, msg := range sess.GetHistory() {
+		if msg.Role == session.UserRole && strings.Contains(msg.Content, "создай проект") {
+			hasLeadTask = true
+		}
+	}
+	if !hasLeadTask {
+		t.Error("expected #lead task in shared session history")
+	}
+
+	// 3. Обычное сообщение после #lead обрабатывается тем же главным агентом
+	mock.lastMessage = ""
+	handler.ProcessMessage("расскажи про проект", 12345)
+	if !strings.Contains(mock.lastMessage, "расскажи про проект") {
+		t.Errorf("expected plain follow-up to reach main agent, got lastMessage=%q", mock.lastMessage)
+	}
+}
+
+func TestNonPrimaryAgentUsesRunAgent(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+	mockOrch := newMockOrchestrator("ephemeral result")
+	mockOrch.agentNames = []string{"worker", "lead"}
+	mockOrch.primaryAgents = map[string]bool{"lead": true}
+	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, mockOrch, nil)
+
+	// #worker не primary → идёт через RunAgent, а не через главный агент
+	_ = handler.ProcessMessage("#worker сделай задачу", 12345)
+	if mockOrch.lastTask != "сделай задачу" {
+		t.Errorf("expected RunAgent to be called with task, got lastTask=%q", mockOrch.lastTask)
+	}
+	if mock.lastMessage != "" {
+		t.Errorf("expected non-primary agent NOT to reach main agent, got lastMessage=%q", mock.lastMessage)
+	}
+}
+
 func TestParseAgentHashMention(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -825,4 +924,118 @@ func TestOtherAgentErrorStillShown(t *testing.T) {
 	if !strings.Contains(response, "Ошибка") {
 		t.Errorf("Expected error message, got %q", response)
 	}
+}
+
+// ============================================================
+// Тесты отмены активного LLM-запроса при /clear и /n
+// ============================================================
+
+// TestClearCancelsActiveLLMRequest проверяет, что /clear отменяет
+// выполняющийся LLM-запрос главного агента, а не только сабагентов.
+//
+// Сценарий:
+//  1. Пользователь отправляет обычное сообщение → агент начинает LLM-запрос
+//  2. Не дожидаясь ответа, пользователь шлёт /clear
+//  3. /clear должен отменить контекст активного LLM-запроса
+//  4. LLM-запрос должен получить context.Canceled
+//
+// Без фикса: /clear очищает сессию и сабагентов, но НЕ отменяет основной
+// LLM-запрос — он продолжает выполняться и после завершения пишет в уже
+// очищенную сессию, а также может заспавнить новых сабагентов.
+func TestClearCancelsActiveLLMRequest(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+	mock.blockCh = make(chan struct{}) // будет блокировать ProcessMessage
+
+	orch := &mockOrchestrator{clearedPeers: make(map[int64]bool)}
+	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, orch, nil)
+
+	peerID := int64(555)
+
+	// Запускаем обычное сообщение в отдельной goroutine — оно заблокируется.
+	msgDone := make(chan string, 1)
+	go func() {
+		msgDone <- handler.ProcessMessage("долгий запрос к LLM", peerID)
+	}()
+
+	// Даём время goroutine дойти до блокировки в mock.ProcessMessage.
+	time.Sleep(50 * time.Millisecond)
+
+	// Отправляем /clear — должно отменить контекст блокированного запроса.
+	clearResult := handler.ProcessMessage("/clear", peerID)
+	t.Logf("/clear result: %s", clearResult)
+
+	// Ждём завершения первой goroutine (контекст отменён → вернёт "").
+	select {
+	case result := <-msgDone:
+		if result != "" {
+			t.Errorf("expected empty result after cancel, got %q", result)
+		}
+	case <-time.After(2 * time.Second):
+		// Не дождались — разблокируем вручную и проверяем что контекст не отменён.
+		close(mock.blockCh)
+		result := <-msgDone
+		if mock.cancelled {
+			t.Log("context was cancelled, unblocking manually confirmed")
+		} else {
+			t.Error("expected context to be cancelled by /clear, but it was NOT cancelled")
+		}
+		if result != "" {
+			t.Errorf("expected empty result, got %q", result)
+		}
+	}
+
+	// Проверяем флаги mock-а.
+	if !mock.cancelled {
+		t.Error("BUG: /clear did NOT cancel active LLM request context")
+	}
+	if !orch.clearedPeers[peerID] {
+		t.Error("expected ClearActiveSessions called for peer")
+	}
+
+	// Сессия должна быть очищена.
+	sess := mock.GetSession(peerID)
+	if sess == nil {
+		t.Fatal("session should exist after /clear")
+	}
+	if sess.HistoryLength() != 0 {
+		t.Errorf("expected empty history after /clear, got %d", sess.HistoryLength())
+	}
+}
+
+// TestNewSessionCancelsActiveLLMRequest проверяет, что /n тоже отменяет
+// активный LLM-запрос (тот же механизм через handleNewSession).
+func TestNewSessionCancelsActiveLLMRequest(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+	mock.blockCh = make(chan struct{})
+
+	orch := &mockOrchestrator{clearedPeers: make(map[int64]bool)}
+	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, orch, nil)
+
+	peerID := int64(666)
+
+	msgDone := make(chan string, 1)
+	go func() {
+		msgDone <- handler.ProcessMessage("ещё один долгий запрос", peerID)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// /n (newsession) тоже должен отменять активный запрос.
+	handler.ProcessMessage("/n /tmp", peerID)
+
+	select {
+	case <-msgDone:
+		// ok
+	case <-time.After(2 * time.Second):
+		close(mock.blockCh)
+		<-msgDone
+	}
+
+	if !mock.cancelled {
+		t.Error("BUG: /n did NOT cancel active LLM request context")
+	}
+
+	close(mock.blockCh)
 }

@@ -535,3 +535,41 @@ func TestMultipleAllowedDirs(t *testing.T) {
 		}
 	})
 }
+
+// TestFileToolPaths_NoPathFallsBackToWorkingDir проверяет, что при вызове
+// файловых инструментов без path аргумента FileToolPaths возвращает ["."],
+// что позволяет PathsAllAllowed проверить рабочую директорию вместо того
+// чтобы запрашивать пермишен у пользователя.
+func TestFileToolPaths_NoPathFallsBackToWorkingDir(t *testing.T) {
+	tests := []struct {
+		tool     string
+		args     map[string]string
+		expected []string
+	}{
+		{"file_write", map[string]string{}, []string{"."}},
+		{"file_write", map[string]string{"path": "index.html"}, []string{"index.html"}},
+		{"file_write", map[string]string{"path": ""}, []string{"."}},
+		{"file_read", map[string]string{}, []string{"."}},
+		{"file_read", map[string]string{"path": "/etc/hosts"}, []string{"/etc/hosts"}},
+		{"edit", map[string]string{}, []string{"."}},
+		{"edit", map[string]string{"path": "main.go"}, []string{"main.go"}},
+		{"file_list", map[string]string{}, []string{"."}},           // already defaulted
+		{"search_code", map[string]string{}, []string{"."}},         // already defaulted
+		{"shell_execute", map[string]string{"command": "ls"}, nil}, // shell проверяется отдельно
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.tool+"/"+strings.Join(tt.expected, ","), func(t *testing.T) {
+			got := FileToolPaths(tt.tool, tt.args)
+			if len(got) != len(tt.expected) {
+				t.Errorf("FileToolPaths(%q, %v) = %v, want %v", tt.tool, tt.args, got, tt.expected)
+				return
+			}
+			for i := range got {
+				if got[i] != tt.expected[i] {
+					t.Errorf("FileToolPaths(%q, %v)[%d] = %q, want %q", tt.tool, tt.args, i, got[i], tt.expected[i])
+				}
+			}
+		})
+	}
+}

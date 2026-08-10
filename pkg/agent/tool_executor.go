@@ -9,7 +9,7 @@ import (
 	"github.com/opencode/llama-client/pkg/logger"
 	"github.com/opencode/llama-client/pkg/permission"
 	"github.com/opencode/llama-client/pkg/tools"
-	"github.com/opencode/llama-client/pkg/util"
+	"github.com/opencode/llama-client/pkg/util/stringutil"
 )
 
 // MaxToolResultSize — максимальный размер результата инструмента в символах
@@ -118,7 +118,7 @@ func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, 
 		e.agent.debugLog.Debug(e.agent.agentPrefix()+"Result: %s success", toolName)
 		e.agent.sendThinking(peerID, "[TOOL] Result: "+toolName+" success")
 	} else {
-		resultMsg := fmt.Sprintf("[TOOL] Result: %s failed - %s", toolName, util.Truncate(content, 200))
+		resultMsg := fmt.Sprintf("[TOOL] Result: %s failed - %s", toolName, stringutil.Truncate(content, 200, "..."))
 		e.agent.debugLog.Info("%s", resultMsg)
 		e.agent.sendThinking(peerID, resultMsg)
 	}
@@ -413,7 +413,7 @@ func askShellPermission(ctx context.Context, checker permissionChecker, scan per
 
 	detail := strings.Join(scan.Patterns, " && ")
 	q := map[string]interface{}{
-		"question": fmt.Sprintf("Allow shell command: %s?", util.Truncate(detail, 200)),
+		"question": fmt.Sprintf("Allow shell command: %s?", stringutil.Truncate(detail, 200, "...")),
 		"header":   "🔐 bash",
 		"options": []map[string]interface{}{
 			{"label": "✅ Allow", "description": "Allow this one time"},
@@ -487,7 +487,7 @@ func buildToolPermissionDetail(toolName string, args map[string]string) string {
 	switch toolName {
 	case "shell_execute":
 		if cmd, ok := args["command"]; ok && cmd != "" {
-			return fmt.Sprintf("run shell command: %s", util.Truncate(cmd, 200))
+			return fmt.Sprintf("run shell command: %s", stringutil.Truncate(cmd, 200, "..."))
 		}
 	case "file_write":
 		detail := "write file"
@@ -513,15 +513,15 @@ func buildToolPermissionDetail(toolName string, args map[string]string) string {
 		}
 	case "search_code":
 		if pattern, ok := args["pattern"]; ok && pattern != "" {
-			return "search code for: " + util.Truncate(pattern, 100)
+			return "search code for: " + stringutil.Truncate(pattern, 100, "...")
 		}
 	case "web_fetch":
 		if url, ok := args["url"]; ok && url != "" {
-			return "fetch URL: " + util.Truncate(url, 200)
+			return "fetch URL: " + stringutil.Truncate(url, 200, "...")
 		}
 	case "web_search":
 		if query, ok := args["query"]; ok && query != "" {
-			return "web search: " + util.Truncate(query, 200)
+			return "web search: " + stringutil.Truncate(query, 200, "...")
 		}
 	}
 	return fmt.Sprintf("use tool '%s'", toolName)
@@ -572,40 +572,40 @@ func briefToolCall(toolName string, args map[string]string) string {
 		offset := args["offset"]
 		limit := args["limit"]
 		if offset != "" || limit != "" {
-			return fmt.Sprintf("read_file(%q, offset=%s, limit=%s)", util.Truncate(path, 60), offset, limit)
+			return fmt.Sprintf("read_file(%q, offset=%s, limit=%s)", stringutil.Truncate(path, 60, "..."), offset, limit)
 		}
-		return fmt.Sprintf("read_file(%q)", util.Truncate(path, 60))
+		return fmt.Sprintf("read_file(%q)", stringutil.Truncate(path, 60, "..."))
 	case "file_write", "write_file":
 		if path, ok := args["path"]; ok {
-			return fmt.Sprintf("write_file(%q)", util.Truncate(path, 80))
+			return fmt.Sprintf("write_file(%q)", stringutil.Truncate(path, 80, "..."))
 		}
 	case "file_list", "list_dir", "dir_list":
 		if path, ok := args["path"]; ok {
-			return fmt.Sprintf("list_dir(%q)", util.Truncate(path, 80))
+			return fmt.Sprintf("list_dir(%q)", stringutil.Truncate(path, 80, "..."))
 		}
 	case "shell_execute", "shell":
 		if cmd, ok := args["command"]; ok {
-			return fmt.Sprintf("shell(%q)", util.Truncate(cmd, 60))
+			return fmt.Sprintf("shell(%q)", stringutil.Truncate(cmd, 60, "..."))
 		}
 	case "web_fetch", "fetch":
 		if url, ok := args["url"]; ok {
-			return fmt.Sprintf("web_fetch(%q)", util.Truncate(url, 80))
+			return fmt.Sprintf("web_fetch(%q)", stringutil.Truncate(url, 80, "..."))
 		}
 	case "web_search", "search":
 		if q, ok := args["query"]; ok {
-			return fmt.Sprintf("web_search(%q)", util.Truncate(q, 60))
+			return fmt.Sprintf("web_search(%q)", stringutil.Truncate(q, 60, "..."))
 		}
 	case "search_code", "grep", "grep_search":
 		if p, ok := args["pattern"]; ok {
-			return fmt.Sprintf("search_code(%q)", util.Truncate(p, 60))
+			return fmt.Sprintf("search_code(%q)", stringutil.Truncate(p, 60, "..."))
 		}
 	case "glob", "find_files":
 		if p, ok := args["pattern"]; ok {
-			return fmt.Sprintf("glob(%q)", util.Truncate(p, 60))
+			return fmt.Sprintf("glob(%q)", stringutil.Truncate(p, 60, "..."))
 		}
 	case "calc", "calculate":
 		if e, ok := args["expression"]; ok {
-			return fmt.Sprintf("calc(%q)", util.Truncate(e, 60))
+			return fmt.Sprintf("calc(%q)", stringutil.Truncate(e, 60, "..."))
 		}
 	case "time_get":
 		return "time_get()"
@@ -616,7 +616,7 @@ func briefToolCall(toolName string, args map[string]string) string {
 		id := args["id"]
 		switch op {
 		case "add":
-			return fmt.Sprintf("todo add(%q, agent=%q)", util.Truncate(task, 60), args["agent"])
+			return fmt.Sprintf("todo add(%q, agent=%q)", stringutil.Truncate(task, 60, "..."), args["agent"])
 		case "update":
 			return fmt.Sprintf("todo update(id=%s, status=%q, agent=%q)", id, status, args["agent"])
 		case "list":
@@ -639,7 +639,7 @@ func briefToolCall(toolName string, args map[string]string) string {
 			t = args["description"]
 		}
 		if ag != "" && t != "" {
-			return fmt.Sprintf("subagent(%q, prompt=%q)", ag, util.Truncate(t, 60))
+			return fmt.Sprintf("subagent(%q, prompt=%q)", ag, stringutil.Truncate(t, 60, "..."))
 		}
 		if ag != "" {
 			return fmt.Sprintf("subagent(%q)", ag)
@@ -649,9 +649,9 @@ func briefToolCall(toolName string, args map[string]string) string {
 		if path, ok := args["path"]; ok {
 			oldStr := args["old_string"]
 			if oldStr != "" {
-				return fmt.Sprintf("edit(%q, old=%q)", util.Truncate(path, 60), util.Truncate(oldStr, 40))
+				return fmt.Sprintf("edit(%q, old=%q)", stringutil.Truncate(path, 60, "..."), stringutil.Truncate(oldStr, 40, "..."))
 			}
-			return fmt.Sprintf("edit(%q)", util.Truncate(path, 80))
+			return fmt.Sprintf("edit(%q)", stringutil.Truncate(path, 80, "..."))
 		}
 	}
 	return toolName

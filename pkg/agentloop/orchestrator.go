@@ -491,6 +491,27 @@ func (o *Orchestrator) isCoordinator(name string) bool {
 	return false
 }
 
+// IsPrimary сообщает, помечен ли агент как primary (mode: primary|all в
+// config.json). Primary-агенты выполняются на главном персистентном агенте и
+// разделяют его зарезервированный контекст с обычным чатом.
+func (o *Orchestrator) IsPrimary(name string) bool {
+	if o.config.AgentManager != nil {
+		info, err := o.config.AgentManager.GetAgent(name)
+		if err != nil {
+			o.debugLog("IsPrimary(%q): GetAgent error: %v", name, err)
+			return false
+		}
+		return info.Mode == agentpolicy.ModePrimary || info.Mode == agentpolicy.ModeAll
+	}
+	return false
+}
+
+// GetSystemPrompt возвращает системный промпт агента (из AgentManager или
+// файла {name}.md в SystemPromptDir).
+func (o *Orchestrator) GetSystemPrompt(name string) (string, error) {
+	return o.loadSystemPrompt(name)
+}
+
 func (o *Orchestrator) runWorker(ctx context.Context, task string, peerID int64) (string, error) {
 	prompt, err := o.loadSystemPrompt("worker")
 	if err != nil {
@@ -501,6 +522,12 @@ func (o *Orchestrator) runWorker(ctx context.Context, task string, peerID int64)
 		return "", err
 	}
 	o.addMainTools(a)
+	// Воркер получает собственный task-инструмент (с ограничением только на
+	// reviewer/explore), а не общий — иначе сможет спавнить других воркеров.
+	if err := o.registerSubAgentTool("worker", a, peerID, sessionID, []string{sessionID}); err != nil {
+		o.releaseAgentSlot(sessionID)
+		return "", err
+	}
 	o.beginLeafSession("worker", prompt, task, peerID, sessionID)
 	result, err := a.ProcessMessage(ctx, task, peerID)
 	if err != nil {
@@ -695,7 +722,7 @@ func (o *Orchestrator) makeAgentConfig() (agent.Config, error) {
 }
 
 func (o *Orchestrator) addMainTools(a agent.Agent) {
-	reg := o.config.ToolRegistry
+	reg := mainToolsWithoutTask(o.config.ToolRegistry)
 	if reg == nil {
 		return
 	}
@@ -763,6 +790,8 @@ func (o *Orchestrator) makeSubAgentTool(name string, a agent.Agent, peerID int64
 		AgentSessionID:  sessionID, // placeholder; createAgent перегенерирует в собственный UUID
 		ParentAgent:     a,
 		Chain:           chain,
+		ParentAgentName: name,
+		AllowedSubagents: o.config.AgentManager.SubagentTypesFor(name),
 		SlotManager:     o.config.SlotManager,
 		Slots:           o.config.Slots,
 	}, nil

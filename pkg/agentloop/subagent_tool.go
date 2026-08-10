@@ -35,12 +35,14 @@ type SubAgentTool struct {
 	ModelHolder     *modelsconfig.Holder
 	SetActiveAgent  func(name string)
 	Store           store.Store // SQLite store для сессий сабагентов
-	ParentSessionID string      // UUID родительской сессии
-	ParentAgent     agent.Agent // агент-родитель (для сохранения истории перед запуском ребёнка)
-	AgentSessionID  string      // UUID текущей сессии сабагента
-	Chain           []string    // Цепочка вызовов (список UUID от корня до текущего)
-	SlotManager     *SlotManager
-	Slots           *SlotClient
+	ParentSessionID  string      // UUID родительской сессии
+	ParentAgent      agent.Agent // агент-родитель (для сохранения истории перед запуском ребёнка)
+	AgentSessionID   string      // UUID текущей сессии сабагента
+	Chain            []string    // Цепочка вызовов (список UUID от корня до текущего)
+	ParentAgentName  string      // имя агента-владельца инструмента (caller)
+	AllowedSubagents []string    // допустимые цели делегирования; пусто = любые
+	SlotManager      *SlotManager
+	Slots            *SlotClient
 }
 
 func (t *SubAgentTool) Name() string {
@@ -274,38 +276,47 @@ func (t *SubAgentTool) registerReadOnlyTools(a agent.Agent) {
 }
 
 func (t *SubAgentTool) resolveAgentName(raw string) (string, error) {
+	var resolved string
 	if t.AgentManager != nil {
 		if _, err := t.AgentManager.GetAgent(raw); err == nil {
-			return raw, nil
-		}
-		for _, a := range t.availableAgents() {
-			if strings.Contains(a.Name, raw) || strings.Contains(raw, a.Name) {
-				t.debugLog("Agent name %q fuzzy-matched to %q", raw, a.Name)
-				return a.Name, nil
+			resolved = raw
+		} else {
+			for _, a := range t.availableAgents() {
+				if strings.Contains(a.Name, raw) || strings.Contains(raw, a.Name) {
+					t.debugLog("Agent name %q fuzzy-matched to %q", raw, a.Name)
+					resolved = a.Name
+					break
+				}
+			}
+			if resolved == "" {
+				available := t.availableAgents()
+				var names []string
+				for _, a := range available {
+					names = append(names, a.Name)
+				}
+				return "", fmt.Errorf("unknown agent: %q. Available: %s", raw, strings.Join(names, ", "))
 			}
 		}
-		available := t.availableAgents()
-		var names []string
-		for _, a := range available {
-			names = append(names, a.Name)
+	} else {
+		normalizedName := raw
+		switch {
+		case strings.Contains(raw, "worker") || strings.Contains(raw, "coder") || strings.Contains(raw, "developer"):
+			normalizedName = "worker"
+		case strings.Contains(raw, "qa") || strings.Contains(raw, "review") || strings.Contains(raw, "tester"):
+			normalizedName = "qa"
 		}
-		return "", fmt.Errorf("unknown agent: %q. Available: %s", raw, strings.Join(names, ", "))
+		if normalizedName != raw {
+			t.debugLog("Agent name %q normalized to %q", raw, normalizedName)
+		}
+		if normalizedName != "worker" && normalizedName != "qa" {
+			return "", fmt.Errorf("unknown agent name: %q, use 'worker' or 'qa'", raw)
+		}
+		resolved = normalizedName
 	}
-
-	normalizedName := raw
-	switch {
-	case strings.Contains(raw, "worker") || strings.Contains(raw, "coder") || strings.Contains(raw, "developer"):
-		normalizedName = "worker"
-	case strings.Contains(raw, "qa") || strings.Contains(raw, "review") || strings.Contains(raw, "tester"):
-		normalizedName = "qa"
+	if err := t.checkAllowedSubagent(resolved); err != nil {
+		return "", err
 	}
-	if normalizedName != raw {
-		t.debugLog("Agent name %q normalized to %q", raw, normalizedName)
-	}
-	if normalizedName != "worker" && normalizedName != "qa" {
-		return "", fmt.Errorf("unknown agent name: %q, use 'worker' or 'qa'", raw)
-	}
-	return normalizedName, nil
+	return resolved, nil
 }
 
 func (t *SubAgentTool) loadSystemPrompt(name string) (string, error) {
@@ -410,13 +421,14 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 }
 
 func (t *SubAgentTool) registerMainTools(a agent.Agent) {
-	if t.MainTools == nil {
+	reg := mainToolsWithoutTask(t.MainTools)
+	if reg == nil {
 		return
 	}
 	if inserter, ok := a.(toolInserter); ok {
-		inserter.RegisterTools(t.MainTools)
+		inserter.RegisterTools(reg)
 	} else {
-		schemas := t.MainTools.ToOpenAISchema()
+		schemas := reg.ToOpenAISchema()
 		if len(schemas) > 0 {
 			a.SetTools(schemas)
 		}
@@ -465,6 +477,8 @@ func (t *SubAgentTool) registerSubAgentTool(name string, a agent.Agent) {
 		ParentSessionID: t.AgentSessionID,
 		ParentAgent:     a,
 		Chain:           t.Chain,
+		ParentAgentName: name,
+		AllowedSubagents: t.AgentManager.SubagentTypesFor(name),
 		SlotManager:     t.SlotManager,
 		Slots:           t.Slots,
 	})
@@ -614,4 +628,40 @@ func (t *SubAgentTool) popChain() {
 		parent = parent[:len(parent)-1]
 	}
 	t.Store.SaveAgentChain(t.PeerID, parent)
+}
+
+// mainToolsWithoutTask возвращает реестр основных инструментов без общего
+// task-инструмента. Общий SubAgentTool главного агента (parent="",
+// CurrentDepth=0, без ограничений) нельзя инжектить в сабагентов: он не
+// отслеживает parent/цепочку, не ограничивает глубину рекурсии и позволяет
+// воркеру спавнить других воркеров. Вместо него каждый сабагент получает
+// собственный инструмент через registerSubAgentTool.
+func mainToolsWithoutTask(reg *tools.Registry) *tools.Registry {
+	if reg == nil {
+		return nil
+	}
+	if !reg.IsRegistered("task") {
+		return reg
+	}
+	filtered := tools.NewRegistry()
+	for _, tool := range reg.GetAll() {
+		if tool.Name() != "task" {
+			filtered.Register(tool)
+		}
+	}
+	return filtered
+}
+
+// checkAllowedSubagent проверяет, разрешено ли текущему владельцу инструмента
+// делегировать агенту name. Возвращает nil, если ограничений нет.
+func (t *SubAgentTool) checkAllowedSubagent(name string) error {
+	if len(t.AllowedSubagents) == 0 {
+		return nil
+	}
+	for _, a := range t.AllowedSubagents {
+		if a == name {
+			return nil
+		}
+	}
+	return fmt.Errorf("agent %q cannot delegate to %q: only %v allowed", t.ParentAgentName, name, t.AllowedSubagents)
 }

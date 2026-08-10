@@ -107,19 +107,21 @@ func TestIsTerminalResponse(t *testing.T) {
 		name         string
 		responseText string
 		hasToolCalls bool
+		hasReasoning bool
 		want         bool
 	}{
-		{"has content", "hello world", false, true},
-		{"empty no tools", "", false, false},
-		{"empty with tools", "", true, true},
-		{"whitespace only", "   ", false, true},
+		{"has content", "hello world", false, false, true},
+		{"empty no tools", "", false, false, false},
+		{"empty with tools", "", true, false, true},
+		{"whitespace only", "   ", false, false, false},
+		{"reasoning only", "", false, true, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isTerminalResponse(tt.responseText, tt.hasToolCalls)
+			got := isTerminalResponse(tt.responseText, tt.hasToolCalls, tt.hasReasoning)
 			if got != tt.want {
-				t.Errorf("isTerminalResponse(%q, %v) = %v, want %v", tt.responseText, tt.hasToolCalls, got, tt.want)
+				t.Errorf("isTerminalResponse(%q, %v, %v) = %v, want %v", tt.responseText, tt.hasToolCalls, tt.hasReasoning, got, tt.want)
 			}
 		})
 	}

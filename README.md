@@ -351,6 +351,8 @@ Commands starting with `/` are handled by the bot and never sent to the model.
 
 ## Testing
 
+Подробное руководство по тестированию: **[TESTS.md](TESTS.md)** — мокирование LLM, scripted-серверы, сценарные тесты, mock-инструменты, чек-лист.
+
 ### Scenario-based integration tests
 
 Orchestrator tests use predefined LLM responses (no llama-server required). Each scenario is a directory under `pkg/agentloop/testdata/scenarios/`:

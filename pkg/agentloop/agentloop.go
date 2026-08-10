@@ -23,6 +23,11 @@ import (
 type AgentLoop interface {
 	ProcessPrompt(ctx context.Context, prompt string, peerID int64) (string, error)
 	ProcessMessage(ctx context.Context, prompt string, peerID int64) (string, error)
+	// ProcessPromptWithExtraSystem обрабатывает промпт на главном персистентном
+	// агенте, временно дополняя его системный промпт блоком extraSystem.
+	// История сессии сохраняется — контекст общий с обычными сообщениями в чат,
+	// а системный промпт после ответа возвращается к исходному.
+	ProcessPromptWithExtraSystem(ctx context.Context, prompt string, peerID int64, extraSystem string) (string, error)
 	Start(ctx context.Context)
 	Stop()
 	ResetSession(peerID int64)
@@ -369,6 +374,20 @@ func (al *agentLoop) GetContextStats(peerID int64) (charCount int, tokenCount in
 }
 
 func (al *agentLoop) ProcessMessage(ctx context.Context, prompt string, peerID int64) (string, error) {
+	return al.ProcessPrompt(ctx, prompt, peerID)
+}
+
+// ProcessPromptWithExtraSystem обрабатывает промпт на главном персистентном
+// агенте, временно дополняя системный промпт сессии блоком extraSystem.
+// История (пользователь/ассистент) сохраняется, системный промпт после ответа
+// возвращается к исходному — так контекст координатора и обычного чата общий.
+func (al *agentLoop) ProcessPromptWithExtraSystem(ctx context.Context, prompt string, peerID int64, extraSystem string) (string, error) {
+	sess := al.getOrCreateSession(peerID)
+	original := sess.GetSystemPrompt()
+	if strings.TrimSpace(extraSystem) != "" {
+		sess.UpdateSystemPrompt(original + "\n\n" + strings.TrimSpace(extraSystem))
+		defer sess.UpdateSystemPrompt(original)
+	}
 	return al.ProcessPrompt(ctx, prompt, peerID)
 }
 

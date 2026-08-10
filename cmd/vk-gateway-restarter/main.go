@@ -16,7 +16,7 @@ import (
 	"flag"
 
 	"github.com/opencode/llama-client/pkg/buildinfo"
-	"github.com/opencode/llama-client/pkg/util"
+	"github.com/opencode/llama-client/pkg/util/stringutil"
 	"github.com/opencode/llama-client/pkg/vk"
 )
 
@@ -267,7 +267,7 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 
 					output, err := exec.Command("git", "pull").CombinedOutput()
 					if err != nil {
-						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ git pull failed:\n%s", util.Truncate(string(output), 500)))
+						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ git pull failed:\n%s", stringutil.Truncate(string(output), 500, "...")))
 						ap.start(agentPath, agentArgs)
 						ap.setRestarting(false)
 						break
@@ -299,7 +299,7 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 
 					output, err := exec.Command("git", "fetch", "--all").CombinedOutput()
 					if err != nil {
-						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ git fetch failed:\n%s", util.Truncate(string(output), 500)))
+						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ git fetch failed:\n%s", stringutil.Truncate(string(output), 500, "...")))
 						ap.start(agentPath, agentArgs)
 						ap.setRestarting(false)
 						break
@@ -307,7 +307,7 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 
 					output, err = exec.Command("git", "checkout", branch).CombinedOutput()
 					if err != nil {
-						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ git checkout %s failed:\n%s", branch, util.Truncate(string(output), 500)))
+						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ git checkout %s failed:\n%s", branch, stringutil.Truncate(string(output), 500, "...")))
 						ap.start(agentPath, agentArgs)
 						ap.setRestarting(false)
 						break
@@ -315,7 +315,7 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 
 					output, err = exec.Command("git", "pull").CombinedOutput()
 					if err != nil {
-						vkClient.SendMessage(replyPeerID, fmt.Sprintf("⚠️ git pull warning:\n%s", util.Truncate(string(output), 500)))
+						vkClient.SendMessage(replyPeerID, fmt.Sprintf("⚠️ git pull warning:\n%s", stringutil.Truncate(string(output), 500, "...")))
 					}
 
 					if err := buildAgent(agentPath); err != nil {

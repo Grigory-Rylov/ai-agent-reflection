@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/opencode/llama-client/pkg/store"
@@ -375,6 +377,14 @@ func (s *Session) GetHistory() []Message {
 	result := make([]Message, len(s.messages))
 	copy(result, s.messages)
 	return result
+}
+
+// GetSystemPrompt возвращает текущий системный промпт сессии
+func (s *Session) GetSystemPrompt() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.config.SystemPrompt
 }
 
 // RestoreMessages заменяет историю сообщений целиком, сохраняя все метаданные
@@ -1028,12 +1038,25 @@ func (s *Session) GetResumePrompt() string {
 
 // generateSessionID генерирует уникальный идентификатор сессии
 // Если providedID не пустой, используется он, иначе генерируется новый
+// randGen, randMu и sessionIDCounter обеспечивают уникальность генерируемых
+// session ID даже при быстрых последовательных вызовах: к временной метке
+// добавляются случайное число и атомарный счётчик.
+var (
+	randGen          = rand.New(rand.NewSource(time.Now().UnixNano()))
+	randMu           sync.Mutex
+	sessionIDCounter uint64
+)
+
 func generateSessionID(providedID string) string {
 	if providedID != "" {
 		return providedID
 	}
 	h := fnv.New128a()
-	h.Write([]byte(strconv.FormatInt(time.Now().UnixNano(), 10)))
+	randMu.Lock()
+	random := randGen.Uint64()
+	randMu.Unlock()
+	counter := atomic.AddUint64(&sessionIDCounter, 1)
+	h.Write([]byte(strconv.FormatInt(time.Now().UnixNano(), 10) + "-" + strconv.FormatUint(random, 10) + "-" + strconv.FormatUint(counter, 10)))
 	sum := h.Sum(nil)
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", sum[:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }

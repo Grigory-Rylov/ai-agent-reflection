@@ -122,6 +122,14 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		}
 	}
 
+	// Если модель вернула пустой ответ без tool_calls и без reasoning — ретраим
+	if !isTerminalResponse(responseText, len(streamToolCalls) > 0, reasoningText != "") {
+		responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err = a.retryEmptyResponse(ctx, streamConfig, messages, session)
+		if err != nil {
+			return "", err
+		}
+	}
+
 	// Отправляем reasoning в thinking чат сразу после получения,
 	// чтобы он не терялся при рекурсивных вызовах инструментов
 	a.sendThinkingIfNeeded(session, reasoningText)
@@ -283,11 +291,12 @@ func (a *agentImpl) handleInvalidXMLToolCall(ctx context.Context, messages []Mes
 }
 
 // isTerminalResponse возвращает true, если ответ модели — финальный и не стоит ретраить.
-func isTerminalResponse(responseText string, hasToolCalls bool) bool {
+func isTerminalResponse(responseText string, hasToolCalls, hasReasoning bool) bool {
 	if len(strings.TrimSpace(responseText)) > 0 {
 		return true
 	}
-	return hasToolCalls
+	// Reasoning-only ответ тоже терминальный: reasoning уходит в thinking-канал.
+	return hasToolCalls || hasReasoning
 }
 
 const maxEmptyRetries = 3
@@ -297,15 +306,21 @@ func (a *agentImpl) retryEmptyResponse(ctx context.Context, streamConfig Streami
 	for attempt := 0; attempt < maxEmptyRetries; attempt++ {
 		prefix := a.agentPrefix()
 		fmt.Printf(prefix+"[WARN] LLM returned empty response (attempt %d/%d), retrying\n", attempt+1, maxEmptyRetries)
-		
+
 		messages = append(messages, Message{
 			Role:    "user",
 			Content: "[SYSTEM] Your previous response was empty. Please generate a text response based on the tool results above.",
 		})
-		
-		return a.streamAndCollect(ctx, streamConfig, messages)
+
+		responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.streamAndCollect(ctx, streamConfig, messages)
+		if err != nil {
+			return "", "", "stop", nil, 0, 0, err
+		}
+		if isTerminalResponse(responseText, len(streamToolCalls) > 0, reasoningText != "") {
+			return responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, nil
+		}
 	}
-	
+
 	prefix := a.agentPrefix()
 	fmt.Printf(prefix+"[WARN] LLM returned empty response after %d retries\n", maxEmptyRetries)
 	return "", "", "stop", nil, 0, 0, nil

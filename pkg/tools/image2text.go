@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/opencode/llama-client/pkg/modelsconfig"
-	"github.com/opencode/llama-client/pkg/util"
+	"github.com/opencode/llama-client/pkg/util/stringutil"
 )
 
 // ============================================================
@@ -146,7 +146,7 @@ func postChatCompletion(ctx context.Context, host string, jsonData []byte) (stri
 		return "", fmt.Errorf("image2text: read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("image2text: server error %d: %s", resp.StatusCode, util.Truncate(string(body), 300))
+		return "", fmt.Errorf("image2text: server error %d: %s", resp.StatusCode, stringutil.Truncate(string(body), 300, "..."))
 	}
 
 	var parsed struct {
