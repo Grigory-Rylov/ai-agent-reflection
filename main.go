@@ -92,7 +92,7 @@ func main() {
 	logConfig := logger.DefaultConfig()
 	logConfig.Level = logger.LevelDebug
 	logConfig.MaxSizeMB = 5
-	logConfig.File = "debug.log"
+	logConfig.File = "debug/debug.log"
 	if !*debug {
 		logConfig.Level = logger.LevelInfo
 	}

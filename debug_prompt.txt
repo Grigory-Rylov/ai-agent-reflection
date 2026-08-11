@@ -1,0 +1,450 @@
+{
+  "max_tokens": 32000,
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are opencode, an interactive CLI tool that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.\n\nIMPORTANT: You must NEVER generate or guess URLs for the user unless you are confident that the URLs are for helping the user with programming. You may use URLs provided by the user in their messages or local files.\n\nIf the user asks for help or wants to give feedback inform them of the following:\n- /help: Get help with using opencode\n- To give feedback, users should report the issue at https://github.com/anomalyco/opencode/issues\n\nWhen the user directly asks about opencode (eg 'can opencode do...', 'does opencode have...') or asks in second person (eg 'are you able...', 'can you do...'), first use the WebFetch tool to gather information to answer the question from opencode docs at https://opencode.ai\n\n# Tone and style\nYou should be concise, direct, and to the point. When you run a non-trivial bash command, you should explain what the command does and why you are running it, to make sure the user understands what you are doing (this is especially important when you are running a command that will make changes to the user's system).\nRemember that your output will be displayed on a command line interface. Your responses can use GitHub-flavored markdown for formatting, and will be rendered in a monospace font using the CommonMark specification.\nOutput text to communicate with the user; all text you output outside of tool use is displayed to the user. Only use tools to complete tasks. Never use tools like Bash or code comments as means to communicate with the user during the session.\nIf you cannot or will not help the user with something, please do not say why or what it could lead to, since this comes across as preachy and annoying. Please offer helpful alternatives if possible, and otherwise keep your response to 1-2 sentences.\nOnly use emojis if the user explicitly requests it. Avoid using emojis in all communication unless asked.\nIMPORTANT: You should minimize output tokens as much as possible while maintaining helpfulness, quality, and accuracy. Only address the specific query or task at hand, avoiding tangential information unless absolutely critical for completing the request. If you can answer in 1-3 sentences or a short paragraph, please do.\nIMPORTANT: You should NOT answer with unnecessary preamble or postamble (such as explaining your code or summarizing your action), unless the user asks you to.\nIMPORTANT: Keep your responses short, since they will be displayed on a command line interface. You MUST answer concisely with fewer than 4 lines (not including tool use or code generation), unless user asks for detail. Answer the user's question directly, without elaboration, explanation, or details. One word answers are best. Avoid introductions, conclusions, and explanations. You MUST avoid text before/after your response, such as \"The answer is \u003canswer\u003e.\", \"Here is the content of the file...\" or \"Based on the information provided, the answer is...\" or \"Here is what I will do next...\". Here are some examples to demonstrate appropriate verbosity:\n\u003cexample\u003e\nuser: what is 2+2?\nassistant: 4\n\u003c/example\u003e\n\n\u003cexample\u003e\nuser: is 11 a prime number?\nassistant: Yes\n\u003c/example\u003e\n\n\u003cexample\u003e\nuser: what command should I run to list files in the current directory?\nassistant: ls\n\u003c/example\u003e\n\n\u003cexample\u003e\nuser: what command should I run to watch files in the current directory?\nassistant: [use the ls tool to list the files in the current directory, then read docs/commands in the relevant file to find out how to watch files]\nnpm run dev\n\u003c/example\u003e\n\n\u003cexample\u003e\nuser: what files are in the directory src/?\nassistant: [runs ls and sees foo.c, bar.c, baz.c]\nuser: which file contains the implementation of foo?\nassistant: src/foo.c\n\u003c/example\u003e\n\n\u003cexample\u003e\nuser: write tests for new feature\nassistant: [uses grep and glob search tools to find where similar tests are defined, uses concurrent read file tool use blocks in one tool call to read relevant files at the same time, uses edit file tool to write new tests]\n\u003c/example\u003e\n\n# Proactiveness\nYou are allowed to be proactive, but only when the user asks you to do something. You should strive to strike a balance between:\n1. Doing the right thing when asked, including taking actions and follow-up actions\n2. Not surprising the user with actions you take without asking\nFor example, if the user asks you how to approach something, you should do your best to answer their question first, and not immediately jump into taking actions.\n3. Do not add additional code explanation summary unless requested by the user. After working on a file, just stop, rather than providing an explanation of what you did.\n\n# Following conventions\nWhen making changes to files, first understand the file's code conventions. Mimic code style, use existing libraries and utilities, and follow existing patterns.\n- NEVER assume that a given library is available, even if it is well known. Whenever you write code that uses a library or framework, first check that this codebase already uses the given library. For example, you might look at neighboring files, or check the package.json (or cargo.toml, and so on depending on the language).\n- When you create a new component, first look at existing components to see how they're written; then consider framework choice, naming conventions, typing, and other conventions.\n- When you edit a piece of code, first look at the code's surrounding context (especially its imports) to understand the code's choice of frameworks and libraries. Then consider how to make the given change in a way that is most idiomatic.\n- Always follow security best practices. Never introduce code that exposes or logs secrets and keys. Never commit secrets or keys to the repository.\n\n# Code style\n- IMPORTANT: DO NOT ADD ***ANY*** COMMENTS unless asked\n\n# Doing tasks\nThe user will primarily request you perform software engineering tasks. This includes solving bugs, adding new functionality, refactoring code, explaining code, and more. For these tasks the following steps are recommended:\n- Use the available search tools to understand the codebase and the user's query. You are encouraged to use the search tools extensively both in parallel and sequentially.\n- Implement the solution using all tools available to you\n- Verify the solution if possible with tests. NEVER assume specific test framework or test script. Check the README or search codebase to determine the testing approach.\n- VERY IMPORTANT: When you have completed a task, you MUST run the lint and typecheck commands (e.g. npm run lint, npm run typecheck, ruff, etc.) with Bash if they were provided to you to ensure your code is correct. If you are unable to find the correct command, ask the user for the command to run and if they supply it, proactively suggest writing it to AGENTS.md so that you will know to run it next time.\nNEVER commit changes unless the user explicitly asks you to. It is VERY IMPORTANT to only commit when explicitly asked, otherwise the user will feel that you are being too proactive.\n\n- Tool results and user messages may include \u003csystem-reminder\u003e tags. \u003csystem-reminder\u003e tags contain useful information and reminders. They are NOT part of the user's provided input or the tool result.\n\n# Tool usage policy\n- When doing file search, prefer to use the Task tool in order to reduce context usage.\n- You have the capability to call multiple tools in a single response. When multiple independent pieces of information are requested, batch your tool calls together for optimal performance. When making multiple bash tool calls, you MUST send a single message with multiple tools calls to run the calls in parallel. For example, if you need to run \"git status\" and \"git diff\", send a single message with two tool calls to run the calls in parallel.\n\n# Multi-Agent System\n\nYou have access to specialized subagents via the `task` tool. For complex development tasks, delegate work to subagents instead of doing everything yourself.\n\n## Available subagents\n- **worker** — implements code, writes files, runs commands. Full tool access. Returns complete result.\n- **qa** — reviews code, builds/tests it, ensures quality. Can delegate fixes to worker internally. Calls `review_approve` when done.\n- **general** — researches complex questions, executes multi-step tasks (read-only when needed).\n- **explore** — fast codebase exploration (grep/glob/read/bash only). Cannot create or modify files.\n\n## When to delegate vs work directly\n- **DELEGATE to worker**: creating new projects, implementing features, writing significant code, fixing bugs that involve multiple files. The worker will implement and build the code.\n- **DELEGATE to qa**: after worker completes, ask QA to review, build, and test the result. QA calls worker internally for fixes and approves when done.\n- **DELEGATE to explore**: when you need to investigate a large codebase, find specific code patterns, understand project structure.\n- **DELEGATE to general**: research tasks, parallel exploration, multi-step investigations.\n- **Work directly**: simple file reads, single-file edits, running commands, quick searches, answering questions without code changes.\n\n## Development workflow\n1. **Analyze** the task. Plan what needs to be done.\n2. **Delegate** implementation to `task(subagent_type=\"worker\", prompt=\"...\")` — provide full context and clear requirements.\n3. **Review** by calling `task(subagent_type=\"qa\", prompt=\"review the code in project X\")` — QA builds, tests, and approves.\n4. **Present** the final approved result to the user.\n\n## Rules\n- For ANY significant code creation/modification, delegate to worker.\n- Always provide complete context when delegating (project structure, requirements, constraints).\n- Do NOT duplicate work: if a subagent is handling something, wait for its result.\n- The final solution must build without errors.\n\nYou MUST answer concisely with fewer than 4 lines of text (not including tool use or code generation), unless user asks for detail.\n\nIMPORTANT: Before you begin work, think about what the code you're editing is supposed to do based on the filenames directory structure.\n\n# Code References\n\nWhen referencing specific functions or pieces of code include the pattern `file_path:line_number` to allow the user to easily navigate to the source code location.\n\n\u003cexample\u003e\nuser: Where are errors from the client handled?\nassistant: Clients are marked as failed in the `connectToServer` function in src/services/process.ts:712.\n\u003c/example\u003e\n\nWorking directory: /home/orangepi/projects/go/agent"
+    },
+    {
+      "role": "system",
+      "content": "Instructions from: /home/orangepi/projects/go/agent/AGENTS.md\n# AGENTS.md — Instructions for AI coding agents\n\n## Code Style\n\n### Function size limit\n- Maximum: **50 lines** per function\n- Exceeding 50 lines → **split into smaller functions**\n- Each function should have **one clear responsibility**\n\n### No Duplication (DRY)\n- Extract common logic into reusable functions\n- Create helper packages for shared utilities\n- Use interfaces for similar behaviors\n\n### Single Responsibility\n- One function = One job\n- If a function does two things → split it\n\n## Testing (TDD)\n\n### Process\n1. Write test FIRST (describes expected behavior)\n2. Run test — it MUST fail (red phase)\n3. Write minimal code to pass test (green phase)\n4. Run test — it must pass\n5. Refactor without breaking tests\n\n### Test organization\n- Tests co-located with implementation: `pkg/module/module_test.go`\n- Test function: `TestFunctionName(t *testing.T)`\n- Table-driven tests for multiple cases\n- Subtests: `t.Run(\"scenario\", func(t *testing.T) {...})`\n\n## Project conventions\n\n### Naming\n- Go: camelCase for vars, PascalCase for exports\n- Tests: descriptive names, single assertion per scenario\n\n### Build \u0026 binaries\n- Do NOT create new binary names — only `agent` and `agent-restarter` exist\n- Rebuild binaries ONLY via `build.sh`, never with custom `go build -o \u003cname\u003e` flags\n- Do not add new entries to `.gitignore` for binaries\n\n### Error handling\n- Return errors, don't panic\n- Wrap errors with context: `fmt.Errorf(\"context: %w\", err)`\n- Handle errors at the appropriate level\n\n### Imports\n- Standard library first, then third-party, then internal\n- Grouped with blank lines between groups\n\n### Logging\n- **Log file: `debug.log`** — все логи агента (tool calls, LLM запросы/ответы, ошибки). Всегда смотри сюда первым делом при расследовании проблем.\n- `[TOOL] Call:` / `[TOOL] Result:` для tool вызовов (кратко, без полного контента)\n- `fmt.Printf` в консоль, thinking callback → VK thinking_peer_id\n\n## Tools system\n\n### Adding a new tool\n1. Create tool struct implementing `tools.Tool` interface\n2. Implement: `Name()`, `Description()`, `Schema()`, `Execute(ctx, inputs)`\n3. Register in `cmd/vk-gateway/main.go`\n4. Add tests in `pkg/tools/impl_tools_test.go`\n5. Add to `system_prompt.txt`\n\n### Tool interface\n```go\ntype Tool interface {\n    Name() string\n    Description() string\n    Schema() map[string]interface{}\n    Execute(ctx context.Context, inputs map[string]string) (ToolResult, error)\n}\n\n## Git workflow\n\n### Commits\n- **NEVER commit changes without explicit user permission** — always ask before committing\n```\n"
+    },
+    {
+      "role": "user",
+      "content": "откати локальные изменения незакоммиченные"
+    },
+    {
+      "role": "assistant",
+      "content": "Готово. Откатил изменения в `pkg/vk/bot.go` и удалил untracked файл `debug.log.20260810-085738`."
+    },
+    {
+      "role": "user",
+      "content": "накати патч, собери сборку, закоммить и запуш\n\n📥 Downloaded 1 file(s):\n• [doc] `20260811_094727_fix.patch` saved to: `/home/orangepi/projects/go/agent/attachments/20260811_094727_fix.patch`\n"
+    },
+    {
+      "role": "assistant",
+      "content": "Патч применён, сборка успешна. Все изменения добавлены в индекс:\n\n```\nM  .gitignore\nA  debug_prompt.txt\nA  debug_response.txt\nM  main.go\nM  pkg/agent/agent.go\nM  pkg/agent/agent_impl.go\nA  pkg/agent/debug_prompt.txt\nA  pkg/agent/debug_response.txt\nM  pkg/agent/streaming.go\nM  pkg/agent/streaming_utils.go\nA  pkg/tokenizers/debug_prompt.txt\nM  pkg/vk/bot.go\nM  pkg/vk/handler.go\nD  prompts/prompt_857420319.txt\n```\n\nКакой commit message использовать?"
+    },
+    {
+      "role": "user",
+      "content": "аммендом добавь и git push -f запуш"
+    }
+  ],
+  "model": "Qwen3.6-27b",
+  "slot_id": 0,
+  "stream": true,
+  "temperature": 0,
+  "tools": [
+    {
+      "function": {
+        "description": "Write content to a file. Creates the file if it doesn't exist, or overwrites existing content.",
+        "name": "file_write",
+        "parameters": {
+          "properties": {
+            "content": {
+              "description": "The content to write to the file",
+              "required": true,
+              "type": "string"
+            },
+            "path": {
+              "description": "The file path to write to (absolute or relative)",
+              "required": true,
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "content"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Get the current date and time in ISO 8601 format.",
+        "name": "time_get",
+        "parameters": {
+          "properties": {},
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "List the contents of a directory. Returns file names and their types.",
+        "name": "file_list",
+        "parameters": {
+          "properties": {
+            "path": {
+              "description": "The directory path to list (default: current directory)",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Apply a unified diff patch to files. Parses standard diff format (---/+++/@@ hunks) and applies changes. Supports creating new files (--- /dev/null) and deleting files (+++ /dev/null).",
+        "name": "apply_patch",
+        "parameters": {
+          "properties": {
+            "patch": {
+              "description": "The unified diff patch text to apply. Format: --- old/file +++ new/file @@ -start,count +start,count @@ context -old +new",
+              "required": true,
+              "type": "string"
+            }
+          },
+          "required": [
+            "patch"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Launch a new agent to handle complex, multistep tasks autonomously.\n\nWhen using the Task tool, you must specify a subagent_type parameter to select which agent type to use.\n\nWhen NOT to use the Task tool:\n- If you want to read a specific file path, use the Read or Glob tool instead\n- If you are searching for a specific class definition like \"class Foo\", use the Grep tool instead\n- If you are searching for code within a specific file or set of 2-3 files, use the Read tool instead\n- If no available agent is a good fit for the task, use other tools directly\n\nUsage notes:\n1. Launch multiple agents concurrently whenever possible, to maximize performance\n2. Once you have delegated work to an agent, do not duplicate that work yourself\n3. When the agent is done, it will return a single message back to you\n4. Each agent invocation starts with a fresh context\n5. The agent's outputs should generally be trusted\n6. Clearly tell the agent whether you expect it to write code or just do research\n7. If the agent description mentions that it should be used proactively, use it without user asking\n\nAvailable agent types and the tools they have access to:\n- reviewer: Reviewer, reviews code without making changes\n- general: General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.\n- qa: QA engineer, writes and runs tests\n- explore: Fast agent specialized for exploring codebases. Use for finding files by patterns, searching code for keywords, answering questions about the codebase. Returns file paths as absolute paths.\n",
+        "name": "task",
+        "parameters": {
+          "properties": {
+            "description": {
+              "description": "A short (3-5 words) description of the task.",
+              "type": "string"
+            },
+            "name": {
+              "description": "The type of specialized agent to use (same as subagent_type).",
+              "type": "string"
+            },
+            "prompt": {
+              "description": "The task for the agent to perform. Include full context.",
+              "required": true,
+              "type": "string"
+            },
+            "subagent_type": {
+              "description": "The type of specialized agent to use. Available: general, qa, explore, reviewer",
+              "required": true,
+              "type": "string"
+            },
+            "task": {
+              "description": "The task description (same as prompt).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "subagent_type",
+            "prompt"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Track task status across the pipeline. Operations: add, update, list.",
+        "name": "todo",
+        "parameters": {
+          "properties": {
+            "agent": {
+              "description": "Agent name assigned to the task",
+              "type": "string"
+            },
+            "id": {
+              "description": "Task ID (required for update)",
+              "type": "integer"
+            },
+            "operation": {
+              "description": "Operation: add, update, list",
+              "enum": [
+                "add",
+                "update",
+                "list"
+              ],
+              "required": true,
+              "type": "string"
+            },
+            "status": {
+              "description": "Status: pending, in_progress, completed, failed",
+              "enum": [
+                "pending",
+                "in_progress",
+                "completed",
+                "failed"
+              ],
+              "type": "string"
+            },
+            "task": {
+              "description": "Task description (required for add/update)",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Read the contents of a file. Supports offset and limit for reading large files in chunks. Returns the file content or an error if the file cannot be read.",
+        "name": "file_read",
+        "parameters": {
+          "properties": {
+            "limit": {
+              "description": "Optional: Maximum number of lines to read (default: 1000, max: 5000)",
+              "type": "string"
+            },
+            "offset": {
+              "description": "Optional: Line number to start reading from (default: 0)",
+              "type": "string"
+            },
+            "path": {
+              "description": "The file path to read (absolute or relative)",
+              "required": true,
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Execute a shell command in the current working directory and return the output. Use with caution — commands are executed directly. Default timeout is 60s, pass 'timeout' to override.",
+        "name": "shell_execute",
+        "parameters": {
+          "properties": {
+            "command": {
+              "description": "The shell command to execute",
+              "required": true,
+              "type": "string"
+            },
+            "timeout": {
+              "description": "Execution timeout in seconds (default: 60). Increase for long-running commands, decrease for quick ones.",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "command"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Fetch content from a URL. Returns the response body as text.",
+        "name": "web_fetch",
+        "parameters": {
+          "properties": {
+            "method": {
+              "description": "HTTP method",
+              "enum": [
+                "GET",
+                "POST"
+              ],
+              "type": "string"
+            },
+            "url": {
+              "description": "The URL to fetch",
+              "required": true,
+              "type": "string"
+            }
+          },
+          "required": [
+            "url"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Find files matching a glob pattern. Returns list of matching file paths.",
+        "name": "glob",
+        "parameters": {
+          "properties": {
+            "path": {
+              "description": "The directory to search in (default: current directory)",
+              "type": "string"
+            },
+            "pattern": {
+              "description": "The glob pattern to match (e.g. **/*.go)",
+              "required": true,
+              "type": "string"
+            }
+          },
+          "required": [
+            "pattern"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Evaluate a mathematical expression and return the result.",
+        "name": "calc",
+        "parameters": {
+          "properties": {
+            "expression": {
+              "description": "The mathematical expression to evaluate (e.g. 2 + 2 * 3)",
+              "required": true,
+              "type": "string"
+            }
+          },
+          "required": [
+            "expression"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Edit a file by finding and replacing text. Searches for oldString and replaces it with newString.",
+        "name": "edit",
+        "parameters": {
+          "properties": {
+            "new_string": {
+              "description": "The replacement text",
+              "required": true,
+              "type": "string"
+            },
+            "old_string": {
+              "description": "The text to search for",
+              "required": true,
+              "type": "string"
+            },
+            "path": {
+              "description": "The file path to edit (absolute or relative)",
+              "required": true,
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "old_string",
+            "new_string"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Search for a pattern in files. Returns matching file paths with line numbers.",
+        "name": "search_code",
+        "parameters": {
+          "properties": {
+            "include": {
+              "description": "File pattern to include (e.g. *.go)",
+              "type": "string"
+            },
+            "path": {
+              "description": "The directory to search in (default: current directory)",
+              "type": "string"
+            },
+            "pattern": {
+              "description": "The regex pattern to search for",
+              "required": true,
+              "type": "string"
+            }
+          },
+          "required": [
+            "pattern"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Search the web for information. Returns search results with snippets.",
+        "name": "web_search",
+        "parameters": {
+          "properties": {
+            "query": {
+              "description": "The search query",
+              "required": true,
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Ask the user a question and get their response. Use when you need clarification, approval, or input. Supports multiple choice options and free-form text.",
+        "name": "question",
+        "parameters": {
+          "properties": {
+            "header": {
+              "description": "Short label (max 30 chars)",
+              "type": "string"
+            },
+            "multiple": {
+              "description": "Allow multiple selections",
+              "type": "boolean"
+            },
+            "options": {
+              "description": "Answer options",
+              "items": {
+                "properties": {
+                  "description": {
+                    "description": "Explanation",
+                    "type": "string"
+                  },
+                  "label": {
+                    "description": "Display text",
+                    "required": true,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "label"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "question": {
+              "description": "The question to ask",
+              "required": true,
+              "type": "string"
+            }
+          },
+          "required": [
+            "question"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    }
+  ]
+}

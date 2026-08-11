@@ -72,7 +72,7 @@ type Config struct {
 	ToolOutputMaxLines int
 	// ToolOutputMaxBytes — лимит байт вывода инструмента (0 = дефолт opencode 50KB)
 	ToolOutputMaxBytes int
-	// Debug — режим отладки (сохранять промпт в debug_prompt.txt)
+	// Debug — режим отладки (сохранять промпт в debug/debug_prompt.txt)
 	Debug bool
 	// AgentName — имя агента для логов (coordinator, worker, qa и т.д.)
 	AgentName string

@@ -36,20 +36,25 @@ func HasPendingQuestion(peerID int64) bool {
 }
 
 func ResolvePendingQuestion(peerID int64, text string) bool {
-	pendingQuestionsMu.Lock()
-	ch, ok := pendingQuestions[peerID]
-	pendingQuestionsMu.Unlock()
-	if !ok {
-		return false
-	}
-
 	answer := map[string]interface{}{
 		"answer":   text,
 		"selected": []string{text},
 	}
 
+	pendingQuestionsMu.Lock()
+	defer pendingQuestionsMu.Unlock()
+
+	ch, ok := pendingQuestions[peerID]
+	if !ok {
+		return false
+	}
+
 	select {
 	case ch <- answer:
+		// Вопрос снят с регистрации сразу при доставке ответа: пока он
+		// остаётся в карте, быстро пришедшее второе сообщение тоже могло бы
+		// быть поглощено как «ответ» на тот же вопрос.
+		delete(pendingQuestions, peerID)
 		return true
 	default:
 		return false
@@ -66,8 +71,17 @@ func RegisterPendingQuestion(peerID int64) chan map[string]interface{} {
 
 func UnregisterPendingQuestion(peerID int64) {
 	pendingQuestionsMu.Lock()
+	defer pendingQuestionsMu.Unlock()
+
+	ch, ok := pendingQuestions[peerID]
 	delete(pendingQuestions, peerID)
-	pendingQuestionsMu.Unlock()
+	if ok {
+		// Закрываем канал, чтобы ожидающий ответ goroutine (handleQuestion →
+		// waitForAnswer) разблокировался и отпустил peer mutex. Это нужно,
+		// например, при /clear: без закрытия канала goroutine висела бы вечно
+		// и заблокировала все последующие сообщения от этого пира.
+		close(ch)
+	}
 }
 
 func IsPathGranted(peerID int64, toolPath string) bool {

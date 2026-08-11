@@ -222,6 +222,12 @@ func (a *agentImpl) ReplaceTools(registry *tools.Registry) {
 // ProcessMessage обрабатывает сообщение пользователя и возвращает ответ
 func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID int64) (string, error) {
 	a.debugLog.Debug("ProcessMessage called: peerID=%d, message=%q, tools=%d", peerID, message, len(a.toolsRegistry.GetAll()))
+
+	// Если контекст отменён (/clear, таймаут, etc) — не модифицируем сессию.
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+
 	// Получаем или создаём сессию
 	s := a.getSession(peerID)
 
@@ -258,6 +264,12 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 		workingDir = tools.WorkingDir
 	}
 	apiMessages = a.injectInstructions(apiMessages, workingDir)
+
+	// Перед LLM-запросом проверяем, не отменён ли контекст
+	// (защита от гонки с /clear после модификации сессии).
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 
 	// Проверяем, нужно ли использовать инструменты
 	if a.config.EnableTools {
