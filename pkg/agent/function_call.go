@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/opencode/llama-client/pkg/logger"
-	sess "github.com/opencode/llama-client/session"
-	"github.com/opencode/llama-client/pkg/util/stringutil"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
+	sess "github.com/Grigory-Rylov/ai-agent-reflection/session"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util/stringutil"
 )
 
 // ============================================================

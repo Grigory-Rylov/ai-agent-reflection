@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/opencode/llama-client/pkg/permission"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/permission"
 )
 
 // Permission — карта разрешений для инструментов

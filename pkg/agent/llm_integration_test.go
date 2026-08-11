@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opencode/llama-client/pkg/tools"
-	"github.com/opencode/llama-client/session"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
+	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
 // ============================================================

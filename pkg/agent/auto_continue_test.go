@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opencode/llama-client/pkg/tokenizers"
-	sess "github.com/opencode/llama-client/session"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
+	sess "github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
 // ============================================================

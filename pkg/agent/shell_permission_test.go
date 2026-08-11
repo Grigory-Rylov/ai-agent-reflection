@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opencode/llama-client/pkg/access"
-	"github.com/opencode/llama-client/pkg/permission"
-	"github.com/opencode/llama-client/pkg/tools"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/access"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/permission"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 )
 
 // rulesetChecker implements permissionChecker backed by a real Ruleset.

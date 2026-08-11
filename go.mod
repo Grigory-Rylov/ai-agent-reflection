@@ -1,4 +1,4 @@
-module github.com/opencode/llama-client
+module github.com/Grigory-Rylov/ai-agent-reflection
 
 go 1.25.5
 

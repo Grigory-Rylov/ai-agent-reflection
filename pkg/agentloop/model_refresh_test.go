@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/opencode/llama-client/pkg/compress"
-	"github.com/opencode/llama-client/pkg/modelsconfig"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/compress"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
 )
 
 func writeModelsHolder(t *testing.T, cfg *modelsconfig.ModelsConfig) *modelsconfig.Holder {

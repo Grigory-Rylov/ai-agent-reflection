@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opencode/llama-client/pkg/tokenizers"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
 )
 
 // ============================================================

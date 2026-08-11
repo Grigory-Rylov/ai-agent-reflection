@@ -3,7 +3,7 @@ package agent
 import (
 	"strings"
 
-	"github.com/opencode/llama-client/pkg/logger"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 )
 
 type XMLToolCall struct {

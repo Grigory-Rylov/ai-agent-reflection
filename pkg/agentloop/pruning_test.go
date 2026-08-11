@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opencode/llama-client/pkg/compress"
-	"github.com/opencode/llama-client/session"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/compress"
+	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
 func pruneTestUser() string { return "u" + strings.Repeat("x", 200) }

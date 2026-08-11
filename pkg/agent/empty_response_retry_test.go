@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	sess "github.com/opencode/llama-client/session"
+	sess "github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
 func TestProcessToolResults_EmptyResponseRetries(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 )
 
 // BuildTime заполняется на этапе сборки через
-// -ldflags "-X github.com/opencode/llama-client/pkg/buildinfo.BuildTime=...".
+// -ldflags "-X github.com/Grigory-Rylov/ai-agent-reflection/pkg/buildinfo.BuildTime=...".
 // Хранится в RFC3339 (UTC).
 var BuildTime = "unknown"
 

@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/opencode/llama-client/pkg/store"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/store"
 )
 
 func newSubAgentToolTestStore(t *testing.T) store.Store {

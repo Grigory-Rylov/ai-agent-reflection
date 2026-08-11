@@ -75,6 +75,7 @@ type VKMessage struct {
 	FromID      int64            `json:"from_id"`
 	Date        int64            `json:"date"`
 	Text        string           `json:"text"`
+	Payload     string           `json:"payload,omitempty"`
 	Attachments []VKAttachment   `json:"attachments,omitempty"`
 }
 
@@ -273,17 +274,22 @@ func (c *BotClient) CheckUpdates(ctx context.Context, server, key string, ts int
 		return nil, ts, fmt.Errorf("long poll failed: code=%d", result.Failed)
 	}
 
-	// VK Long Poll v2.0 формат: [type, msg_id, flags, peer_id, timestamp, text, ...]
-	var messages []VKMessage
+		// VK Long Poll v3.0 (+mode=74 extended) формат:
+		//   type 4 (message_new):   [4, msg_id, flags, peer_id, timestamp, text, attachments, random_id, ...]
+		//   type 5 (message_event): [5, event_id, user_id, peer_id, extra, payload_json, ...]
+		var messages []VKMessage
 
-	for _, update := range result.Updates {
-		if len(update) >= 6 {
+		for _, update := range result.Updates {
+			if len(update) < 4 {
+				continue
+			}
 			msgType, ok := update[0].(float64)
 			if !ok {
 				continue
 			}
 
-			if int(msgType) == 4 {
+			switch int(msgType) {
+			case 4: // message_new
 				// Фильтруем исходящие сообщения (флаг 2)
 				flags, _ := update[2].(float64)
 				if int(flags)&2 != 0 {
@@ -306,11 +312,32 @@ func (c *BotClient) CheckUpdates(ctx context.Context, server, key string, ts int
 				}
 
 				messages = append(messages, msg)
+
+			case 5: // message_event (callback-кнопки клавиатуры)
+				// [5, event_id, user_id, peer_id, extra, payload_json]
+				userID := extractFloat64(update, 2)
+				peerID := extractFloat64(update, 3)
+
+				var payloadStr string
+				if len(update) >= 6 {
+					if payloadMap, ok := update[5].(map[string]interface{}); ok {
+						payloadBytes, _ := json.Marshal(payloadMap)
+						payloadStr = string(payloadBytes)
+					}
+				}
+
+				msg := VKMessage{
+					ID:      int64(time.Now().UnixNano()), // синтетический ID
+					PeerID:  int64(peerID),
+					FromID:  int64(userID),
+					Date:    time.Now().Unix(),
+					Payload: payloadStr,
+				}
+				messages = append(messages, msg)
 			}
 		}
-	}
 
-	return messages, result.Ts, nil
+		return messages, result.Ts, nil
 }
 
 // extractFloat64 безопасно извлекает float64 из массива
@@ -628,3 +655,34 @@ func CreatePermissionKeyboard() map[string]interface{} {
 		},
 	}
 }
+
+	// CreateModelsKeyboard создаёт inline-клавиатуру для выбора модели.
+	// Кнопки типа callback — при нажатии VK шлёт message_event с payload,
+	// который обрабатывается в CheckUpdates и превращается в команду /r.
+	func CreateModelsKeyboard(models []string, currentAlias string) map[string]interface{} {
+		var rows [][]map[string]interface{}
+		for _, alias := range models {
+			color := "secondary"
+			if alias == currentAlias {
+				color = "positive"
+			}
+			payloadJSON, _ := json.Marshal(map[string]string{
+				"command": "model_switch",
+				"alias":   alias,
+			})
+			rows = append(rows, []map[string]interface{}{
+				{
+					"action": map[string]interface{}{
+						"type":    "callback",
+						"label":   alias,
+						"payload": string(payloadJSON),
+					},
+					"color": color,
+				},
+			})
+		}
+		return map[string]interface{}{
+			"inline":  true,
+			"buttons": rows,
+		}
+	}

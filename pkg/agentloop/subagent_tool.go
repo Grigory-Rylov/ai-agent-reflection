@@ -11,12 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opencode/llama-client/pkg/agent"
-	"github.com/opencode/llama-client/pkg/agentpolicy"
-	"github.com/opencode/llama-client/pkg/modelsconfig"
-	"github.com/opencode/llama-client/pkg/store"
-	"github.com/opencode/llama-client/pkg/tools"
-	"github.com/opencode/llama-client/session"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agent"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agentpolicy"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/store"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
+	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
 type SubAgentTool struct {

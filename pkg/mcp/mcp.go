@@ -7,7 +7,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/opencode/llama-client/pkg/tools"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 )
 
 // ============================================================

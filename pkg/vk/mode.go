@@ -3,7 +3,7 @@ package vk
 import (
 	"sync"
 
-	"github.com/opencode/llama-client/pkg/workflow"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/workflow"
 )
 
 // ============================================================

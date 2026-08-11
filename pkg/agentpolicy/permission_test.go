@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/opencode/llama-client/pkg/permission"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/permission"
 )
 
 func TestPermissionCheck(t *testing.T) {

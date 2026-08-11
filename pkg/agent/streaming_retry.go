@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opencode/llama-client/pkg/logger"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 )
 
 // retryableError — ошибка LLM-запроса, которую стоит повторить

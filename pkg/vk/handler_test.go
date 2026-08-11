@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opencode/llama-client/pkg/agentloop"
-	"github.com/opencode/llama-client/pkg/logger"
-	"github.com/opencode/llama-client/pkg/modelsconfig"
-	"github.com/opencode/llama-client/pkg/tools"
-	"github.com/opencode/llama-client/session"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agentloop"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
+	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
 // ============================================================
@@ -26,6 +26,7 @@ type mockAgentLoop struct {
 	lastPeerID      int64
 	lastExtraSystem string
 	sessions        map[int64]*session.Session
+	mu              sync.Mutex
 	returnErr       error
 	// blockCh — если не nil, ProcessMessage блокируется на этом канале,
 	// симулируя долгий LLM-запрос. Закрытие канала разблокирует вызов.
@@ -77,7 +78,11 @@ func (m *mockAgentLoop) ProcessPromptWithExtraSystem(ctx context.Context, prompt
 
 func (m *mockAgentLoop) Start(ctx context.Context)      {}
 func (m *mockAgentLoop) Stop()                              {}
-func (m *mockAgentLoop) ResetSession(peerID int64)          { delete(m.sessions, peerID) }
+func (m *mockAgentLoop) ResetSession(peerID int64) {
+	m.mu.Lock()
+	delete(m.sessions, peerID)
+	m.mu.Unlock()
+}
 func (m *mockAgentLoop) SetThinkingCallback(cb func(peerID int64, content string) error) {}
 
 func (m *mockAgentLoop) GetSession(peerID int64) *session.Session {
@@ -93,7 +98,9 @@ func (m *mockAgentLoop) ResumeInterruptedTask(ctx context.Context, peerID int64)
 func (m *mockAgentLoop) ClearAllSlots(ctx context.Context) {}
 
 func (m *mockAgentLoop) GetContextStats(peerID int64) (int, int, error) {
+	m.mu.Lock()
 	sess := m.sessions[peerID]
+	m.mu.Unlock()
 	if sess == nil {
 		return 0, 0, nil
 	}
@@ -122,6 +129,8 @@ func (m *mockAgentLoop) GetSlotManager() *agentloop.SlotManager { return nil }
 func (m *mockAgentLoop) GetSlots() *agentloop.SlotClient        { return nil }
 
 func (m *mockAgentLoop) getOrCreateSession(peerID int64) *session.Session {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if sess, ok := m.sessions[peerID]; ok {
 		return sess
 	}
@@ -739,6 +748,15 @@ func TestClearCancelsPendingQuestionAndGrants(t *testing.T) {
 		t.Fatal("expected path grant to be applied")
 	}
 
+	// Ожидающий ответ goroutine (как handleQuestion→waitForAnswer) должен
+	// разблокироваться после /clear — канал закрывается, иначе агент висел бы
+	// вечно с захваченным peer mutex'ом.
+	waitDone := make(chan struct{})
+	go func() {
+		<-ch
+		close(waitDone)
+	}()
+
 	handler.ProcessMessage("/clear", peerID)
 
 	if tools.HasPendingQuestion(peerID) {
@@ -751,8 +769,54 @@ func TestClearCancelsPendingQuestionAndGrants(t *testing.T) {
 		t.Error("expected ClearActiveSessions called for peer after /clear")
 	}
 
-	// Закрываем канал pending question.
-	close(ch)
+	select {
+	case <-waitDone:
+	case <-time.After(2 * time.Second):
+		t.Error("expected pending question wait to be unblocked after /clear")
+	}
+}
+
+func TestProcessMessageResolvesPendingQuestionWithoutMutex(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+	handler := NewBotHandler(nil, mock, log)
+
+	peerID := int64(555)
+
+	// Симулируем goroutine, которая держит peer mutex, ожидая ответа на вопрос
+	// (именно так работает handleQuestion→waitForAnswer внутри ProcessMessage).
+	mu := handler.getPeerMutex(peerID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	ch := tools.RegisterPendingQuestion(peerID)
+	defer tools.UnregisterPendingQuestion(peerID)
+
+	// Ответ должен быть доставлен, несмотря на захваченный mutex: раньше
+	// ProcessMessage брал mutex ДО разрешения вопроса и вставал в очередь
+	// навсегда — агент не продолжал работу, клавиатура не скрывалась.
+	resultCh := make(chan string, 1)
+	go func() {
+		resultCh <- handler.ProcessMessage("✅ Allow", peerID)
+	}()
+
+	select {
+	case result := <-resultCh:
+		if result != "" {
+			t.Errorf("expected empty response for resolved question, got %q", result)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ProcessMessage deadlocked on peer mutex while answering pending question")
+	}
+
+	select {
+	case answer := <-ch:
+		if answer["answer"] != "✅ Allow" {
+			t.Errorf("expected answer '✅ Allow', got %v", answer)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected question answer to be delivered")
+	}
 }
 
 func TestClearCancelsRunningAgent(t *testing.T) {

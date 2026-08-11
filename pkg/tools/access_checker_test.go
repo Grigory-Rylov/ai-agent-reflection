@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opencode/llama-client/pkg/access"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/access"
 )
 
 func setupAccessTest(t *testing.T) (string, *access.Controller) {

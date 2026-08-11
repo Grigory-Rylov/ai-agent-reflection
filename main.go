@@ -13,19 +13,19 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/opencode/llama-client/pkg/access"
-	"github.com/opencode/llama-client/pkg/agent"
-	"github.com/opencode/llama-client/pkg/agentloop"
-	"github.com/opencode/llama-client/pkg/agentpolicy"
-	"github.com/opencode/llama-client/pkg/buildinfo"
-	"github.com/opencode/llama-client/pkg/logger"
-	"github.com/opencode/llama-client/pkg/mcp"
-	"github.com/opencode/llama-client/pkg/modelsconfig"
-	"github.com/opencode/llama-client/pkg/store"
-	"github.com/opencode/llama-client/pkg/tools"
-	"github.com/opencode/llama-client/pkg/util/stringutil"
-	"github.com/opencode/llama-client/pkg/vk"
-	"github.com/opencode/llama-client/session"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/access"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agent"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agentloop"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agentpolicy"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/buildinfo"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/mcp"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/store"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util/stringutil"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/vk"
+	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
 var Version = "dev"
@@ -92,7 +92,7 @@ func main() {
 	logConfig := logger.DefaultConfig()
 	logConfig.Level = logger.LevelDebug
 	logConfig.MaxSizeMB = 5
-	logConfig.File = "debug.log"
+	logConfig.File = "debug/debug.log"
 	if !*debug {
 		logConfig.Level = logger.LevelInfo
 	}

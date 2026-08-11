@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opencode/llama-client/pkg/compress"
-	"github.com/opencode/llama-client/pkg/logger"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/compress"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 )
 
 type Message struct {
@@ -126,15 +126,17 @@ func (a *agentImpl) buildBaseRequestJSON(model string, messages []Message, strea
 	return req
 }
 
-// saveDebugPrompt сохраняет промпт в debug_prompt.txt
+// saveDebugPrompt сохраняет промпт в debug/debug_prompt.txt
 func (a *agentImpl) saveDebugPrompt(jsonData []byte) {
 	var prettyJSON bytes.Buffer
 	if err := json.Indent(&prettyJSON, jsonData, "", "  "); err != nil {
 		// Если не удалось форматировать - сохраняем как есть
-		os.WriteFile("debug_prompt.txt", jsonData, 0644)
+		os.MkdirAll("debug", 0755)
+		os.WriteFile("debug/debug_prompt.txt", jsonData, 0644)
 		return
 	}
-	os.WriteFile("debug_prompt.txt", prettyJSON.Bytes(), 0644)
+	os.MkdirAll("debug", 0755)
+	os.WriteFile("debug/debug_prompt.txt", prettyJSON.Bytes(), 0644)
 }
 
 func (a *agentImpl) createStreamingRequest(ctx context.Context, jsonData []byte) (*http.Request, error) {

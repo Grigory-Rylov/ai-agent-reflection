@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opencode/llama-client/pkg/compress"
-	"github.com/opencode/llama-client/pkg/tokenizers"
-	"github.com/opencode/llama-client/session"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/compress"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
+	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
 // mockPinnedCompressor — стаб LLM-компрессора для компакции.

@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opencode/llama-client/pkg/agentpolicy"
-	"github.com/opencode/llama-client/pkg/modelsconfig"
-	"github.com/opencode/llama-client/pkg/tools"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agentpolicy"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 )
 
 // slotActionRecord — запись о вызове slot-эндпоинта (save/restore/clear/delete)

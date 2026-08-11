@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/opencode/llama-client/pkg/access"
-	"github.com/opencode/llama-client/pkg/permission"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/access"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/permission"
 )
 
 // Global access controller, shared across all tool instances.
