@@ -100,8 +100,8 @@ func truncationHint(outputPath string, hasTaskTool bool) string {
 	if hasTaskTool {
 		return fmt.Sprintf(
 			"The tool call succeeded but the output was truncated. Full output saved to: %s\n"+
-				"Use the Task tool to have explore agent process this file with Grep and Read (with offset/limit). "+
-				"Do NOT read the full file yourself - delegate to save context.",
+				"Use the Task tool to delegate processing of this file (use Grep, Read with offset/limit). "+
+				"Do NOT read the full file yourself - delegate to save context. Available agents: list via /help",
 			outputPath)
 	}
 	return fmt.Sprintf(

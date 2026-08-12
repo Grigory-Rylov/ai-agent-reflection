@@ -77,10 +77,13 @@ func (am *AgentManager) initDefaults() {
 		Options:     map[string]interface{}{},
 	}
 
-	// General subagent — для исследования и параллельных задач
+	// Note: qa/worker/explore/generate agents should be configured in config.json and loaded via LoadFromConfig().
+	// initDefaults only provides fallback agents for environments without config file.
+
+	// General subagent — для исследования и параллельных задач (fallback)
 	am.agents["general"] = AgentInfo{
 		Name:        "general",
-		Description: "General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.",
+		Description: "General-purpose agent for researching complex questions and executing multi-step tasks.",
 		Mode:        ModeSubagent,
 		Native:      true,
 		Permission:  defaultPerm,
@@ -90,15 +93,11 @@ func (am *AgentManager) initDefaults() {
 1. Use available tools to gather information and execute tasks
 2. Be thorough — search widely, read strategically
 3. Return clear, structured results to the caller
-4. Do NOT make assumptions — verify with tools
-
-## Rules
-- You can create files and run commands as needed
-- Return complete results — the caller has no other context`,
+4. Do NOT make assumptions — verify with tools`,
 		Options:     map[string]interface{}{},
 	}
 
-	// QA agent — review агент, может вызывать worker для исправлений
+	// QA agent — review агент (fallback, overridden by config.json)
 	am.agents["qa"] = AgentInfo{
 		Name:        "qa",
 		Description: "Reviews code, builds/tests it, calls worker for fixes, approves when done.",
@@ -109,30 +108,37 @@ func (am *AgentManager) initDefaults() {
 		Options:     map[string]interface{}{},
 	}
 
-	// Explore agent — быстрый поиск по коду (только чтение)
+	// Explore agent — быстрый поиск по коду (только чтение) (fallback)
 	explorePerm := NewPermissionFromConfig(map[string]string{
-		"grep":  "allow",
-		"glob":  "allow",
-		"read":  "allow",
-		"file_list": "allow",
-		"file_read": "allow",
-		"web_fetch": "allow",
-		"web_search": "allow",
+		"grep":        "allow",
+		"glob":        "allow",
+		"read":        "allow",
+		"file_list":   "allow",
+		"file_read":   "allow",
+		"web_fetch":   "allow",
+		"web_search":  "allow",
 		"shell_execute": "allow",
-		"file_write": "deny",
-		"file_edit": "deny",
+		"file_write":  "deny",
+		"file_edit":   "deny",
 	})
 	am.agents["explore"] = AgentInfo{
 		Name:        "explore",
-		Description: "Fast agent specialized for exploring codebases. Use for finding files by patterns, searching code for keywords, answering questions about the codebase. Returns file paths as absolute paths.",
+		Description: "Fast agent specialized for exploring codebases.",
 		Mode:        ModeSubagent,
 		Native:      true,
 		Permission:  explorePerm,
-		Prompt:      "You are an Explorer. Search and investigate the codebase quickly.\n\n## Available tools\n- `glob` — find files by pattern\n- `search_code` — grep for patterns in files\n- `file_read` — read file contents\n- `file_list` — list directory contents\n- `shell_execute` — run commands (read-only, e.g. git log, ls)\n- `web_fetch` — fetch URLs\n\n## Instructions\n1. Search thoroughly but quickly\n2. Report file paths as absolute paths\n3. Read key files to provide relevant context\n\n## Rules\n- You CANNOT create or modify files\n- You CANNOT edit code\n- Be fast — focus on finding what's needed",
+		Prompt:      `You are an Explorer. Search and investigate the codebase quickly.
+
+## Available tools
+- glob — find files by pattern
+- grep — search code for keywords
+- file_read — read file contents
+- shell_execute — run commands (read-only)
+- web_fetch — fetch URLs`,
 		Options:     map[string]interface{}{},
 	}
 
-	// Summary agent — для создания суммаризации
+	// Summary agent — internal utility for creating summaries
 	am.agents["summary"] = AgentInfo{
 		Name:        "summary",
 		Description: "Agent for creating concise summaries of conversations and files.",

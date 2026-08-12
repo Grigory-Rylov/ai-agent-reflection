@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agentpolicy"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 )
@@ -76,6 +77,7 @@ func TestOrchestratorSendsUserMessageToLLM(t *testing.T) {
 		ToolRegistry:    reg,
 		Debug:           false,
 		SystemPromptDir: dir,
+		AgentManager:    agentpolicy.NewAgentManager(),
 	})
 
 	ctx := context.Background()

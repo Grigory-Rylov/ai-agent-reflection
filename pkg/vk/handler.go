@@ -172,7 +172,7 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	h.setCancelFunc(peerID, cancel)
 	defer h.clearCancelFunc(peerID)
 
-	if agentName, task := ParseAgentHashMention(command, h.agentNames()); agentName != "" {
+	if agentName, task := ParseAgentHashMention(message, h.agentNames()); agentName != "" {
 		if h.log != nil {
 			h.log.InfoLogf("Agent #%s invoked by peer %d with task: %s", agentName, peerID, stringutil.Truncate(task, 100, "..."))
 		}

@@ -265,21 +265,28 @@ func TestNormalMessagesReachModel(t *testing.T) {
 	}
 }
 
-func TestRestarterCommandsReturnEmpty(t *testing.T) {
+func TestRestarterCommandsDoNotReachLLM(t *testing.T) {
 	log, _ := logger.New(logger.DefaultConfig())
 	mock := newMockAgentLoop()
 	handler := NewBotHandler(nil, mock, log)
 
-	restarterCmds := []string{"/restart", "/update", "/b main"}
-	for _, cmd := range restarterCmds {
-		t.Run(cmd, func(t *testing.T) {
+	tests := []struct {
+		cmd            string
+		expectedResp   bool // true = должен вернуть сообщение пользователю
+	}{
+		{"/restart", true},
+		{"/update", true},
+		{"/b main", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.cmd, func(t *testing.T) {
 			mock.lastMessage = ""
-			response := handler.ProcessMessage(cmd, 12345)
+			response := handler.ProcessMessage(tt.cmd, 12345)
 			if mock.lastMessage != "" {
-				t.Errorf("Restarter command %q was sent to AI model: lastMessage=%q", cmd, mock.lastMessage)
+				t.Errorf("Restarter command %q was sent to AI model: lastMessage=%q", tt.cmd, mock.lastMessage)
 			}
-			if response != "" {
-				t.Errorf("Restarter command %q should return empty, got %q", cmd, response)
+			if tt.expectedResp && response == "" {
+				t.Errorf("Restarter command %q should return confirmation message", tt.cmd)
 			}
 		})
 	}

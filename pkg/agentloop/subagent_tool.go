@@ -298,20 +298,7 @@ func (t *SubAgentTool) resolveAgentName(raw string) (string, error) {
 			}
 		}
 	} else {
-		normalizedName := raw
-		switch {
-		case strings.Contains(raw, "worker") || strings.Contains(raw, "coder") || strings.Contains(raw, "developer"):
-			normalizedName = "worker"
-		case strings.Contains(raw, "qa") || strings.Contains(raw, "review") || strings.Contains(raw, "tester"):
-			normalizedName = "qa"
-		}
-		if normalizedName != raw {
-			t.debugLog("Agent name %q normalized to %q", raw, normalizedName)
-		}
-		if normalizedName != "worker" && normalizedName != "qa" {
-			return "", fmt.Errorf("unknown agent name: %q, use 'worker' or 'qa'", raw)
-		}
-		resolved = normalizedName
+		return "", fmt.Errorf("cannot resolve agent %q: AgentManager not configured", raw)
 	}
 	if err := t.checkAllowedSubagent(resolved); err != nil {
 		return "", err

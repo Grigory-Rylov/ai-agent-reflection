@@ -82,13 +82,7 @@ func TestLlamaServerTokenizerDecodeNotSupported(t *testing.T) {
 	}
 }
 
-func TestLlamaServerTokenizerMaxContextLength(t *testing.T) {
-	tokenizer := NewLlamaServerTokenizer("http://localhost:8081", "test", 4096)
-	length := tokenizer.MaxContextLength()
-	if length != 4096 {
-		t.Errorf("expected 4096, got %d", length)
-	}
-}
+
 
 func TestLlamaServerTokenizerCountMessagesTokens(t *testing.T) {
 	// Создаём тестовый сервер

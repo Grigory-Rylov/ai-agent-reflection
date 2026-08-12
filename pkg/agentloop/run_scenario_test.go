@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agentpolicy"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 )
@@ -53,6 +54,14 @@ func runScenario(t *testing.T, scenarioName string) {
 		},
 	})
 
+	am := agentpolicy.NewAgentManager()
+	cfg := map[string]agentpolicy.AgentCfg{
+		"worker":  {Description: "Worker", Mode: string(agentpolicy.ModeSubagent)},
+		"qa":      {Description: "QA", Review: true, Leaf: true},
+		"explore": {Description: "Explore"},
+	}
+	am.LoadFromConfig(cfg)
+
 	orchestrator := NewOrchestrator(OrchestratorConfig{
 		ModelHolder:     modelHolder,
 		MaxTokens:       8192,
@@ -60,6 +69,7 @@ func runScenario(t *testing.T, scenarioName string) {
 		ToolRegistry:    reg,
 		Debug:           false,
 		SystemPromptDir: promptDir,
+		AgentManager:    am,
 	})
 
 	ctx := context.Background()
