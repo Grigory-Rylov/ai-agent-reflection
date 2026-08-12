@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/opencode/llama-client/pkg/compress"
-	"github.com/opencode/llama-client/pkg/logger"
-	"github.com/opencode/llama-client/pkg/tokenizers"
-	sess "github.com/opencode/llama-client/session"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/compress"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
+	sess "github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
 type contextKey string

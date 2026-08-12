@@ -11,9 +11,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/opencode/llama-client/pkg/debug"
-	"github.com/opencode/llama-client/pkg/tools"
-	"github.com/opencode/llama-client/session"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/debug"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
+	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
 func newTestAgentWithStub(t *testing.T, config Config) (*agentImpl, *StubToolExecutor) {

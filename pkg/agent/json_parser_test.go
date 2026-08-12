@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/opencode/llama-client/session"
+	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
 func assertJSONParse(t *testing.T, input string, expected XMLParseResult) {

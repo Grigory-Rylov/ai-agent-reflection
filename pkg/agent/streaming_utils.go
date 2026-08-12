@@ -66,8 +66,9 @@ func (a *agentImpl) saveDebugResponse(content, reasoning, finishReason string, t
 		sb.WriteString(fmt.Sprintf("  %d. %s: %s\n", i+1, tc.Function.Name, ToolCallArgumentsStr(tc)))
 	}
 
-	if err := os.WriteFile("debug_response.txt", []byte(sb.String()), 0644); err != nil {
-		a.debugLog.Debug("Failed to write debug_response.txt: %v", err)
+	os.MkdirAll("debug", 0755)
+	if err := os.WriteFile("debug/debug_response.txt", []byte(sb.String()), 0644); err != nil {
+		a.debugLog.Debug("Failed to write debug/debug_response.txt: %v", err)
 	}
 }
 

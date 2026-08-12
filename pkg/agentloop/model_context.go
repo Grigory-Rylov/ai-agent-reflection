@@ -5,8 +5,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/opencode/llama-client/pkg/modelsconfig"
-	"github.com/opencode/llama-client/pkg/tokenizers"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
 )
 
 // ModelContextResolver определяет лимит контекста модели и кэширует его

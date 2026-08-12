@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestQuestionTool_Name(t *testing.T) {
@@ -134,6 +135,44 @@ func TestSetGetQuestionPeerID(t *testing.T) {
 	_, pid = getQuestionState()
 	if pid != 99 {
 		t.Errorf("expected 99, got %d", pid)
+	}
+}
+
+func TestResolvePendingQuestionIsSingleShot(t *testing.T) {
+	peerID := int64(7)
+	RegisterPendingQuestion(peerID)
+	defer UnregisterPendingQuestion(peerID)
+
+	if !ResolvePendingQuestion(peerID, "first") {
+		t.Fatal("expected first resolve to succeed")
+	}
+	if HasPendingQuestion(peerID) {
+		t.Error("expected question unregistered after successful resolve")
+	}
+	if ResolvePendingQuestion(peerID, "second") {
+		t.Error("expected second resolve to fail after question was already resolved")
+	}
+}
+
+func TestUnregisterPendingQuestionUnblocksWaiter(t *testing.T) {
+	peerID := int64(8)
+	ch := RegisterPendingQuestion(peerID)
+
+	waitDone := make(chan struct{})
+	go func() {
+		_, ok := <-ch
+		if ok {
+			t.Error("expected closed channel (cancelled question)")
+		}
+		close(waitDone)
+	}()
+
+	UnregisterPendingQuestion(peerID)
+
+	select {
+	case <-waitDone:
+	case <-time.After(2 * time.Second):
+		t.Error("expected waiter to be unblocked after UnregisterPendingQuestion")
 	}
 }
 

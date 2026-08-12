@@ -3,7 +3,7 @@ package agentloop
 import (
 	"context"
 
-	"github.com/opencode/llama-client/pkg/agent"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agent"
 )
 
 // AssignSessionSlot выделяет слот для sessionID и подготавливает его к запросу:

@@ -7,9 +7,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/opencode/llama-client/pkg/modelsconfig"
-	"github.com/opencode/llama-client/pkg/tools"
-	"github.com/opencode/llama-client/pkg/util"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util"
 )
 
 // ============================================================

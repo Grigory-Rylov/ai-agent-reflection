@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/opencode/llama-client/pkg/modelsconfig"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
 )
 
 func newModelsJSON(t *testing.T, content string) string {

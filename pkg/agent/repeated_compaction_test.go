@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opencode/llama-client/pkg/tokenizers"
-	"github.com/opencode/llama-client/session"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
+	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
 // Тестовые сообщения большого размера (переполнение с MaxTokens=1000) с

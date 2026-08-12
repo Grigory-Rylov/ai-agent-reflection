@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/opencode/llama-client/pkg/logger"
-	"github.com/opencode/llama-client/pkg/permission"
-	"github.com/opencode/llama-client/pkg/tools"
-	"github.com/opencode/llama-client/pkg/util/stringutil"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/permission"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util/stringutil"
 )
 
 // MaxToolResultSize — максимальный размер результата инструмента в символах

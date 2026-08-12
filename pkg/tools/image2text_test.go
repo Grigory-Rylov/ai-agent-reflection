@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opencode/llama-client/pkg/modelsconfig"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
 )
 
 // mockChatCompletionServer имитирует OpenAI-совместимый llama-сервер:

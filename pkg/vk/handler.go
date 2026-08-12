@@ -2,6 +2,7 @@ package vk
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,12 +11,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opencode/llama-client/pkg/agentloop"
-	"github.com/opencode/llama-client/pkg/logger"
-	"github.com/opencode/llama-client/pkg/modelsconfig"
-	"github.com/opencode/llama-client/pkg/tools"
-	"github.com/opencode/llama-client/pkg/util/stringutil"
-	"github.com/opencode/llama-client/session"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agentloop"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util/stringutil"
+	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
 func expandTilde(path string) string {
@@ -65,37 +66,42 @@ type BotHandler struct {
 	peerProcessorsMu   sync.RWMutex
 	// semaphore limits concurrent message processing goroutines.
 	semaphore chan struct{}
+	// pendingKeyboards — temporary keyboard to send with next response per peerID.
+	pendingKeyboards    map[int64]map[string]interface{}
+	pendingKeyboardMu   sync.RWMutex
 }
 
 const maxConcurrentHandlers = 10
 
 func NewBotHandler(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger.Logger) *BotHandler {
 	return &BotHandler{
-		vkClient:       vkClient,
-		aiAgent:        aiAgent,
-		log:            log,
-		sessions:       make(map[int64]*session.Session),
-		cancelFuncs:    make(map[int64]context.CancelFunc),
-		peerProcessors: make(map[int64]*sync.Mutex),
-		attachmentsDir: "./attachments",
-		semaphore:      make(chan struct{}, maxConcurrentHandlers),
+		vkClient:         vkClient,
+		aiAgent:          aiAgent,
+		log:              log,
+		sessions:         make(map[int64]*session.Session),
+		cancelFuncs:      make(map[int64]context.CancelFunc),
+		peerProcessors:   make(map[int64]*sync.Mutex),
+		pendingKeyboards: make(map[int64]map[string]interface{}),
+		attachmentsDir:   "./attachments",
+		semaphore:        make(chan struct{}, maxConcurrentHandlers),
 	}
 }
 
 func NewBotHandlerWithPeerID(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger.Logger, mainPeerID, thinkingPeerID int64, orchestrator AgentOrchestrator, modelHolder *modelsconfig.Holder) *BotHandler {
 	return &BotHandler{
-		vkClient:       vkClient,
-		aiAgent:        aiAgent,
-		orchestrator:   orchestrator,
-		log:            log,
-		sessions:       make(map[int64]*session.Session),
-		mainPeerID:     mainPeerID,
-		thinkingPeerID: thinkingPeerID,
-		modelHolder:    modelHolder,
-		cancelFuncs:    make(map[int64]context.CancelFunc),
-		peerProcessors: make(map[int64]*sync.Mutex),
-		attachmentsDir: "./attachments",
-		semaphore:      make(chan struct{}, maxConcurrentHandlers),
+		vkClient:         vkClient,
+		aiAgent:          aiAgent,
+		orchestrator:     orchestrator,
+		log:              log,
+		sessions:         make(map[int64]*session.Session),
+		mainPeerID:       mainPeerID,
+		thinkingPeerID:   thinkingPeerID,
+		modelHolder:      modelHolder,
+		cancelFuncs:      make(map[int64]context.CancelFunc),
+		peerProcessors:   make(map[int64]*sync.Mutex),
+		pendingKeyboards: make(map[int64]map[string]interface{}),
+		attachmentsDir:   "./attachments",
+		semaphore:        make(chan struct{}, maxConcurrentHandlers),
 	}
 }
 
@@ -141,28 +147,30 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 		return fmt.Sprintf("Неизвестная команда: %s. Напишите /help для списка команд.", command)
 	}
 
-	mu := h.getPeerMutex(peerID)
-	mu.Lock()
-	defer mu.Unlock()
-
-	h.clearCancelFunc(peerID)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	h.cancelMu.Lock()
-	h.cancelFuncs[peerID] = cancel
-	h.cancelMu.Unlock()
-	defer h.clearCancelFunc(peerID)
-
-	// Не-команды могут быть ответами на pending вопросы (права доступа, уточнения).
+	// Ответы на pending вопросы (права доступа, уточнения) обрабатываются ДО
+	// захвата peer mutex'а: этот mutex держит goroutine, которая выполняет агента
+	// и блокируется в handleQuestion, ожидая ответ. Если ждать mutex здесь —
+	// наступит взаимная блокировка: goroutine с ответом встанет в очередь навсегда,
+	// клавиатура не скроется, а агент не продолжит работу.
 	if tools.HasPendingQuestion(peerID) {
 		logger.DebugToFile("[ProcessMessage] HasPendingQuestion=true for peer %d, command=%s", peerID, stringutil.Truncate(command, 100, "..."))
 		if tools.ResolvePendingQuestion(peerID, command) {
 			logger.DebugToFile("[ProcessMessage] Resolved pending question for peer %d with: %s", peerID, stringutil.Truncate(command, 50, "..."))
 			return ""
-		} else {
-			logger.DebugToFile("[ProcessMessage] ResolvePendingQuestion returned false for peer %d, command=%s", peerID, stringutil.Truncate(command, 50, "..."))
 		}
+		logger.DebugToFile("[ProcessMessage] ResolvePendingQuestion returned false for peer %d, command=%s", peerID, stringutil.Truncate(command, 50, "..."))
 	}
+
+	mu := h.getPeerMutex(peerID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Атомарная замена cancel func: старый (если есть) отменяется, новый
+	// устанавливается без промежутка, в котором /clear не нашёл бы cancel.
+	h.setCancelFunc(peerID, cancel)
+	defer h.clearCancelFunc(peerID)
 
 	if agentName, task := ParseAgentHashMention(command, h.agentNames()); agentName != "" {
 		if h.log != nil {
@@ -299,22 +307,23 @@ func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, tim
 		return fmt.Sprintf("Неизвестная команда: %s. Напишите /help для списка команд.", command)
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
-
-	h.clearCancelFunc(peerID)
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	h.cancelMu.Lock()
-	h.cancelFuncs[peerID] = cancel
-	h.cancelMu.Unlock()
-	defer h.clearCancelFunc(peerID)
-
+	// Ответ на pending вопрос обрабатывается до захвата peer mutex'а —
+	// иначе дедлок, см. комментарий в ProcessMessage.
 	if tools.HasPendingQuestion(peerID) {
 		logger.DebugToFile("[ProcessMessageWithTimeout] HasPendingQuestion=true for peer %d, command=%s", peerID, stringutil.Truncate(command, 100, "..."))
 		if tools.ResolvePendingQuestion(peerID, command) {
 			return ""
 		}
 	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	// Атомарная замена cancel func: старый отменяется, новый устанавливается
+	// без промежутка, в котором /clear не нашёл бы cancel.
+	h.setCancelFunc(peerID, cancel)
+	defer h.clearCancelFunc(peerID)
 
 	s := h.aiAgent.GetSession(peerID)
 	if s != nil && s.IsLoopDetected() {
@@ -427,7 +436,7 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 		return h.handlePinCommand(input, peerID)
 
 	case "/m", "/models":
-		return h.handleModelsList()
+		return h.handleModelsList(peerID)
 
 	case "/r":
 		return h.handleModelSwitch(input)
@@ -437,13 +446,20 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 	}
 }
 
-func (h *BotHandler) handleModelsList() string {
+func (h *BotHandler) handleModelsList(peerID int64) string {
 	if h.modelHolder == nil {
 		return "Модели не настроены (models.json не загружен)"
 	}
 
 	models := h.modelHolder.List()
 	currentAlias := h.modelHolder.GetDefaultAlias()
+
+	// Сохраняем клавиатуру для отправки с ответом.
+	aliases := make([]string, 0, len(models))
+	for alias := range models {
+		aliases = append(aliases, alias)
+	}
+	h.setPendingKeyboard(peerID, CreateModelsKeyboard(aliases, currentAlias))
 
 	var b strings.Builder
 	b.WriteString("Доступные модели:\n")
@@ -455,7 +471,6 @@ func (h *BotHandler) handleModelsList() string {
 		b.WriteString(fmt.Sprintf("  %s %s → %s (%s)\n", mark, alias, entry.Name, entry.Host))
 	}
 	b.WriteString(fmt.Sprintf("\nТекущая: %s\n", currentAlias))
-	b.WriteString("Используйте /r [alias] для переключения.")
 
 	return b.String()
 }
@@ -478,6 +493,39 @@ func (h *BotHandler) handleModelSwitch(input string) string {
 
 	alias2, modelName, host := h.modelHolder.GetCurrent()
 	return fmt.Sprintf("✓ Модель переключена на: %s\n  %s (%s)", alias2, modelName, host)
+}
+
+// setPendingKeyboard сохраняет клавиатуру для отправки со следующим ответом.
+func (h *BotHandler) setPendingKeyboard(peerID int64, kb map[string]interface{}) {
+	h.pendingKeyboardMu.Lock()
+	h.pendingKeyboards[peerID] = kb
+	h.pendingKeyboardMu.Unlock()
+}
+
+// popPendingKeyboard извлекает и удаляет pending-клавиатуру для peerID.
+func (h *BotHandler) popPendingKeyboard(peerID int64) map[string]interface{} {
+	h.pendingKeyboardMu.Lock()
+	kb := h.pendingKeyboards[peerID]
+	delete(h.pendingKeyboards, peerID)
+	h.pendingKeyboardMu.Unlock()
+	return kb
+}
+
+// payloadToCommand преобразует callback payload клавиатуры в текстовую команду.
+func (h *BotHandler) payloadToCommand(payloadJSON string) string {
+	var payload struct {
+		Command string `json:"command"`
+		Alias   string `json:"alias"`
+	}
+	if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
+		return ""
+	}
+	switch payload.Command {
+	case "model_switch":
+		return fmt.Sprintf("/r %s", payload.Alias)
+	default:
+		return ""
+	}
 }
 
 func (h *BotHandler) handlePinCommand(input string, peerID int64) string {
@@ -802,9 +850,15 @@ func (h *BotHandler) fetchFullMessages(messages []VKMessage) map[int64]VKMessage
 	if len(messages) == 0 {
 		return nil
 	}
-	ids := make([]int64, len(messages))
-	for i, m := range messages {
-		ids[i] = m.ID
+	ids := make([]int64, 0, len(messages))
+	for _, m := range messages {
+		if m.EventID != "" {
+			continue
+		}
+		ids = append(ids, m.ID)
+	}
+	if len(ids) == 0 {
+		return nil
 	}
 	full, err := h.vkClient.GetMessagesByID(ids)
 	if err != nil {
@@ -826,7 +880,25 @@ func (h *BotHandler) handleIncomingMessage(
 	fullMsgMap map[int64]VKMessage,
 ) {
 	tools.SetQuestionPeerID(msg.PeerID)
+
+	isCallback := msg.EventID != ""
+
+	if isCallback {
+		logger.DebugToFile("[handler] callback received: peerID=%d, eventID=%s, payload=%s", msg.PeerID, msg.EventID, msg.Payload)
+		err := h.vkClient.SendMessageEventAnswer(msg.EventID, msg.FromID, msg.PeerID, "")
+		if err != nil && h.log != nil {
+			h.log.ErrorLogf("Failed to answer callback event: %v", err)
+		}
+	}
+
 	fullText := h.buildFullText(&msg, fullMsgMap)
+	if msg.Payload != "" {
+		if cmd := h.payloadToCommand(msg.Payload); cmd != "" {
+			logger.DebugToFile("[handler] callback payload: peerID=%d, cmd=%s", msg.PeerID, cmd)
+			fullText = cmd
+		}
+	}
+
 	logger.DebugToFile("[handler] goroutine: peerID=%d, targetPeer=%d, text=%s",
 		msg.PeerID, targetPeer, stringutil.Truncate(fullText, 100, "..."))
 
@@ -834,6 +906,16 @@ func (h *BotHandler) handleIncomingMessage(
 	if response == "" {
 		return
 	}
+
+	kb := h.popPendingKeyboard(msg.PeerID)
+	if kb != nil {
+		_, err := h.vkClient.SendMessageWithKeyboard(targetPeer, response, kb)
+		if err != nil && h.log != nil {
+			h.log.ErrorLogf("Failed to send response with keyboard to peer %d: %v", targetPeer, err)
+		}
+		return
+	}
+
 	_, err := h.vkClient.SendMessage(targetPeer, response)
 	if err != nil && h.log != nil {
 		h.log.ErrorLogf("Failed to send response to peer %d: %v", targetPeer, err)

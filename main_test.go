@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opencode/llama-client/pkg/agentpolicy"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agentpolicy"
 )
 
 func TestConfigUnmarshalWithAgents(t *testing.T) {

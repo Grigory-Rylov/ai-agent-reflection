@@ -15,9 +15,9 @@ import (
 
 	"flag"
 
-	"github.com/opencode/llama-client/pkg/buildinfo"
-	"github.com/opencode/llama-client/pkg/util/stringutil"
-	"github.com/opencode/llama-client/pkg/vk"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/buildinfo"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util/stringutil"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/vk"
 )
 
 var Version = "dev"
@@ -234,6 +234,9 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 			ts = newTs
 
 			for _, msg := range messages {
+				if msg.EventID != "" {
+					continue
+				}
 				if config.ThinkingPeerID > 0 && msg.PeerID == config.ThinkingPeerID {
 					continue
 				}

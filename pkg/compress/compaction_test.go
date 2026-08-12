@@ -3,7 +3,7 @@ package compress
 import (
 	"testing"
 
-	"github.com/opencode/llama-client/pkg/tokenizers"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
 )
 
 func TestEstimateTokensSimple(t *testing.T) {

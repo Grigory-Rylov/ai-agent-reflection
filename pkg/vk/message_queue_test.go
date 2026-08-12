@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opencode/llama-client/pkg/logger"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 )
 
 // slowMockAgentLoop — mock который задерживает ответ для тестирования очереди

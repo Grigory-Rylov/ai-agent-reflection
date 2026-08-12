@@ -219,3 +219,75 @@ func TestCreateKeyboard(t *testing.T) {
 		}
 	})
 }
+
+func TestParseMessageNewUpdate(t *testing.T) {
+	t.Run("extracts incoming message fields", func(t *testing.T) {
+		object := map[string]interface{}{
+			"message": map[string]interface{}{
+				"id":      float64(42),
+				"peer_id": float64(2000000001),
+				"from_id": float64(123),
+				"date":    float64(1700000000),
+				"out":     float64(0),
+				"text":    "/m",
+			},
+		}
+
+		msg := parseMessageNewUpdate(object)
+
+		if msg.ID != 42 {
+			t.Errorf("expected ID 42, got %d", msg.ID)
+		}
+		if msg.PeerID != 2000000001 {
+			t.Errorf("expected PeerID 2000000001, got %d", msg.PeerID)
+		}
+		if msg.FromID != 123 {
+			t.Errorf("expected FromID 123, got %d", msg.FromID)
+		}
+		if msg.Text != "/m" {
+			t.Errorf("expected text /m, got %q", msg.Text)
+		}
+	})
+
+	t.Run("skips outgoing messages", func(t *testing.T) {
+		object := map[string]interface{}{
+			"message": map[string]interface{}{
+				"id":      float64(42),
+				"peer_id": float64(2000000001),
+				"out":     float64(1),
+				"text":    "reply",
+			},
+		}
+
+		msg := parseMessageNewUpdate(object)
+		if msg.ID != 0 {
+			t.Errorf("expected empty message for outgoing, got ID %d", msg.ID)
+		}
+	})
+}
+
+func TestParseMessageEventUpdate(t *testing.T) {
+	t.Run("extracts event fields and payload", func(t *testing.T) {
+		object := map[string]interface{}{
+			"user_id": float64(123),
+			"peer_id": float64(2000000001),
+			"event_id": "abc-def-123",
+			"payload":  `{"command":"model_switch","alias":"gemma"}`,
+		}
+
+		msg := parseMessageEventUpdate(object)
+
+		if msg.EventID != "abc-def-123" {
+			t.Errorf("expected EventID abc-def-123, got %q", msg.EventID)
+		}
+		if msg.PeerID != 2000000001 {
+			t.Errorf("expected PeerID 2000000001, got %d", msg.PeerID)
+		}
+		if msg.FromID != 123 {
+			t.Errorf("expected FromID 123, got %d", msg.FromID)
+		}
+		if msg.Payload != `{"command":"model_switch","alias":"gemma"}` {
+			t.Errorf("unexpected payload %q", msg.Payload)
+		}
+	})
+}

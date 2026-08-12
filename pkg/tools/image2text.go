@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opencode/llama-client/pkg/modelsconfig"
-	"github.com/opencode/llama-client/pkg/util/stringutil"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util/stringutil"
 )
 
 // ============================================================

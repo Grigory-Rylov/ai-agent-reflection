@@ -7,7 +7,6 @@ agent-restarter
 
 # Logs
 *.log
-debug.log
 restarter.log
 
 # Sessions
@@ -19,8 +18,7 @@ test2.txt
 test_data/
 
 # Debug artifacts
-debug_prompt.txt
-debug_response.txt
+/debug/
 
 # Generated artifacts
 artifacts/

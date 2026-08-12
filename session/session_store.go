@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/opencode/llama-client/pkg/store"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/store"
 )
 
 func (s *Session) loadFromStore(st store.Store) error {

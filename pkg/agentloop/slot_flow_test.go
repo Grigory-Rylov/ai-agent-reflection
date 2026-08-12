@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/opencode/llama-client/pkg/modelsconfig"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
 )
 
 // slotAndLLMServer имитирует llama-server с поддержкой slot-save:

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opencode/llama-client/pkg/modelsconfig"
-	"github.com/opencode/llama-client/pkg/store"
-	"github.com/opencode/llama-client/pkg/tools"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/store"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 )
 
 func TestOrchestratorResumeActiveChains(t *testing.T) {

@@ -6,9 +6,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/opencode/llama-client/pkg/modelsconfig"
-	"github.com/opencode/llama-client/pkg/tokenizers"
-	"github.com/opencode/llama-client/session"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
+	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
 func getServerURL() string {

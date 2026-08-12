@@ -1,0 +1,15 @@
+=== LLM Response Debug ===
+
+Finish Reason: stop
+
+Content (26 chars):
+---
+The time has been checked.
+---
+
+Reasoning (0 chars):
+---
+
+---
+
+Tool Calls: 0

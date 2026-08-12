@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -15,11 +16,11 @@ import (
 // Модели данных VK Bot API (согласно Python-референсу)
 // ============================================================
 
-// LongPollServerResponse — ответ от messages.getLongPollServer
+// LongPollServerResponse — ответ от groups.getLongPollServer
 type LongPollServerResponse struct {
 	Server string `json:"server"`
 	Key    string `json:"key"`
-	Ts     int64  `json:"ts"`
+	Ts     string `json:"ts"`
 }
 
 // VKAttachment — аттач в сообщении VK
@@ -75,6 +76,8 @@ type VKMessage struct {
 	FromID      int64            `json:"from_id"`
 	Date        int64            `json:"date"`
 	Text        string           `json:"text"`
+	Payload     string           `json:"payload,omitempty"`
+	EventID     string           `json:"event_id,omitempty"` // для message_event callback-кнопок
 	Attachments []VKAttachment   `json:"attachments,omitempty"`
 }
 
@@ -94,6 +97,7 @@ type BotClient struct {
 	apiVersion string
 	baseURL    string
 	httpClient *http.Client
+	groupID    int64
 }
 
 // ============================================================
@@ -219,11 +223,46 @@ func formatValue(v interface{}) string {
 // Long Polling
 // ============================================================
 
-// GetLongPollServer получает параметры long polling сервера
-func (c *BotClient) GetLongPollServer() (string, string, int64, error) {
-	params := map[string]interface{}{}
+// ensureGroupID определяет идентификатор сообщества из токена.
+func (c *BotClient) ensureGroupID() error {
+	if c.groupID != 0 {
+		return nil
+	}
 
-	responseBody, err := c.doRequestGET("messages.getLongPollServer", params)
+	responseBody, err := c.doRequestGET("groups.getById", map[string]interface{}{})
+	if err != nil {
+		return err
+	}
+
+	var response struct {
+		Response struct {
+			Groups []struct {
+				ID int64 `json:"id"`
+			} `json:"groups"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(responseBody, &response); err != nil {
+		return fmt.Errorf("groups.getById: %w", err)
+	}
+	if len(response.Response.Groups) == 0 {
+		return fmt.Errorf("groups.getById: no groups returned")
+	}
+
+	c.groupID = response.Response.Groups[0].ID
+	return nil
+}
+
+// GetLongPollServer получает параметры Bots Long Poll сервера.
+func (c *BotClient) GetLongPollServer() (string, string, int64, error) {
+	if err := c.ensureGroupID(); err != nil {
+		return "", "", 0, err
+	}
+
+	params := map[string]interface{}{
+		"group_id": c.groupID,
+	}
+
+	responseBody, err := c.doRequestGET("groups.getLongPollServer", params)
 	if err != nil {
 		return "", "", 0, err
 	}
@@ -235,13 +274,15 @@ func (c *BotClient) GetLongPollServer() (string, string, int64, error) {
 		return "", "", 0, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	return response.Response.Server, response.Response.Key, response.Response.Ts, nil
+	return response.Response.Server, response.Response.Key, toInt64(response.Response.Ts), nil
 }
 
-// CheckUpdates проверяет обновления через VK Long Poll API (версия 2.0)
+// CheckUpdates проверяет обновления через Bots Long Poll API.
+// События приходят как JSON-объекты {"type", "object", "group_id"}:
+//   - "message_new"    — object.message содержит сообщение
+//   - "message_event"  — object содержит event_id/payload от callback-кнопок
 func (c *BotClient) CheckUpdates(ctx context.Context, server, key string, ts int64) ([]VKMessage, int64, error) {
-	lpURL := fmt.Sprintf("https://%s?act=a_check&key=%s&ts=%d&wait=25&mode=74&version=3",
-		server, key, ts)
+	lpURL := fmt.Sprintf("%s?act=a_check&key=%s&ts=%d&wait=25", server, key, ts)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", lpURL, nil)
 	if err != nil {
@@ -260,9 +301,9 @@ func (c *BotClient) CheckUpdates(ctx context.Context, server, key string, ts int
 
 	// Парсим ответ
 	var result struct {
-		Failed  int                  `json:"failed"`
-		Ts      int64                `json:"ts"`
-		Updates [][]interface{}      `json:"updates"`
+		Failed  int         `json:"failed"`
+		Ts      interface{} `json:"ts"`
+		Updates []lpUpdate  `json:"updates"`
 	}
 	if err := json.Unmarshal(responseBody, &result); err != nil {
 		return nil, ts, fmt.Errorf("failed to parse response: %w (body: %s)", err, string(responseBody[:min(200, len(responseBody))]))
@@ -273,57 +314,106 @@ func (c *BotClient) CheckUpdates(ctx context.Context, server, key string, ts int
 		return nil, ts, fmt.Errorf("long poll failed: code=%d", result.Failed)
 	}
 
-	// VK Long Poll v2.0 формат: [type, msg_id, flags, peer_id, timestamp, text, ...]
 	var messages []VKMessage
-
 	for _, update := range result.Updates {
-		if len(update) >= 6 {
-			msgType, ok := update[0].(float64)
-			if !ok {
+		switch update.Type {
+		case "message_new":
+			msg := parseMessageNewUpdate(update.Object)
+			if msg.ID == 0 {
 				continue
 			}
+			messages = append(messages, msg)
 
-			if int(msgType) == 4 {
-				// Фильтруем исходящие сообщения (флаг 2)
-				flags, _ := update[2].(float64)
-				if int(flags)&2 != 0 {
-					continue
+		case "message_event":
+			messages = append(messages, parseMessageEventUpdate(update.Object))
+		}
+	}
+
+	return messages, toInt64(result.Ts), nil
+}
+
+// lpUpdate — одно событие Bots Long Poll.
+type lpUpdate struct {
+	Type    string                 `json:"type"`
+	Object  map[string]interface{} `json:"object"`
+	GroupID int64                  `json:"group_id"`
+}
+
+// parseMessageNewUpdate извлекает VKMessage из object события message_new.
+func parseMessageNewUpdate(object map[string]interface{}) VKMessage {
+	raw, ok := object["message"].(map[string]interface{})
+	if !ok {
+		return VKMessage{}
+	}
+
+	if out, ok := raw["out"].(float64); ok && int(out) == 1 {
+		return VKMessage{}
+	}
+
+	msg := VKMessage{
+		ID:     toInt64(raw["id"]),
+		PeerID: toInt64(raw["peer_id"]),
+		FromID: toInt64(raw["from_id"]),
+		Date:   toInt64(raw["date"]),
+		Text:   toString(raw["text"]),
+	}
+
+	if atts, ok := raw["attachments"].([]interface{}); ok {
+		for _, a := range atts {
+			if amap, ok := a.(map[string]interface{}); ok {
+				if b, err := json.Marshal(amap); err == nil {
+					var att VKAttachment
+					_ = json.Unmarshal(b, &att)
+					msg.Attachments = append(msg.Attachments, att)
 				}
-
-				msgID := extractFloat64(update, 1)
-				peerID := extractFloat64(update, 3)
-				timestamp := extractFloat64(update, 4)
-
-				msg := VKMessage{
-					ID:     int64(msgID),
-					PeerID: int64(peerID),
-					Date:   int64(timestamp),
-				}
-
-				// Текст на индексе 5
-				if text, ok := update[5].(string); ok {
-					msg.Text = text
-				}
-
-				messages = append(messages, msg)
 			}
 		}
 	}
 
-	return messages, result.Ts, nil
+	return msg
 }
 
-// extractFloat64 безопасно извлекает float64 из массива
-func extractFloat64(arr []interface{}, index int) float64 {
-	if index < len(arr) {
-		if v, ok := arr[index].(float64); ok {
-			return v
+// parseMessageEventUpdate извлекает VKMessage из object события message_event.
+func parseMessageEventUpdate(object map[string]interface{}) VKMessage {
+	var payloadStr string
+	switch p := object["payload"].(type) {
+	case string:
+		payloadStr = p
+	case map[string]interface{}:
+		if b, err := json.Marshal(p); err == nil {
+			payloadStr = string(b)
+		}
+	}
+
+	return VKMessage{
+		ID:      int64(time.Now().UnixNano()),
+		PeerID:  toInt64(object["peer_id"]),
+		FromID:  toInt64(object["user_id"]),
+		Date:    time.Now().Unix(),
+		Payload: payloadStr,
+		EventID: toString(object["event_id"]),
+	}
+}
+
+// toInt64 извлекает int64 из числа или строки (ts в long poll приходит строкой).
+func toInt64(v interface{}) int64 {
+	switch n := v.(type) {
+	case float64:
+		return int64(n)
+	case string:
+		if i, err := strconv.ParseInt(n, 10, 64); err == nil {
+			return i
 		}
 	}
 	return 0
 }
 
-
+func toString(v interface{}) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
 
 func extractMessageID(response interface{}) (int64, error) {
 	// Формат 1: { "response": 12345 } — просто число
@@ -443,6 +533,22 @@ func (c *BotClient) EditMessage(peerID, messageID int64, text string, keyboard m
 	}
 
 	_, err := c.doRequestPOST("messages.edit", params)
+	return err
+}
+
+func (c *BotClient) SendMessageEventAnswer(eventID string, userID, peerID int64, text string) error {
+	params := map[string]interface{}{
+		"event_id":     eventID,
+		"user_id":      userID,
+		"peer_id":      peerID,
+		"v":            c.apiVersion,
+		"access_token": c.token,
+	}
+	if text != "" {
+		params["text"] = text
+	}
+
+	_, err := c.doRequestPOST("messages.sendMessageEventAnswer", params)
 	return err
 }
 
@@ -628,3 +734,41 @@ func CreatePermissionKeyboard() map[string]interface{} {
 		},
 	}
 }
+
+	// CreateModelsKeyboard создаёт inline-клавиатуру для выбора модели.
+	// Кнопки типа callback — при нажатии VK шлёт message_event с payload,
+	// который обрабатывается в CheckUpdates и превращается в команду /r.
+	func CreateModelsKeyboard(models []string, currentAlias string) map[string]interface{} {
+		const buttonsPerRow = 2
+		var rows [][]map[string]interface{}
+		for i := 0; i < len(models); i += buttonsPerRow {
+			end := i + buttonsPerRow
+			if end > len(models) {
+				end = len(models)
+			}
+			row := make([]map[string]interface{}, 0, end-i)
+			for _, alias := range models[i:end] {
+				color := "secondary"
+				if alias == currentAlias {
+					color = "positive"
+				}
+				payloadJSON, _ := json.Marshal(map[string]string{
+					"command": "model_switch",
+					"alias":   alias,
+				})
+				row = append(row, map[string]interface{}{
+					"action": map[string]interface{}{
+						"type":    "callback",
+						"label":   alias,
+						"payload": string(payloadJSON),
+					},
+					"color": color,
+				})
+			}
+			rows = append(rows, row)
+		}
+		return map[string]interface{}{
+			"inline":  true,
+			"buttons": rows,
+		}
+	}
