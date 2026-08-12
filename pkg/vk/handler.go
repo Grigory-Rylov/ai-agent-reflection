@@ -850,9 +850,15 @@ func (h *BotHandler) fetchFullMessages(messages []VKMessage) map[int64]VKMessage
 	if len(messages) == 0 {
 		return nil
 	}
-	ids := make([]int64, len(messages))
-	for i, m := range messages {
-		ids[i] = m.ID
+	ids := make([]int64, 0, len(messages))
+	for _, m := range messages {
+		if m.EventID != "" {
+			continue
+		}
+		ids = append(ids, m.ID)
+	}
+	if len(ids) == 0 {
+		return nil
 	}
 	full, err := h.vkClient.GetMessagesByID(ids)
 	if err != nil {
@@ -875,7 +881,16 @@ func (h *BotHandler) handleIncomingMessage(
 ) {
 	tools.SetQuestionPeerID(msg.PeerID)
 
-	// Обработка callback-клавиатур: payload превращается в текстовую команду.
+	isCallback := msg.EventID != ""
+
+	if isCallback {
+		logger.DebugToFile("[handler] callback received: peerID=%d, eventID=%s, payload=%s", msg.PeerID, msg.EventID, msg.Payload)
+		err := h.vkClient.SendMessageEventAnswer(msg.EventID, msg.FromID, msg.PeerID, "")
+		if err != nil && h.log != nil {
+			h.log.ErrorLogf("Failed to answer callback event: %v", err)
+		}
+	}
+
 	fullText := h.buildFullText(&msg, fullMsgMap)
 	if msg.Payload != "" {
 		if cmd := h.payloadToCommand(msg.Payload); cmd != "" {
@@ -892,7 +907,6 @@ func (h *BotHandler) handleIncomingMessage(
 		return
 	}
 
-	// Если для peerID сохранена pending-клавиатура, отправляем ответ вместе с ней.
 	kb := h.popPendingKeyboard(msg.PeerID)
 	if kb != nil {
 		_, err := h.vkClient.SendMessageWithKeyboard(targetPeer, response, kb)

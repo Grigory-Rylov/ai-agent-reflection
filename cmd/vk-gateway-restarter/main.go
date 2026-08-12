@@ -234,6 +234,9 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 			ts = newTs
 
 			for _, msg := range messages {
+				if msg.EventID != "" {
+					continue
+				}
 				if config.ThinkingPeerID > 0 && msg.PeerID == config.ThinkingPeerID {
 					continue
 				}
