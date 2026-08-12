@@ -42,6 +42,10 @@
 - Rebuild binaries ONLY via `build.sh`, never with custom `go build -o <name>` flags
 - Do not add new entries to `.gitignore` for binaries
 
+### Agent lifecycle
+- **NEVER restart, stop, or kill the agent process** — только по прямому запросу пользователя
+- **NEVER touch systemd services** (`systemctl --user start/stop/restart agent.service`) без явного разрешения
+
 ### Error handling
 - Return errors, don't panic
 - Wrap errors with context: `fmt.Errorf("context: %w", err)`

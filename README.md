@@ -113,10 +113,11 @@ Register agents in the `"agents"` block of `config.json`:
             "mode": "primary",
             "prompt": "agents/lead.md"
         },
-        "developer": {
+        "worker": {
             "description": "Developer, writes and implements code",
             "mode": "subagent",
-            "prompt": "agents/developer.md"
+            "prompt": "agents/worker.md",
+            "subagentTypes": ["reviewer", "explore"]
         },
         "reviewer": {
             "description": "Code reviewer",
@@ -150,6 +151,7 @@ Register agents in the `"agents"` block of `config.json`:
 | `leaf` | bool | If `true`, agent cannot delegate to sub-agents |
 | `review` | bool | If `true`, agent gets read-only tools + approve/reject |
 | `hidden` | bool | If `true`, hidden from available agents list |
+| `subagentTypes` | []string | List of agent types this agent can delegate to (e.g. `["reviewer", "explore"]`) |
 | `permission` | object | Tool permissions: `"allow"`, `"deny"`, or `"ask"` per tool |
 
 ### Permission rules

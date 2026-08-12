@@ -441,6 +441,22 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 	case "/r":
 		return h.handleModelSwitch(input)
 
+	case "/restart":
+		h.writeSignalFile(".agent-restart", "")
+		return "Перезапуск агента..."
+
+	case "/update":
+		h.writeSignalFile(".agent-update", "")
+		return "Обновление агента: git pull, build, restart..."
+
+	case "/b":
+		branch := strings.TrimSpace(strings.TrimPrefix(input, "/b"))
+		if branch == "" {
+			return "Укажите ветку: /b <branch>"
+		}
+		h.writeSignalFile(".agent-branch", branch)
+		return fmt.Sprintf("Переключение на ветку %s...", branch)
+
 	default:
 		return ""
 	}
@@ -816,8 +832,10 @@ func (h *BotHandler) runLongPoll(ctx context.Context, server, key string, ts int
 		case <-ctx.Done():
 			return nil
 		default:
+			fmt.Printf("[DEBUG] CheckUpdates waiting (ts=%d)...\n", ts)
 			messages, newTs, err := h.vkClient.CheckUpdates(ctx, server, key, ts)
 			if err != nil {
+				fmt.Printf("[DEBUG] CheckUpdates error: %v\n", err)
 				if ctx.Err() != nil {
 					return nil
 				}
@@ -829,6 +847,7 @@ func (h *BotHandler) runLongPoll(ctx context.Context, server, key string, ts int
 				continue
 			}
 
+			fmt.Printf("[DEBUG] CheckUpdates OK: %d messages\n", len(messages))
 			ts = newTs
 			fullMsgMap := h.fetchFullMessages(messages)
 
@@ -852,7 +871,7 @@ func (h *BotHandler) fetchFullMessages(messages []VKMessage) map[int64]VKMessage
 	}
 	ids := make([]int64, 0, len(messages))
 	for _, m := range messages {
-		if m.EventID != "" {
+		if m.EventID != "" || m.ID == 0 {
 			continue
 		}
 		ids = append(ids, m.ID)
@@ -973,4 +992,12 @@ func toRawAttachments(attachments []VKAttachment) []map[string]interface{} {
 		result[i] = a.ToRaw()
 	}
 	return result
+}
+
+// writeSignalFile creates a signal file that restarter's monitorAgent picks up.
+func (h *BotHandler) writeSignalFile(name string, data string) {
+	if h.log != nil {
+		h.log.InfoLogf("Writing signal file: %s", name)
+	}
+	os.WriteFile(filepath.Join(".", name), []byte(data), 0644)
 }

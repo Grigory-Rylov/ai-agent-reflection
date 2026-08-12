@@ -126,7 +126,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	vkClient := vk.NewBotClient(config.TokenVK)
+	vkClient := vk.NewBotClient(config.TokenVK) // для отправки статусов о рестарте/обновлении
 	var agent agentProc
 	agentPath := filepath.Join(agentDir, "agent")
 
@@ -159,45 +159,134 @@ func main() {
 		close(done)
 	}()
 
-	go monitorAgent(ctx, &agent, agentPath, agentArgs)
+	go monitorAgent(ctx, &agent, agentPath, agentArgs, vkClient, config.PeerID)
 
-	runVKListener(ctx, vkClient, config, &agent, agentPath, agentArgs)
+	fmt.Println("[restarter] Agent commands (/restart, /update, /b) routed via signal files")
+
 	<-done
 	fmt.Println("[restarter] Shutdown complete")
 }
 
-func monitorAgent(ctx context.Context, ap *agentProc, agentPath string, agentArgs []string) {
+// monitorAgent — НИКОГДА не рестартит агента автоматически.
+// Рестарт ТОЛЬКО по файлу-сигналу .agent-restart (когда агент получает /restart через VK).
+func monitorAgent(ctx context.Context, ap *agentProc, agentPath string, agentArgs []string, vkClient *vk.BotClient, peerID int64) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+
+	// Используем тот же working directory, что и агент.
+	wd, _ := os.Getwd()
+	restartSignal := filepath.Join(wd, ".agent-restart")
+	updateSignal := filepath.Join(wd, ".agent-update")
+	branchSignal := filepath.Join(wd, ".agent-branch")
+
 	for {
 		select {
 		case <-ctx.Done():
 			fmt.Println("[restarter] monitorAgent stopping")
 			return
 		case <-ticker.C:
-			if !shouldRestart(ap) {
+			isRunning := ap.cmd != nil && ap.cmd.Process != nil && ap.cmd.ProcessState == nil
+			if !isRunning {
+				fmt.Println("[restarter] Agent not running — waiting for /restart command")
+			}
+
+			// Проверяем файл-сигнал рестарта (создаётся агентом при получении /restart).
+			if _, err := os.Stat(restartSignal); err == nil {
+				os.Remove(restartSignal)
+				fmt.Println("[restarter] Restart requested via signal file")
+				restartAgent(ap, agentPath, agentArgs, vkClient, peerID)
 				continue
 			}
-			restartAgent(ap, agentPath, agentArgs)
+
+			// Проверяем сигнал обновления: git pull + build + restart.
+			if _, err := os.Stat(updateSignal); err == nil {
+				os.Remove(updateSignal)
+				fmt.Println("[restarter] Update requested via signal file")
+				updateAgent(ap, agentPath, agentArgs, vkClient, peerID)
+				continue
+			}
+
+			// Проверяем сигнал переключения ветки: git checkout + build + restart.
+			if branchData, err := os.ReadFile(branchSignal); err == nil {
+				os.Remove(branchSignal)
+				branch := strings.TrimSpace(string(branchData))
+				fmt.Printf("[restarter] Branch switch requested: %s\n", branch)
+				switchBranch(ap, agentPath, agentArgs, vkClient, peerID, branch)
+			}
 		}
 	}
 }
 
-func shouldRestart(ap *agentProc) bool {
-	ap.mu.Lock()
-	defer ap.mu.Unlock()
-	if ap.restarting {
-		return false
+func restartAgent(ap *agentProc, agentPath string, agentArgs []string, vkClient *vk.BotClient, peerID int64) {
+	fmt.Println("[restarter] Restarting agent...")
+	ap.stop()
+	if err := ap.start(agentPath, agentArgs); err != nil {
+		vkClient.SendMessage(peerID, fmt.Sprintf("❌ Ошибка перезапуска: %v", err))
+		time.Sleep(5 * time.Second)
+	} else {
+		vkClient.SendMessage(peerID, "✅ Агент перезапущен")
 	}
-	isRunning := ap.cmd != nil && ap.cmd.Process != nil && ap.cmd.ProcessState == nil
-	return !isRunning
 }
 
-func restartAgent(ap *agentProc, agentPath string, agentArgs []string) {
-	fmt.Println("[restarter] Agent died, restarting...")
+func updateAgent(ap *agentProc, agentPath string, agentArgs []string, vkClient *vk.BotClient, peerID int64) {
+	fmt.Println("[restarter] Updating agent: git pull + build + restart...")
+	ap.stop()
+
+	output, err := exec.Command("git", "pull").CombinedOutput()
+	if err != nil {
+		vkClient.SendMessage(peerID, fmt.Sprintf("❌ git pull failed:\n%s", stringutil.Truncate(string(output), 500, "...")))
+		ap.start(agentPath, agentArgs)
+		return
+	}
+
+	if err := buildAgent(agentPath); err != nil {
+		vkClient.SendMessage(peerID, fmt.Sprintf("❌ Build failed: %v", err))
+		ap.start(agentPath, agentArgs)
+		return
+	}
+
 	if err := ap.start(agentPath, agentArgs); err != nil {
-		fmt.Fprintf(os.Stderr, "[restarter] Restart failed: %v\n", err)
-		time.Sleep(5 * time.Second)
+		vkClient.SendMessage(peerID, fmt.Sprintf("❌ Restart failed: %v", err))
+	} else {
+		vkClient.SendMessage(peerID, "✅ Агент обновлён и перезапущен")
+	}
+}
+
+func switchBranch(ap *agentProc, agentPath string, agentArgs []string, vkClient *vk.BotClient, peerID int64, branch string) {
+	fmt.Printf("[restarter] Switching to branch: %s\n", branch)
+	ap.stop()
+
+	output, err := exec.Command("git", "fetch", "--all").CombinedOutput()
+	if err != nil {
+		vkClient.SendMessage(peerID, fmt.Sprintf("❌ git fetch failed:\n%s", stringutil.Truncate(string(output), 500, "...")))
+		ap.start(agentPath, agentArgs)
+		return
+	}
+
+	output, err = exec.Command("git", "checkout", branch).CombinedOutput()
+	if err != nil {
+		vkClient.SendMessage(peerID, fmt.Sprintf("❌ git checkout %s failed:\n%s", branch, stringutil.Truncate(string(output), 500, "...")))
+		ap.start(agentPath, agentArgs)
+		return
+	}
+
+	output, err = exec.Command("git", "pull", "--ff-only").CombinedOutput()
+	if err != nil {
+		vkClient.SendMessage(peerID, fmt.Sprintf("❌ git pull failed:\n%s", stringutil.Truncate(string(output), 500, "...")))
+		ap.start(agentPath, agentArgs)
+		return
+	}
+
+	if err := buildAgent(agentPath); err != nil {
+		vkClient.SendMessage(peerID, fmt.Sprintf("❌ Build failed: %v", err))
+		ap.start(agentPath, agentArgs)
+		return
+	}
+
+	if err := ap.start(agentPath, agentArgs); err != nil {
+		vkClient.SendMessage(peerID, fmt.Sprintf("❌ Restart failed: %v", err))
+	} else {
+		vkClient.SendMessage(peerID, fmt.Sprintf("✅ Переключено на %s, агент перезапущен", branch))
 	}
 }
 
