@@ -832,10 +832,8 @@ func (h *BotHandler) runLongPoll(ctx context.Context, server, key string, ts int
 		case <-ctx.Done():
 			return nil
 		default:
-			fmt.Printf("[DEBUG] CheckUpdates waiting (ts=%d)...\n", ts)
 			messages, newTs, err := h.vkClient.CheckUpdates(ctx, server, key, ts)
 			if err != nil {
-				fmt.Printf("[DEBUG] CheckUpdates error: %v\n", err)
 				if ctx.Err() != nil {
 					return nil
 				}
@@ -847,7 +845,6 @@ func (h *BotHandler) runLongPoll(ctx context.Context, server, key string, ts int
 				continue
 			}
 
-			fmt.Printf("[DEBUG] CheckUpdates OK: %d messages\n", len(messages))
 			ts = newTs
 			fullMsgMap := h.fetchFullMessages(messages)
 

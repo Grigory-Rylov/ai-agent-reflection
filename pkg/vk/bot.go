@@ -299,9 +299,6 @@ func (c *BotClient) CheckUpdates(ctx context.Context, server, key string, ts int
 		return nil, ts, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// DEBUG: логируем сырой ответ VK Long Poll
-	fmt.Printf("[DEBUG] LP response (ts=%d): %s\n", ts, string(responseBody[:min(200, len(responseBody))]))
-
 	// Парсим ответ
 	var result struct {
 		Failed  int         `json:"failed"`
@@ -312,15 +309,12 @@ func (c *BotClient) CheckUpdates(ctx context.Context, server, key string, ts int
 		return nil, ts, fmt.Errorf("failed to parse response: %w (body: %s)", err, string(responseBody[:min(200, len(responseBody))]))
 	}
 
-	// Проверяем на ошибку failed
 	if result.Failed != 0 {
-		fmt.Printf("[DEBUG] LP FAILED=%d, reconnecting...\n", result.Failed)
 		return nil, ts, fmt.Errorf("long poll failed: code=%d", result.Failed)
 	}
 
 	var messages []VKMessage
 	for _, update := range result.Updates {
-		fmt.Printf("[DEBUG] Update type=%s, keys: %v\n", update.Type, getMapKeys(update.Object))
 		switch update.Type {
 		case "message_new":
 			msg := parseMessageNewUpdate(update.Object)
@@ -337,14 +331,6 @@ func (c *BotClient) CheckUpdates(ctx context.Context, server, key string, ts int
 	return messages, toInt64(result.Ts), nil
 }
 
-func getMapKeys(m map[string]interface{}) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
 // lpUpdate — одно событие Bots Long Poll.
 type lpUpdate struct {
 	Type    string                 `json:"type"`
@@ -356,12 +342,10 @@ type lpUpdate struct {
 func parseMessageNewUpdate(object map[string]interface{}) VKMessage {
 	raw, ok := object["message"].(map[string]interface{})
 	if !ok {
-		fmt.Printf("[DEBUG] parseMessageNewUpdate: no 'message' key or wrong type\n")
 		return VKMessage{}
 	}
 
 	if out, ok := raw["out"].(float64); ok && int(out) == 1 {
-		fmt.Printf("[DEBUG] parseMessageNewUpdate: outgoing message (out=1), skipping\n")
 		return VKMessage{}
 	}
 
@@ -372,8 +356,6 @@ func parseMessageNewUpdate(object map[string]interface{}) VKMessage {
 		Date:   toInt64(raw["date"]),
 		Text:   toString(raw["text"]),
 	}
-
-	fmt.Printf("[DEBUG] parseMessageNewUpdate: raw[id]=%v(%T) id=%d peer=%d from=%d text=%q\n", raw["id"], raw["id"], msg.ID, msg.PeerID, msg.FromID, msg.Text)
 
 	if atts, ok := raw["attachments"].([]interface{}); ok {
 		for _, a := range atts {
