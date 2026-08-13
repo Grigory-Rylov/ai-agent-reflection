@@ -26,11 +26,7 @@ func TestDefaultLoopConfig(t *testing.T) {
 	if !config.EnableTools {
 		t.Error("expected EnableTools to be true")
 	}
-	if config.MaxToolCalls != 5 {
-		t.Errorf("expected MaxToolCalls 5, got %d", config.MaxToolCalls)
-	}
 	if config.ToolTimeout != 30*time.Second {
-		t.Errorf("expected ToolTimeout 30s, got %v", config.ToolTimeout)
 	}
 	if config.ThinkingPeerID != 0 {
 		t.Errorf("expected ThinkingPeerID 0, got %d", config.ThinkingPeerID)

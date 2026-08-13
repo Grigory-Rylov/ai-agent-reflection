@@ -195,7 +195,6 @@ func TestReasoningLeakInToolResults(t *testing.T) {
 		Temperature:    0.7,
 		SessionConfig:  session.DefaultConfig(),
 		EnableTools:    true,
-		MaxToolCalls:   5,
 	}
 	config.SessionConfig.PeerID = 99980
 
@@ -265,7 +264,6 @@ func TestReasoningOnlyResponse(t *testing.T) {
 		Temperature:    0.7,
 		SessionConfig:  session.DefaultConfig(),
 		EnableTools:    true,
-		MaxToolCalls:   5,
 	}
 	config.SessionConfig.PeerID = 99981
 
@@ -387,7 +385,6 @@ func TestReasoningNotAddedToSession(t *testing.T) {
 		Temperature:    0.7,
 		SessionConfig:  session.DefaultConfig(),
 		EnableTools:    true,
-		MaxToolCalls:   5,
 	}
 	config.SessionConfig.PeerID = 99983
 
@@ -474,7 +471,6 @@ func TestThinkingTagsNotLeaked(t *testing.T) {
 		Temperature:    0.7,
 		SessionConfig:  session.DefaultConfig(),
 		EnableTools:    true,
-		MaxToolCalls:   5,
 	}
 	config.SessionConfig.PeerID = 99990
 

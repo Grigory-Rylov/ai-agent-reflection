@@ -293,7 +293,6 @@ func main() {
 		ModelLimitInput:     config.ModelLimitInput,
 		Temperature:         config.Temperature,
 		EnableTools:         true,
-		MaxToolCalls:        10,
 		ToolOutputMaxLines:  config.ToolOutput.MaxLines,
 		ToolOutputMaxBytes:  config.ToolOutput.MaxBytes,
 		Debug:               *debug,
@@ -407,9 +406,9 @@ func main() {
 		if agentName != "" && orchestrator != nil && task != "" {
 			if orchestrator.IsPrimary(agentName) {
 				// Primary-агент — на главном персистентном агенте с общим
-				// контекстом и временно добавленным системным промптом.
+				// контекстом и временно заменённым системным промптом агента.
 				log.InfoLogf("Processing initial prompt via main agent (#%s): %s", agentName, stringutil.Truncate(task, 100, "..."))
-				extraPrompt, perr := orchestrator.GetSystemPrompt(agentName)
+				agentPrompt, perr := orchestrator.GetSystemPrompt(agentName)
 				if perr != nil {
 					errMsg := fmt.Sprintf("Initial prompt failed: %v", perr)
 					log.ErrorLogf("Initial prompt failed: %v", perr)
@@ -417,7 +416,7 @@ func main() {
 					return
 				}
 				promptCtx, promptCancel := context.WithTimeout(ctx, 15*time.Minute)
-				response, err := agentLoop.ProcessPromptWithExtraSystem(promptCtx, task, config.PeerID, extraPrompt)
+				response, err := agentLoop.ProcessPromptWithSystemPrompt(promptCtx, task, config.PeerID, agentPrompt)
 				promptCancel()
 
 				if err != nil {

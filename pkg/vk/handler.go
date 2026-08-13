@@ -183,16 +183,17 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 
 		if h.orchestrator != nil && h.orchestrator.IsPrimary(agentName) {
 			// Primary-агент выполняется на главном персистентном агенте: его
-			// системный промпт временно дополняется промптом агента, а история
-			// остаётся общей с обычным чатом. Имя агента берётся из конфига.
-			extraPrompt, err := h.orchestrator.GetSystemPrompt(agentName)
+			// системный промпт временно ЗАМЕНЯЕТ основной (чтобы не конфликтовать),
+			// а история остаётся общей с обычным чатом. Имя агента берётся из конфига.
+			agentPrompt, err := h.orchestrator.GetSystemPrompt(agentName)
+			logger.DebugToFile("[#%s] GetSystemPrompt -> %d chars, err=%v", agentName, len(agentPrompt), err)
 			if err != nil {
 				if h.log != nil {
 					h.log.ErrorLogf("Failed to load system prompt for #%s: %v", agentName, err)
 				}
 				return fmt.Sprintf("❌ Ошибка при выполнении задачи через #%s: %v", agentName, err)
 			}
-			response, err := h.aiAgent.ProcessPromptWithExtraSystem(ctx, task, peerID, extraPrompt)
+			response, err := h.aiAgent.ProcessPromptWithSystemPrompt(ctx, task, peerID, agentPrompt)
 			if err != nil {
 				if errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "context canceled") {
 					return ""

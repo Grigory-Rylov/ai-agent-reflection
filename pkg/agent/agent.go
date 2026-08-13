@@ -54,8 +54,6 @@ type Config struct {
 	EnableLoopAlert bool
 	// EnableTools — использовать инструменты (function calling)
 	EnableTools bool
-	// MaxToolCalls — максимальное количество вызовов инструментов за один запрос
-	MaxToolCalls int
 	// EnableCompression — включать opencode-style компакцию контекста
 	EnableCompression bool
 	// TailTurns — сколько последних user-оборотов сохранять при компакции
@@ -116,7 +114,6 @@ func DefaultConfig() Config {
 		SessionConfig:     session.DefaultConfig(),
 		EnableLoopAlert:   true,
 		EnableTools:       true,
-		MaxToolCalls:      5,
 		EnableCompression: true,
 		TailTurns:         2,
 		EnablePruning:     true,

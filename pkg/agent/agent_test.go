@@ -245,7 +245,6 @@ func TestProcessMessageAddsUserWithOrchestratorLikeConfig(t *testing.T) {
 		MaxTokens:        100,
 		Temperature:      0.7,
 		EnableTools:      true,
-		MaxToolCalls:     10,
 		EnableLoopAlert:  false,
 		Debug:            false,
 		SystemPromptFile: "nonexistent_file.txt",

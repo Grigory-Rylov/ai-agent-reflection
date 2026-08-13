@@ -19,7 +19,6 @@ import (
 func newTestAgentWithStub(t *testing.T, config Config) (*agentImpl, *StubToolExecutor) {
 	t.Helper()
 	config.EnableTools = true
-	config.MaxToolCalls = 5
 	if config.SessionConfig.PeerID == 0 {
 		config.SessionConfig.PeerID = 99999
 	}

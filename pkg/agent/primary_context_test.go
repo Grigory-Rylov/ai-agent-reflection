@@ -145,7 +145,6 @@ func TestPrimaryAgentContextSharing(t *testing.T) {
 	config.Model = "test-model"
 	config.MaxTokens = 4096
 	config.EnableTools = true
-	config.MaxToolCalls = 5
 	// Имитируем системный промпт lead-агента
 	config.SessionConfig = sessionConfigWithPrompt("You are a Lead Agent. You can delegate tasks to worker via the task tool.", nil)
 
@@ -159,7 +158,7 @@ func TestPrimaryAgentContextSharing(t *testing.T) {
 	// ========================================
 	// Шаг 1: "#lead выполни задачу"
 	// ========================================
-	// В реальном handler.go это делается через ProcessPromptWithExtraSystem,
+	// В реальном handler.go это делается через ProcessPromptWithSystemPrompt,
 	// который временно добавляет lead-промпт к системному. Здесь мы симулируем
 	// это, устанавливая системный промпт сессии вручную.
 	sess := a.GetSession(peerID)

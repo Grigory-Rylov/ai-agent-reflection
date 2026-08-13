@@ -346,7 +346,6 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 	}
 	cfg.EnableLoopAlert = false
 	cfg.EnableCompression = true
-	cfg.MaxToolCalls = 10
 	cfg.AgentName = name
 	cfg.SlotID = -1 // Default: no slot pinning
 	cfg.SlotSave = false

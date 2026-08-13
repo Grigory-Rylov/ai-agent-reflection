@@ -623,7 +623,6 @@ func (o *Orchestrator) configureAgentBase(cfg *agent.Config, name string, sessio
 	}
 	cfg.EnableLoopAlert = false
 	cfg.EnableCompression = true
-	cfg.MaxToolCalls = 10
 	cfg.AgentName = name
 	cfg.SlotID = -1
 	cfg.SlotSave = false
@@ -708,7 +707,6 @@ func (o *Orchestrator) makeAgentConfig() (agent.Config, error) {
 		Temperature:         o.config.Temperature,
 		SystemPromptFile:    o.systemPromptDir() + "/coordinator.txt",
 		EnableTools:         true,
-		MaxToolCalls:        10,
 		EnableLoopAlert:     false,
 		ToolOutputMaxLines:  o.config.ToolOutputMaxLines,
 		ToolOutputMaxBytes:  o.config.ToolOutputMaxBytes,

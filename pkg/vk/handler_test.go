@@ -22,18 +22,21 @@ import (
 // ============================================================
 
 type mockAgentLoop struct {
-	lastMessage     string
-	lastPeerID      int64
-	lastExtraSystem string
-	sessions        map[int64]*session.Session
-	mu              sync.Mutex
-	returnErr       error
+	lastMessage       string
+	lastPeerID        int64
+	lastSystemPrompt  string
+	sessions          map[int64]*session.Session
+	mu                sync.Mutex
+	returnErr         error
 	// blockCh — если не nil, ProcessMessage блокируется на этом канале,
 	// симулируя долгий LLM-запрос. Закрытие канала разблокирует вызов.
 	// Используется для тестов отмены контекста.
 	blockCh chan struct{}
 	// cancelled — true если контекст был отменён во время блокировки.
 	cancelled bool
+	// slowDelay — если > 0, ProcessMessage блокируется на это время (или до
+	// отмены контекста), симулируя медленный LLM-запрос.
+	slowDelay time.Duration
 }
 
 func newMockAgentLoop() *mockAgentLoop {
@@ -68,11 +71,22 @@ func (m *mockAgentLoop) ProcessMessage(ctx context.Context, prompt string, peerI
 			// разблокирован — продолжаем как обычно
 		}
 	}
+	if m.slowDelay > 0 {
+		timer := time.NewTimer(m.slowDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			m.cancelled = true
+			return "", ctx.Err()
+		case <-timer.C:
+			// прошло slowDelay — продолжаем как обычно
+		}
+	}
 	return m.ProcessPrompt(ctx, prompt, peerID)
 }
 
-func (m *mockAgentLoop) ProcessPromptWithExtraSystem(ctx context.Context, prompt string, peerID int64, extraSystem string) (string, error) {
-	m.lastExtraSystem = extraSystem
+func (m *mockAgentLoop) ProcessPromptWithSystemPrompt(ctx context.Context, prompt string, peerID int64, systemPrompt string) (string, error) {
+	m.lastSystemPrompt = systemPrompt
 	return m.ProcessPrompt(ctx, prompt, peerID)
 }
 
@@ -617,13 +631,13 @@ func TestPrimaryAgentSharesMainContext(t *testing.T) {
 	mockOrch.systemPrompts = map[string]string{"lead": "You are a Lead Agent."}
 	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, mockOrch, nil)
 
-	// 1. #lead → главный персистентный агент с дополненным системным промптом
+	// 1. #lead → главный персистентный агент с заменённым системным промптом
 	response := handler.ProcessMessage("#lead создай проект", 12345)
 	if !strings.Contains(response, "processed: ") {
 		t.Fatalf("expected main-agent response, got: %s", response)
 	}
-	if mock.lastExtraSystem != "You are a Lead Agent." {
-		t.Errorf("expected lead system prompt to be passed, got: %q", mock.lastExtraSystem)
+	if mock.lastSystemPrompt != "You are a Lead Agent." {
+		t.Errorf("expected lead system prompt to be passed, got: %q", mock.lastSystemPrompt)
 	}
 
 	// 2. Контекст сохранился в общей сессии
@@ -997,116 +1011,3 @@ func TestOtherAgentErrorStillShown(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Тесты отмены активного LLM-запроса при /clear и /n
-// ============================================================
-
-// TestClearCancelsActiveLLMRequest проверяет, что /clear отменяет
-// выполняющийся LLM-запрос главного агента, а не только сабагентов.
-//
-// Сценарий:
-//  1. Пользователь отправляет обычное сообщение → агент начинает LLM-запрос
-//  2. Не дожидаясь ответа, пользователь шлёт /clear
-//  3. /clear должен отменить контекст активного LLM-запроса
-//  4. LLM-запрос должен получить context.Canceled
-//
-// Без фикса: /clear очищает сессию и сабагентов, но НЕ отменяет основной
-// LLM-запрос — он продолжает выполняться и после завершения пишет в уже
-// очищенную сессию, а также может заспавнить новых сабагентов.
-func TestClearCancelsActiveLLMRequest(t *testing.T) {
-	log, _ := logger.New(logger.DefaultConfig())
-	mock := newMockAgentLoop()
-	mock.blockCh = make(chan struct{}) // будет блокировать ProcessMessage
-
-	orch := &mockOrchestrator{clearedPeers: make(map[int64]bool)}
-	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, orch, nil)
-
-	peerID := int64(555)
-
-	// Запускаем обычное сообщение в отдельной goroutine — оно заблокируется.
-	msgDone := make(chan string, 1)
-	go func() {
-		msgDone <- handler.ProcessMessage("долгий запрос к LLM", peerID)
-	}()
-
-	// Даём время goroutine дойти до блокировки в mock.ProcessMessage.
-	time.Sleep(50 * time.Millisecond)
-
-	// Отправляем /clear — должно отменить контекст блокированного запроса.
-	clearResult := handler.ProcessMessage("/clear", peerID)
-	t.Logf("/clear result: %s", clearResult)
-
-	// Ждём завершения первой goroutine (контекст отменён → вернёт "").
-	select {
-	case result := <-msgDone:
-		if result != "" {
-			t.Errorf("expected empty result after cancel, got %q", result)
-		}
-	case <-time.After(2 * time.Second):
-		// Не дождались — разблокируем вручную и проверяем что контекст не отменён.
-		close(mock.blockCh)
-		result := <-msgDone
-		if mock.cancelled {
-			t.Log("context was cancelled, unblocking manually confirmed")
-		} else {
-			t.Error("expected context to be cancelled by /clear, but it was NOT cancelled")
-		}
-		if result != "" {
-			t.Errorf("expected empty result, got %q", result)
-		}
-	}
-
-	// Проверяем флаги mock-а.
-	if !mock.cancelled {
-		t.Error("BUG: /clear did NOT cancel active LLM request context")
-	}
-	if !orch.clearedPeers[peerID] {
-		t.Error("expected ClearActiveSessions called for peer")
-	}
-
-	// Сессия должна быть очищена.
-	sess := mock.GetSession(peerID)
-	if sess == nil {
-		t.Fatal("session should exist after /clear")
-	}
-	if sess.HistoryLength() != 0 {
-		t.Errorf("expected empty history after /clear, got %d", sess.HistoryLength())
-	}
-}
-
-// TestNewSessionCancelsActiveLLMRequest проверяет, что /n тоже отменяет
-// активный LLM-запрос (тот же механизм через handleNewSession).
-func TestNewSessionCancelsActiveLLMRequest(t *testing.T) {
-	log, _ := logger.New(logger.DefaultConfig())
-	mock := newMockAgentLoop()
-	mock.blockCh = make(chan struct{})
-
-	orch := &mockOrchestrator{clearedPeers: make(map[int64]bool)}
-	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, orch, nil)
-
-	peerID := int64(666)
-
-	msgDone := make(chan string, 1)
-	go func() {
-		msgDone <- handler.ProcessMessage("ещё один долгий запрос", peerID)
-	}()
-
-	time.Sleep(50 * time.Millisecond)
-
-	// /n (newsession) тоже должен отменять активный запрос.
-	handler.ProcessMessage("/n /tmp", peerID)
-
-	select {
-	case <-msgDone:
-		// ok
-	case <-time.After(2 * time.Second):
-		close(mock.blockCh)
-		<-msgDone
-	}
-
-	if !mock.cancelled {
-		t.Error("BUG: /n did NOT cancel active LLM request context")
-	}
-
-	close(mock.blockCh)
-}

@@ -14,20 +14,16 @@ import (
 type contextKey string
 
 const toolCallDepthKey contextKey = "tool_call_depth"
-const maxToolCallRecursion = 100
 
 // processToolResults отправляет результат выполнения инструментов обратно в AI
 // Поддерживает как NATIVE (OpenAI format), так и XML/JSON tool calls в ответе
 // executed — карта сигнатур уже выполненных инструментов (для дедупликации между рекурсиями)
+//
+// Умышленно БЕЗ лимита на количество tool-call'ов: агент работает столько, сколько
+// нужно для завершения задачи (хоть всю ночь). Глубина рекурсии в context только
+// трекается для логирования, но не обрезает выполнение.
 func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []Message, assistantContent string, toolCalls []ToolCall, toolResults []ToolCallResult, session *sess.Session, executed map[string]bool) (string, error) {
 	depth, _ := ctx.Value(toolCallDepthKey).(int)
-	if depth >= maxToolCallRecursion {
-		prefix := a.agentPrefix()
-		fmt.Printf(prefix+"[WARN] Tool call recursion limit (%d) reached, stopping recursion\n", maxToolCallRecursion)
-		logger.DebugToFile(prefix+"[FLOW] Tool call recursion limit reached at depth %d", depth)
-		return "", nil
-	}
-
 	if a.config.LlamaServerURL == "" {
 		return "", nil
 	}

@@ -201,10 +201,11 @@ func (a *agentImpl) RegisterTools(registry *tools.Registry) {
 			a.toolsRegistry.Register(tool)
 		}
 	}
-	schema := registry.ToOpenAISchema()
-	if len(schema) > 0 {
-		a.toolSchemas = schema
-	}
+	// toolSchemas должен отражать весь накопленный реестр, а не затираться
+	// схемами последнего вызова. Иначе агент, которому инструменты регистрируют
+	// несколькими вызовами (основные инструменты + task-инструмент, как воркер
+	// в multi-agent режиме), видел в LLM только последний набор.
+	a.toolSchemas = a.toolsRegistry.ToOpenAISchema()
 }
 
 // ReplaceTools replaces the entire tools registry and schemas
@@ -274,7 +275,7 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 	// Проверяем, нужно ли использовать инструменты
 	if a.config.EnableTools {
 		// Используем function calling с инструментами
-		result, err := a.processWithTools(ctx, apiMessages, s, a.config.MaxToolCalls)
+		result, err := a.processWithTools(ctx, apiMessages, s)
 		if err != nil {
 			return "", fmt.Errorf("process with tools: %w", err)
 		}
@@ -484,7 +485,7 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 		parsed := ParseXMLToolCalls(reasoningText)
 		if len(parsed.ToolCalls) > 0 {
 			// Есть XML tool calls - нужно переключиться на processWithTools
-			result, err := a.processWithTools(ctx, messages, session, 5)
+			result, err := a.processWithTools(ctx, messages, session)
 			if err != nil {
 				return "", err
 			}

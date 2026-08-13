@@ -13,6 +13,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agent"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agentpolicy"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/compress"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
@@ -23,11 +24,13 @@ import (
 type AgentLoop interface {
 	ProcessPrompt(ctx context.Context, prompt string, peerID int64) (string, error)
 	ProcessMessage(ctx context.Context, prompt string, peerID int64) (string, error)
-	// ProcessPromptWithExtraSystem обрабатывает промпт на главном персистентном
-	// агенте, временно дополняя его системный промпт блоком extraSystem.
-	// История сессии сохраняется — контекст общий с обычными сообщениями в чат,
-	// а системный промпт после ответа возвращается к исходному.
-	ProcessPromptWithExtraSystem(ctx context.Context, prompt string, peerID int64, extraSystem string) (string, error)
+	// ProcessPromptWithSystemPrompt обрабатывает промпт на главном персистентном
+	// агенте, временно ЗАМЕНЯЯ его системный промпт на systemPrompt (промпт
+	// primary-агента, например #lead). Замена, а не дополнение — чтобы промпт
+	// агента не конфликтовал с основным системником координатора. История
+	// сессии сохраняется — контекст общий с обычными сообщениями в чат, а
+	// системный промпт после ответа возвращается к исходному.
+	ProcessPromptWithSystemPrompt(ctx context.Context, prompt string, peerID int64, systemPrompt string) (string, error)
 	Start(ctx context.Context)
 	Stop()
 	ResetSession(peerID int64)
@@ -377,15 +380,18 @@ func (al *agentLoop) ProcessMessage(ctx context.Context, prompt string, peerID i
 	return al.ProcessPrompt(ctx, prompt, peerID)
 }
 
-// ProcessPromptWithExtraSystem обрабатывает промпт на главном персистентном
-// агенте, временно дополняя системный промпт сессии блоком extraSystem.
-// История (пользователь/ассистент) сохраняется, системный промпт после ответа
-// возвращается к исходному — так контекст координатора и обычного чата общий.
-func (al *agentLoop) ProcessPromptWithExtraSystem(ctx context.Context, prompt string, peerID int64, extraSystem string) (string, error) {
+// ProcessPromptWithSystemPrompt обрабатывает промпт на главном персистентном
+// агенте, временно ЗАМЕНЯЯ системный промпт сессии на systemPrompt (промпт
+// primary-агента). Замена, а не конкатенация: промпт агента не должен
+// конфликтовать с основным системником координатора. История
+// (пользователь/ассистент) сохраняется, системный промпт после ответа
+// возвращается к исходному — так контекст ordinary-чата остаётся общим.
+func (al *agentLoop) ProcessPromptWithSystemPrompt(ctx context.Context, prompt string, peerID int64, systemPrompt string) (string, error) {
 	sess := al.getOrCreateSession(peerID)
 	original := sess.GetSystemPrompt()
-	if strings.TrimSpace(extraSystem) != "" {
-		sess.UpdateSystemPrompt(original + "\n\n" + strings.TrimSpace(extraSystem))
+	logger.DebugToFile("[#lead] ProcessPromptWithSystemPrompt: systemPrompt=%d chars, original=%d chars", len(systemPrompt), len(original))
+	if strings.TrimSpace(systemPrompt) != "" {
+		sess.UpdateSystemPrompt(strings.TrimSpace(systemPrompt))
 		defer sess.UpdateSystemPrompt(original)
 	}
 	return al.ProcessPrompt(ctx, prompt, peerID)
@@ -681,7 +687,19 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 	}
 
 	agentSess := a.GetSession(peerID)
+	// Системный промпт сессии agentLoop мог быть дополнен (например, #lead для
+	// primary-агента). NewSession под-агента перезаписывает системный промпт из
+	// SystemPromptFile (и из стора), затирая дополнение, — поэтому применяем
+	// промпт сессии всегда, иначе lead-блок до LLM не дойдёт. Применяем до
+	// пре-сидинга истории: UpdateSystemPrompt обновляет messages[0], не трогая
+	// остальные сообщения.
+	if sp := sess.GetSystemPrompt(); strings.TrimSpace(sp) != "" {
+		logger.DebugToFile("[sendToLLM] applying session prompt (%d chars) to agent", len(sp))
+		agentSess.UpdateSystemPrompt(sp)
+	}
 	if len(agentSess.GetHistory()) <= 1 {
+		// Свежий под-агент (нет сохранённой истории) — сеем историю из сессии
+		// agentLoop, чтобы первый запрос не ушёл без контекста.
 		for _, msg := range messages {
 			switch msg.Role {
 			case "system":
@@ -728,7 +746,6 @@ func (al *agentLoop) buildAgentConfig() agent.Config {
 		SessionConfig:                  al.config.SessionConfig,
 		SystemPromptFile:               al.config.SystemPromptFile,
 		EnableTools:                    al.config.EnableTools,
-		MaxToolCalls:                   al.config.MaxToolCalls,
 		ToolOutputMaxLines:             al.config.ToolOutputMaxLines,
 		ToolOutputMaxBytes:             al.config.ToolOutputMaxBytes,
 		Debug:                          al.config.Debug,

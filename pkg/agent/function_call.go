@@ -25,8 +25,9 @@ type FunctionCallResult struct {
 	ToolCalls []ToolCallResult
 }
 
-// processWithTools обрабатывает ответ AI с поддержкой инструментов
-func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, session *sess.Session, maxToolCalls int) (FunctionCallResult, error) {
+// processWithTools обрабатывает ответ AI с поддержкой инструментов.
+// Без лимита на количество tool-call'ов — агент работает до завершения задачи.
+func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, session *sess.Session) (FunctionCallResult, error) {
 	responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.collectStreamAndLog(ctx, messages)
 	if err != nil {
 		return FunctionCallResult{}, err
