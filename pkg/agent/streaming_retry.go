@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -33,22 +34,25 @@ func (a *agentImpl) streamAndCollect(ctx context.Context, config StreamingConfig
 	if retryDelay <= 0 {
 		retryDelay = 5 * time.Second
 	}
+	var lastErr error
 	for attempt := 1; ; attempt++ {
 		responseText, reasoningText, finishReason, toolCalls, promptTokens, completionTokens, err := a.streamAndCollectOnce(ctx, config, messages)
 		if err != nil {
 			if !isRetryableError(err) {
 				return "", "", "", nil, 0, 0, err
 			}
+			lastErr = err
 			a.logRetry(attempt, err)
 			if !a.sleepBeforeRetry(ctx, retryDelay) {
-				return "", "", "", nil, 0, 0, ctx.Err()
+				break
 			}
 			continue
 		}
 		if isTruncatedStream(responseText, reasoningText, finishReason, toolCalls) {
-			a.logRetry(attempt, errors.New("empty/truncated stream from LLM"))
+			lastErr = errors.New("empty/truncated stream from LLM")
+			a.logRetry(attempt, lastErr)
 			if !a.sleepBeforeRetry(ctx, retryDelay) {
-				return "", "", "", nil, 0, 0, ctx.Err()
+				break
 			}
 			continue
 		}
@@ -60,6 +64,10 @@ func (a *agentImpl) streamAndCollect(ctx context.Context, config StreamingConfig
 		}
 		return responseText, reasoningText, finishReason, toolCalls, promptTokens, completionTokens, nil
 	}
+	if lastErr != nil {
+		return "", "", "", nil, 0, 0, fmt.Errorf("LLM request exhausted: %w", lastErr)
+	}
+	return "", "", "", nil, 0, 0, ctx.Err()
 }
 
 // streamAndCollectOnce выполняет одну попытку: streaming-запрос + сбор ответа.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -133,5 +134,89 @@ func TestStreamAndCollectNoRetryOnSSEContextError(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&calls); got != 1 {
 		t.Errorf("expected 1 request (no retry on SSE error), got %d", got)
+	}
+}
+
+// TestStreamAndCollectReadableServerError — когда LLM-сервер недоступен,
+// ошибка должна содержать понятный текст, а не "context deadline exceeded".
+func TestStreamAndCollectReadableServerError(t *testing.T) {
+	tests := []struct {
+		name             string
+		getServerURL     func() string
+		ctxTimeout       time.Duration
+		expectShutdown   bool
+	}{
+		{
+			name: "closed_server_returns_readable_error",
+			getServerURL: func() string {
+				server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+				server.Start()
+				server.Close() // immediately close — no connection possible
+				return server.Listener.Addr().String()
+			},
+			ctxTimeout:     100 * time.Millisecond,
+			expectShutdown: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := "http://" + tt.getServerURL()
+
+			config := DefaultConfig()
+			config.LlamaServerURL = url
+			config.RetryDelay = 50 * time.Millisecond // enough for connection refused to happen fast
+			a := NewAgent(config)
+
+			ctx, cancel := context.WithTimeout(context.Background(), tt.ctxTimeout)
+			defer cancel()
+
+			_, _, _, _, _, _, err := a.streamAndCollect(ctx, StreamingConfig{Model: "m", MaxTokens: 100}, nil)
+			if err == nil {
+				t.Fatal("expected error when server is unavailable, got nil")
+			}
+
+			errMsg := err.Error()
+			t.Logf("error message: %s", errMsg)
+
+			// Error should contain readable text about LLM server shutdown, not raw context error
+			if tt.expectShutdown {
+				// When retries are exhausted, lastErr is wrapped. Should still be readable.
+				hasReadable := strings.Contains(errMsg, "LLM request exhausted") ||
+					strings.Contains(errMsg, "shutdown") || strings.Contains(errMsg, "unreachable")
+				if !hasReadable {
+					t.Errorf("expected readable error message (no raw 'context deadline exceeded'), got: %s", errMsg)
+				}
+			}
+		})
+	}
+}
+
+// TestStreamAndCollectPreservesLastErrorOnRetryExhaustion — при истощении ретраев
+// через контекст, сохраняется исходная ошибка сервера в lastErr.
+func TestStreamAndCollectPreservesLastErrorOnRetryExhaustion(t *testing.T) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	server.Start()
+	server.Close() // immediately close — connection refused every attempt
+
+	config := DefaultConfig()
+	config.LlamaServerURL = "http://" + server.Listener.Addr().String()
+	config.RetryDelay = 5 * time.Millisecond
+	a := NewAgent(config)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	_, _, _, _, _, _, err := a.streamAndCollect(ctx, StreamingConfig{Model: "m", MaxTokens: 100}, nil)
+	if err == nil {
+		t.Fatal("expected error when retries exhausted, got nil")
+	}
+
+	errMsg := err.Error()
+	t.Logf("error message: %s", errMsg)
+
+	// lastErr should be preserved (wrapped in "LLM request exhausted"), not replaced by ctx.Err()
+	if !strings.Contains(errMsg, "LLM request exhausted") {
+		t.Errorf("expected 'LLM request exhausted' wrapper preserving last error, got: %s", errMsg)
 	}
 }
