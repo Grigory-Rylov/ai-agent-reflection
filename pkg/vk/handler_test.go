@@ -156,7 +156,7 @@ func (m *mockAgentLoop) getOrCreateSession(peerID int64) *session.Session {
 }
 
 // ============================================================
-// Mock Orchestrator для тестов /agent с оркестратором
+// Mock Orchestrator для тестов
 // ============================================================
 
 type mockOrchestrator struct {
@@ -443,66 +443,6 @@ func TestStatusShowsCorrectTokenCount(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Тесты для /agent команды
-// ============================================================
-
-func TestAgentCommandSendsInstructionsToAI(t *testing.T) {
-	log, _ := logger.New(logger.DefaultConfig())
-	mock := newMockAgentLoop()
-	handler := NewBotHandler(nil, mock, log)
-
-	tests := []struct {
-		name            string
-		message         string
-		expectModelCall bool
-		expectedPrefix  string
-	}{
-		{
-			name:            "agent with instructions",
-			message:         "/agent изучи проект и создай документацию",
-			expectModelCall: true,
-			expectedPrefix:  "изучи проект",
-		},
-		{
-			name:            "agent without instructions",
-			message:         "/agent",
-			expectModelCall: true,
-			expectedPrefix:  "изучи текущий проект",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mock.lastMessage = ""
-			response := handler.ProcessMessage(tt.message, 12345)
-
-			if strings.Contains(response, "Неизвестная команда") {
-				t.Errorf("/agent command should be recognized, got unknown command response: %q", response)
-			}
-
-			if !tt.expectModelCall {
-				if mock.lastMessage != "" {
-					t.Errorf("Expected no AI call, but got: %q", mock.lastMessage)
-				}
-				return
-			}
-
-			if mock.lastMessage == "" {
-				t.Error("Expected AI to be called, but it wasn't")
-			}
-
-			if !strings.HasPrefix(mock.lastMessage, tt.expectedPrefix) {
-				t.Errorf("Expected AI call with prefix %q, got %q", tt.expectedPrefix, mock.lastMessage)
-			}
-
-			if response == "" {
-				t.Error("Expected non-empty response")
-			}
-		})
-	}
-}
-
 func TestUnknownCommandsDoNotCallAI(t *testing.T) {
 	log, _ := logger.New(logger.DefaultConfig())
 	mock := newMockAgentLoop()
@@ -538,84 +478,6 @@ func TestStatusShowsCorrectCharCount(t *testing.T) {
 	// Проверяем, что символов > 0
 	if strings.Contains(status, "Символов в контексте: 0") {
 		t.Error("BUG: Status shows 0 chars but should show > 0 after processing messages")
-	}
-}
-
-// ============================================================
-// Тесты сохранения /agent в сессию
-// ============================================================
-
-func TestAgentCommandSavesToSession(t *testing.T) {
-	log, _ := logger.New(logger.DefaultConfig())
-	mock := newMockAgentLoop()
-	mockOrch := newMockOrchestrator("Coordinator analysis result: project uses Go 1.21")
-	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, mockOrch, nil)
-
-	response := handler.ProcessMessage("/agent analyze the project", 12345)
-
-	if !strings.Contains(response, "Coordinator analysis result") {
-		t.Errorf("Expected coordinator result in response, got: %s", response)
-	}
-
-	sess := mock.GetSession(12345)
-	if sess == nil {
-		t.Fatal("Expected session to exist after /agent command")
-	}
-
-	history := sess.GetHistory()
-	var hasUserMsg, hasAssistantMsg bool
-	for _, msg := range history {
-		if msg.Role == session.UserRole && strings.Contains(msg.Content, "/agent analyze the project") {
-			hasUserMsg = true
-		}
-		if msg.Role == session.AssistantRole && strings.Contains(msg.Content, "Coordinator analysis result") {
-			hasAssistantMsg = true
-		}
-	}
-
-	if !hasUserMsg {
-		t.Error("BUG: Session does not contain user message '/agent analyze the project' — /agent command was not saved")
-	}
-	if !hasAssistantMsg {
-		t.Error("BUG: Session does not contain assistant message with coordinator result — /agent result was not saved")
-	}
-}
-
-func TestFollowUpAfterAgentSeesCoordinatorResult(t *testing.T) {
-	log, _ := logger.New(logger.DefaultConfig())
-	mock := newMockAgentLoop()
-	coordinatorResult := "Coordinator: Found 3 main packages — handler, agent, tools"
-	mockOrch := newMockOrchestrator(coordinatorResult)
-	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, mockOrch, nil)
-
-	// 1. Send /agent command
-	handler.ProcessMessage("/agent analyze the project", 12345)
-
-	// 2. Send follow-up message
-	handler.ProcessMessage("tell me more about the findings", 12345)
-
-	// 3. Verify that the session contains the coordinator result
-	sess := mock.GetSession(12345)
-	if sess == nil {
-		t.Fatal("Expected session to exist")
-	}
-
-	history := sess.GetHistory()
-	foundCoordinator := false
-	for _, msg := range history {
-		if msg.Role == session.AssistantRole && strings.Contains(msg.Content, coordinatorResult) {
-			foundCoordinator = true
-			break
-		}
-	}
-
-	if !foundCoordinator {
-		t.Error("BUG: Session does not contain coordinator result from /agent command. Follow-up LLM call won't see it.")
-	}
-
-	// Verify the follow-up was processed (the mockAgentLoop processes it as a normal message)
-	if mock.lastMessage == "" {
-		t.Error("Expected follow-up message to be processed by agent")
 	}
 }
 

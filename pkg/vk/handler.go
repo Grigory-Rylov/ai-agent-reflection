@@ -385,7 +385,7 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 			"/pin <промпт> - Закрепить промпт (переживает компактизацию) и выполнить его\n" +
 			"/restart - Перезапустить агента без пересборки\n" +
 			"/update - git pull, пересобрать и перезапустить агента\n" +
-			"/agent [задача] - Запустить AI Agent для исследования проекта\n\n" +
+
 			"Перенаправление задачи агенту через #:\n"
 		for _, name := range knownNames {
 			helpStr += fmt.Sprintf("#%s, ", name)
@@ -427,9 +427,6 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 			status += "\nРежим: обычный"
 		}
 		return status
-
-	case "/agent":
-		return h.handleAgentCommand(input, peerID)
 
 	case "/pin":
 		return h.handlePinCommand(input, peerID)
@@ -593,51 +590,6 @@ func (h *BotHandler) handlePinCommand(input string, peerID int64) string {
 		}
 		return fmt.Sprintf("✓ Промпт закреплён: %s\n\n%s", stringutil.Truncate(content, 100, "..."), response)
 	}
-}
-
-func (h *BotHandler) handleAgentCommand(input string, peerID int64) string {
-	parts := strings.SplitN(input, " ", 2)
-	instruction := "изучи текущий проект и создай документацию с рекомендациями по доработке"
-	if len(parts) > 1 {
-		instruction = strings.TrimSpace(parts[1])
-	}
-
-	if h.orchestrator != nil {
-		if h.log != nil {
-			h.log.InfoLogf("Starting /agent mode for peer %d: %s", peerID, stringutil.Truncate(instruction, 100, "..."))
-		}
-		ctx, agCancel := context.WithCancel(context.Background())
-		defer agCancel()
-		response, err := h.orchestrator.ExecuteTask(ctx, instruction, peerID)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return "Операция отменена."
-			}
-			if h.log != nil {
-				h.log.ErrorLogf("Orchestrator error in /agent: %v", err)
-			}
-			return "Произошла ошибка при выполнении команды /agent. Попробуйте позже."
-		}
-		s := h.aiAgent.EnsureSession(peerID)
-		s.AddUserMessage(input)
-		s.AddAssistantMessage(response)
-		return response
-	}
-
-	ctx, agCancel2 := context.WithCancel(context.Background())
-	defer agCancel2()
-	response, err := h.aiAgent.ProcessMessage(ctx, instruction, peerID)
-	if errors.Is(err, context.Canceled) {
-		return "Операция отменена."
-	}
-	if err != nil {
-		if h.log != nil {
-			h.log.ErrorLogf("AI Agent error in /agent: %v", err)
-		}
-		return "Произошла ошибка при выполнении команды /agent. Попробуйте позже."
-	}
-
-	return response
 }
 
 func extractBaseCommand(input string) string {
