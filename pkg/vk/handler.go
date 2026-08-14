@@ -291,7 +291,7 @@ func extractCommand(message string) string {
 	return message
 }
 
-func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, timeout time.Duration) string {
+func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, _ time.Duration) string {
 	h.ensureSession(peerID)
 	mu := h.getPeerMutex(peerID)
 
@@ -320,9 +320,7 @@ func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, tim
 	mu.Lock()
 	defer mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	// Атомарная замена cancel func: старый отменяется, новый устанавливается
-	// без промежутка, в котором /clear не нашёл бы cancel.
+	ctx, cancel := context.WithCancel(context.Background())
 	h.setCancelFunc(peerID, cancel)
 	defer h.clearCancelFunc(peerID)
 
@@ -584,11 +582,11 @@ func (h *BotHandler) handlePinCommand(input string, peerID int64) string {
 			h.log.InfoLogf("User %d pinned prompt: %s", peerID, stringutil.Truncate(content, 100, "..."))
 		}
 
-		pinCtx, pinCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		pinCtx, pinCancel := context.WithCancel(context.Background())
 		defer pinCancel()
 		response, err := h.aiAgent.ProcessMessage(pinCtx, content, peerID)
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return fmt.Sprintf("✓ Промпт закреплён: %s\n\nОперация отменена или истёк таймаут.", stringutil.Truncate(content, 100, "..."))
+		if errors.Is(err, context.Canceled) {
+			return fmt.Sprintf("✓ Промпт закреплён: %s\n\nОперация отменена.", stringutil.Truncate(content, 100, "..."))
 		}
 		if err != nil {
 			return fmt.Sprintf("✓ Промпт закреплён: %s\n\n❌ Ошибка при выполнении: %v", stringutil.Truncate(content, 100, "..."), err)
@@ -608,12 +606,12 @@ func (h *BotHandler) handleAgentCommand(input string, peerID int64) string {
 		if h.log != nil {
 			h.log.InfoLogf("Starting /agent mode for peer %d: %s", peerID, stringutil.Truncate(instruction, 100, "..."))
 		}
-		ctx, agCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		ctx, agCancel := context.WithCancel(context.Background())
 		defer agCancel()
 		response, err := h.orchestrator.ExecuteTask(ctx, instruction, peerID)
 		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return "Операция отменена или истёк таймаут."
+			if errors.Is(err, context.Canceled) {
+				return "Операция отменена."
 			}
 			if h.log != nil {
 				h.log.ErrorLogf("Orchestrator error in /agent: %v", err)
@@ -626,11 +624,11 @@ func (h *BotHandler) handleAgentCommand(input string, peerID int64) string {
 		return response
 	}
 
-	ctx, agCancel2 := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, agCancel2 := context.WithCancel(context.Background())
 	defer agCancel2()
 	response, err := h.aiAgent.ProcessMessage(ctx, instruction, peerID)
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return "Операция отменена или истёк таймаут."
+	if errors.Is(err, context.Canceled) {
+		return "Операция отменена."
 	}
 	if err != nil {
 		if h.log != nil {
@@ -732,7 +730,7 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 }
 
 func (h *BotHandler) handleTestLlama() string {
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
 	model, responseTime, tokensPerSec, err := h.aiAgent.TestLlamaServer(ctx)
