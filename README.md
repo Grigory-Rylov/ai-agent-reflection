@@ -70,7 +70,7 @@ Per model entry:
 
 - **14+ tools**: file read/write/edit/patch, shell execute, glob, code grep, web search/fetch, math calc, image OCR/vision, question dialogs, time.
 - **Multi-agent pipeline**: lead → worker → reviewer → qa with autonomous delegation and approval cycles.
-- **MCP integration** for external tool servers (send-files, stt, ya-disk-uploader).
+- **MCP integration**: external tool servers via JSON config (stdio/SSE transport, auto-discovery of tools).
 - **Slot KV-cache persistence** — fast context reuse between conversation turns via llama-server `/slots` API.
 - **Permission system**: per-agent allow/deny/ask rules for tools and shell commands, with runtime "Always allow" learning.
 - **Session memory** with automatic token-limit aware pruning
@@ -87,7 +87,6 @@ Per model entry:
 | `/update` | `git pull`, rebuild, restart (via restarter) |
 | `/test-llama` | Test llama-server connection |
 | `/pin <prompt>` | Pin a system prompt prefix for the session |
-| `/agent [task]` | Send task directly to lead agent |
 | `/sessions` | List active sessions |
 
 Commands starting with `/` are handled by the bot and never sent to the model.
