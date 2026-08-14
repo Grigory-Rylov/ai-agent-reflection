@@ -291,7 +291,7 @@ func extractCommand(message string) string {
 	return message
 }
 
-func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, timeout time.Duration) string {
+func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, _ time.Duration) string {
 	h.ensureSession(peerID)
 	mu := h.getPeerMutex(peerID)
 
@@ -320,9 +320,7 @@ func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, tim
 	mu.Lock()
 	defer mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	// Атомарная замена cancel func: старый отменяется, новый устанавливается
-	// без промежутка, в котором /clear не нашёл бы cancel.
+	ctx, cancel := context.WithCancel(context.Background())
 	h.setCancelFunc(peerID, cancel)
 	defer h.clearCancelFunc(peerID)
 
@@ -387,7 +385,7 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 			"/pin <промпт> - Закрепить промпт (переживает компактизацию) и выполнить его\n" +
 			"/restart - Перезапустить агента без пересборки\n" +
 			"/update - git pull, пересобрать и перезапустить агента\n" +
-			"/agent [задача] - Запустить AI Agent для исследования проекта\n\n" +
+
 			"Перенаправление задачи агенту через #:\n"
 		for _, name := range knownNames {
 			helpStr += fmt.Sprintf("#%s, ", name)
@@ -429,9 +427,6 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 			status += "\nРежим: обычный"
 		}
 		return status
-
-	case "/agent":
-		return h.handleAgentCommand(input, peerID)
 
 	case "/pin":
 		return h.handlePinCommand(input, peerID)
@@ -584,62 +579,17 @@ func (h *BotHandler) handlePinCommand(input string, peerID int64) string {
 			h.log.InfoLogf("User %d pinned prompt: %s", peerID, stringutil.Truncate(content, 100, "..."))
 		}
 
-		pinCtx, pinCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		pinCtx, pinCancel := context.WithCancel(context.Background())
 		defer pinCancel()
 		response, err := h.aiAgent.ProcessMessage(pinCtx, content, peerID)
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return fmt.Sprintf("✓ Промпт закреплён: %s\n\nОперация отменена или истёк таймаут.", stringutil.Truncate(content, 100, "..."))
+		if errors.Is(err, context.Canceled) {
+			return fmt.Sprintf("✓ Промпт закреплён: %s\n\nОперация отменена.", stringutil.Truncate(content, 100, "..."))
 		}
 		if err != nil {
 			return fmt.Sprintf("✓ Промпт закреплён: %s\n\n❌ Ошибка при выполнении: %v", stringutil.Truncate(content, 100, "..."), err)
 		}
 		return fmt.Sprintf("✓ Промпт закреплён: %s\n\n%s", stringutil.Truncate(content, 100, "..."), response)
 	}
-}
-
-func (h *BotHandler) handleAgentCommand(input string, peerID int64) string {
-	parts := strings.SplitN(input, " ", 2)
-	instruction := "изучи текущий проект и создай документацию с рекомендациями по доработке"
-	if len(parts) > 1 {
-		instruction = strings.TrimSpace(parts[1])
-	}
-
-	if h.orchestrator != nil {
-		if h.log != nil {
-			h.log.InfoLogf("Starting /agent mode for peer %d: %s", peerID, stringutil.Truncate(instruction, 100, "..."))
-		}
-		ctx, agCancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer agCancel()
-		response, err := h.orchestrator.ExecuteTask(ctx, instruction, peerID)
-		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return "Операция отменена или истёк таймаут."
-			}
-			if h.log != nil {
-				h.log.ErrorLogf("Orchestrator error in /agent: %v", err)
-			}
-			return "Произошла ошибка при выполнении команды /agent. Попробуйте позже."
-		}
-		s := h.aiAgent.EnsureSession(peerID)
-		s.AddUserMessage(input)
-		s.AddAssistantMessage(response)
-		return response
-	}
-
-	ctx, agCancel2 := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer agCancel2()
-	response, err := h.aiAgent.ProcessMessage(ctx, instruction, peerID)
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return "Операция отменена или истёк таймаут."
-	}
-	if err != nil {
-		if h.log != nil {
-			h.log.ErrorLogf("AI Agent error in /agent: %v", err)
-		}
-		return "Произошла ошибка при выполнении команды /agent. Попробуйте позже."
-	}
-
-	return response
 }
 
 func extractBaseCommand(input string) string {
@@ -732,7 +682,7 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 }
 
 func (h *BotHandler) handleTestLlama() string {
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
 	model, responseTime, tokensPerSec, err := h.aiAgent.TestLlamaServer(ctx)

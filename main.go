@@ -263,7 +263,7 @@ func main() {
 			// Продолжаем незавершённую задачу главного агента после рестарта
 			// (сессия уже восстановлена из БД вместе с resume_prompt).
 			go func() {
-				resumeCtx, resumeCancel := context.WithTimeout(context.Background(), 30*time.Minute)
+				resumeCtx, resumeCancel := context.WithCancel(context.Background())
 				defer resumeCancel()
 				agentLoop.ResumeInterruptedTask(resumeCtx, config.PeerID)
 			}()
@@ -351,7 +351,7 @@ func main() {
 	// Восстанавливаем незавершённые цепочки сабагентов после рестарта
 	if dbStore != nil {
 		go func() {
-			resumeCtx, resumeCancel := context.WithTimeout(ctx, 30*time.Minute)
+			resumeCtx, resumeCancel := context.WithCancel(ctx)
 			defer resumeCancel()
 			if err := orchestrator.ResumeActiveChains(resumeCtx); err != nil {
 				log.WarnLogf("Resume active agent chains: %v", err)
@@ -415,9 +415,7 @@ func main() {
 					vkClient.SendMessage(config.PeerID, "❌ "+errMsg)
 					return
 				}
-				promptCtx, promptCancel := context.WithTimeout(ctx, 15*time.Minute)
-				response, err := agentLoop.ProcessPromptWithSystemPrompt(promptCtx, task, config.PeerID, agentPrompt)
-				promptCancel()
+				response, err := agentLoop.ProcessPromptWithSystemPrompt(ctx, task, config.PeerID, agentPrompt)
 
 				if err != nil {
 					errMsg := fmt.Sprintf("Initial prompt failed: %v", err)
@@ -434,9 +432,7 @@ log.InfoLogf("Initial prompt response: %s", stringutil.Truncate(response, 200, "
 
 		log.InfoLogf("Processing initial prompt via RunAgent (#%s): %s", agentName, stringutil.Truncate(task, 100, "..."))
 
-			promptCtx, promptCancel := context.WithTimeout(ctx, 15*time.Minute)
-			response, err := orchestrator.RunAgent(promptCtx, agentName, task, config.PeerID)
-			promptCancel()
+			response, err := orchestrator.RunAgent(ctx, agentName, task, config.PeerID)
 
 			if err != nil {
 				errMsg := fmt.Sprintf("Initial prompt failed: %v", err)
@@ -451,9 +447,7 @@ log.InfoLogf("Initial prompt response: %s", stringutil.Truncate(response, 200, "
 		} else {
 			log.InfoLogf("Processing initial prompt: %s", stringutil.Truncate(prompt, 100, "..."))
 
-			promptCtx, promptCancel := context.WithTimeout(ctx, 10*time.Minute)
-			response, err := agentLoop.ProcessPrompt(promptCtx, prompt, config.PeerID)
-			promptCancel()
+			response, err := agentLoop.ProcessPrompt(ctx, prompt, config.PeerID)
 
 			if err != nil {
 				errMsg := fmt.Sprintf("Initial prompt failed: %v", err)

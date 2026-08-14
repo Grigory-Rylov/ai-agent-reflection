@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -63,8 +64,11 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 	resp, err := a.client.Do(req)
 	if err != nil {
 		logger.DebugToFile("%s[LLM REQUEST] Failed to send: %v", a.agentPrefix(), err)
-		// Недоступность сервера — ретрабильная ошибка.
-		return nil, &retryableError{err: fmt.Errorf("send request: %w", err)}
+		readableErr := fmt.Errorf("send request: %w", err)
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			readableErr = fmt.Errorf("LLM server was shutdown or unreachable")
+		}
+		return nil, &retryableError{err: readableErr}
 	}
 
 	if resp.StatusCode != http.StatusOK {
