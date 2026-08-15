@@ -69,6 +69,13 @@ type BotHandler struct {
 	// pendingKeyboards — temporary keyboard to send with next response per peerID.
 	pendingKeyboards    map[int64]map[string]interface{}
 	pendingKeyboardMu   sync.RWMutex
+	// Очистка очереди при /clear и /n: сообщение фиксирует генерацию сессии
+	// ДО ожидания peer-mutex (beginProcessingWait); если во время ожидания
+	// сессию сбросили (bumpPeerGeneration) — после захвата mutex'а версия уже
+	// другая, и устаревшее сообщение отбрасывается без запуска агента.
+	queueMu       sync.Mutex
+	waitingCounts map[int64]int    // не-командных сообщений, ждущих peer-mutex
+	generations   map[int64]uint64 // версия сессии: растёт при каждом /clear, /n
 }
 
 const maxConcurrentHandlers = 10
@@ -82,6 +89,8 @@ func NewBotHandler(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger
 		cancelFuncs:      make(map[int64]context.CancelFunc),
 		peerProcessors:   make(map[int64]*sync.Mutex),
 		pendingKeyboards: make(map[int64]map[string]interface{}),
+		waitingCounts:    make(map[int64]int),
+		generations:      make(map[int64]uint64),
 		attachmentsDir:   "./attachments",
 		semaphore:        make(chan struct{}, maxConcurrentHandlers),
 	}
@@ -100,6 +109,8 @@ func NewBotHandlerWithPeerID(vkClient *BotClient, aiAgent agentloop.AgentLoop, l
 		cancelFuncs:      make(map[int64]context.CancelFunc),
 		peerProcessors:   make(map[int64]*sync.Mutex),
 		pendingKeyboards: make(map[int64]map[string]interface{}),
+		waitingCounts:    make(map[int64]int),
+		generations:      make(map[int64]uint64),
 		attachmentsDir:   "./attachments",
 		semaphore:        make(chan struct{}, maxConcurrentHandlers),
 	}
@@ -161,9 +172,18 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 		logger.DebugToFile("[ProcessMessage] ResolvePendingQuestion returned false for peer %d, command=%s", peerID, stringutil.Truncate(command, 50, "..."))
 	}
 
+	releaseQueueSlot, generationAtArrival := h.beginProcessingWait(peerID)
 	mu := h.getPeerMutex(peerID)
 	mu.Lock()
+	releaseQueueSlot() // из очереди вышли — теперь в обработке (или отбросимся ниже)
 	defer mu.Unlock()
+
+	// Сессия могла быть сброшена (/clear, /n), пока сообщение стояло в очереди:
+	// тогда это устаревшее сообщение и выполнять его в чистой сессии нельзя.
+	if h.peerGeneration(peerID) != generationAtArrival {
+		logger.DebugToFile("[ProcessMessage] peer %d: session was reset while message waited in queue, dropping stale message", peerID)
+		return ""
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -317,8 +337,16 @@ func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, _ t
 		}
 	}
 
+	releaseQueueSlot, generationAtArrival := h.beginProcessingWait(peerID)
 	mu.Lock()
+	releaseQueueSlot() // из очереди вышли — теперь в обработке (или отбросимся ниже)
 	defer mu.Unlock()
+
+	// Сессия могла быть сброслена (/clear, /n), пока сообщение стояло в очереди.
+	if h.peerGeneration(peerID) != generationAtArrival {
+		logger.DebugToFile("[ProcessMessageWithTimeout] peer %d: session was reset while message waited in queue, dropping stale message", peerID)
+		return ""
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	h.setCancelFunc(peerID, cancel)
@@ -674,6 +702,10 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 
 	h.clearHandlerSession(peerID)
 
+	// Все сообщения, вставшие в очередь до этого сброса, теперь устарели:
+	// их зафиксированная генерация перестала совпадать с текущей.
+	h.bumpPeerGeneration(peerID)
+
 	if h.log != nil {
 		h.log.InfoLogf("Session reset for peer %d, working dir: %s", peerID, absPath)
 	}
@@ -731,6 +763,50 @@ func (h *BotHandler) clearCancelFunc(peerID int64) {
 	h.cancelMu.Lock()
 	defer h.cancelMu.Unlock()
 	delete(h.cancelFuncs, peerID)
+}
+
+// beginProcessingWait отмечает не-командное сообщение как «в очереди» и
+// возвращает зафиксированную генерацию сессии + release-функцию. Release
+// вызывается явно сразу после успешного захвата peer-mutex'а (см. ProcessMessage).
+func (h *BotHandler) beginProcessingWait(peerID int64) (release func(), generation uint64) {
+	h.queueMu.Lock()
+	h.waitingCounts[peerID]++
+	waiting := h.waitingCounts[peerID]
+	generation = h.generations[peerID]
+	h.queueMu.Unlock()
+
+	if waiting > 1 {
+		logger.DebugToFile("[queue] peer %d: %d message(s) waiting for session", peerID, waiting)
+	}
+	return func() {
+		h.queueMu.Lock()
+		defer h.queueMu.Unlock()
+		if h.waitingCounts[peerID] > 0 {
+			h.waitingCounts[peerID]--
+		}
+	}, generation
+}
+
+// bumpPeerGeneration повышает генерацию сессии. Вызывается после сброса в
+// handleNewSession (/clear, /n) — устаревает очередь сообщений пира.
+func (h *BotHandler) bumpPeerGeneration(peerID int64) {
+	h.queueMu.Lock()
+	defer h.queueMu.Unlock()
+	h.generations[peerID]++
+}
+
+// peerGeneration возвращает текущую генерацию сессии пира.
+func (h *BotHandler) peerGeneration(peerID int64) uint64 {
+	h.queueMu.Lock()
+	defer h.queueMu.Unlock()
+	return h.generations[peerID]
+}
+
+// waitingMessages — сколько не-командных сообщений пира сейчас ждут peer-mutex.
+func (h *BotHandler) waitingMessages(peerID int64) int {
+	h.queueMu.Lock()
+	defer h.queueMu.Unlock()
+	return h.waitingCounts[peerID]
 }
 
 func (h *BotHandler) ensureSession(peerID int64) {

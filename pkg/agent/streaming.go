@@ -64,8 +64,15 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 	resp, err := a.client.Do(req)
 	if err != nil {
 		logger.DebugToFile("%s[LLM REQUEST] Failed to send: %v", a.agentPrefix(), err)
+		// Контекст отменён пользователем (/clear) — это НЕ серверная ошибка:
+		// возвращаем как есть, чтобы верхние слои распознали context.Canceled
+		// и не ретраили. DeadlineExceeded трактуем по-старому (таймаут ожидания
+		// недоступного во время рестарта llama-server).
+		if errors.Is(err, context.Canceled) {
+			return nil, err
+		}
 		readableErr := fmt.Errorf("send request: %w", err)
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		if errors.Is(err, context.DeadlineExceeded) {
 			readableErr = fmt.Errorf("LLM server was shutdown or unreachable")
 		}
 		return nil, &retryableError{err: readableErr}

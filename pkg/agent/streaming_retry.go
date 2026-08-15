@@ -38,20 +38,33 @@ func (a *agentImpl) streamAndCollect(ctx context.Context, config StreamingConfig
 	for attempt := 1; ; attempt++ {
 		responseText, reasoningText, finishReason, toolCalls, promptTokens, completionTokens, err := a.streamAndCollectOnce(ctx, config, messages)
 		if err != nil {
+			// Не retryable-ошибка (в том числе context.Canceled при /clear) —
+			// возвращаем сразу, без пакования в «server shutdown».
 			if !isRetryableError(err) {
 				return "", "", "", nil, 0, 0, err
 			}
 			lastErr = err
 			a.logRetry(attempt, err)
 			if !a.sleepBeforeRetry(ctx, retryDelay) {
+				if cancelErr := a.interruptedByCancel(ctx); cancelErr != nil {
+					return "", "", "", nil, 0, 0, cancelErr
+				}
 				break
 			}
 			continue
+		}
+		// Стрим прерван отменой контекста в полёте (частичный контент без
+		// finish_reason): это не «успех с обрезанным ответом».
+		if cancelErr := a.interruptedByCancel(ctx); cancelErr != nil && finishReason == "" && len(toolCalls) == 0 {
+			return "", "", "", nil, 0, 0, cancelErr
 		}
 		if isTruncatedStream(responseText, reasoningText, finishReason, toolCalls) {
 			lastErr = errors.New("empty/truncated stream from LLM")
 			a.logRetry(attempt, lastErr)
 			if !a.sleepBeforeRetry(ctx, retryDelay) {
+				if cancelErr := a.interruptedByCancel(ctx); cancelErr != nil {
+					return "", "", "", nil, 0, 0, cancelErr
+				}
 				break
 			}
 			continue
@@ -100,6 +113,17 @@ func (a *agentImpl) logRetry(attempt int, err error) {
 	prefix := a.agentPrefix()
 	logger.DebugToFile(prefix+"[RETRY] LLM request attempt %d failed, retrying: %v", attempt, err)
 	a.debugLog.Warn("%s[RETRY] LLM request attempt %d failed, retrying: %v", prefix, attempt, err)
+}
+
+// interruptedByCancel возвращает context.Canceled, если цикл ретрая/стрима
+// прерван именно отменой контекста пользователем (/clear). Для deadline
+// возвращает nil — она по-прежнему означает «сервер недоступен», и ошибка
+// уходит через обычный путь (exhausted с lastErr / server-unreachable).
+func (a *agentImpl) interruptedByCancel(ctx context.Context) error {
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return ctx.Err()
+	}
+	return nil
 }
 
 // sleepBeforeRetry ждёт паузу перед следующим ретраем.
