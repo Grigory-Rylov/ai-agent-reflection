@@ -258,8 +258,8 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 	// Формируем сообщения для API (включая pinned промпты в начале)
 	apiMessages := a.convertHistoryToAPIMessages(s.GetContextMessages())
 
-	// Добавляем AGENTS.md/CLAUDE.md из рабочей директории (как в opencode)
-	// отдельным system-сообщением после основного системного промпта
+	// Добавляем AGENTS.md/CLAUDE.md из рабочей директории (как в opencode),
+	// сливая в основной системный промпт (vLLM требует все system в начале)
 	workingDir := s.GetWorkingDir()
 	if workingDir == "" {
 		workingDir = tools.WorkingDir
@@ -531,20 +531,20 @@ func (a *agentImpl) injectInstructions(messages []Message, workingDir string) []
 		return messages
 	}
 
-	instrMsg := Message{Role: "system", Content: content}
-	out := make([]Message, 0, len(messages)+1)
-	inserted := false
-	for _, m := range messages {
-		out = append(out, m)
-		if !inserted && m.Role == "system" {
-			out = append(out, instrMsg)
-			inserted = true
+	// Сливаем инструкции в ПЕРВОЕ system-сообщение, а не добавляем отдельным.
+	// vLLM 0.27+ требует, чтобы ВСЕ system-сообщения были в начале; отдельное
+	// system-сообщение после первого (как раньше) отклонялось с 400
+	// «System message must be at the beginning».
+	out := make([]Message, len(messages))
+	copy(out, messages)
+	for i := range out {
+		if out[i].Role == "system" {
+			out[i].Content += "\n\n" + content
+			return out
 		}
 	}
-	if !inserted {
-		out = append([]Message{instrMsg}, out...)
-	}
-	return out
+	// System-сообщения нет — добавляем в начало.
+	return append([]Message{{Role: "system", Content: content}}, out...)
 }
 
 // ============================================================
