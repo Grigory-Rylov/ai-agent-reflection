@@ -32,6 +32,11 @@ changes.patch
 *.patch
 car_ride.html
 
+# Restarter signal files (runtime)
+.agent-branch
+.agent-restart
+.agent-update
+
 # Config (with secrets)
 config.json
 mcp_config.json
