@@ -770,8 +770,11 @@ func (h *BotHandler) clearHandlerSession(peerID int64) {
 
 // cancelEntry — обёртка над cancel func: указатель на структуру сравниваем,
 // в отличие от самого func (в Go функции нельзя сравнивать на равенство).
+// cancelled=true ставит cancelActiveRequest (/clear): после этого entry
+// не должна отменять новый запрос, подставленный в setCancelFunc.
 type cancelEntry struct {
-	cancel context.CancelFunc
+	cancel    context.CancelFunc
+	cancelled bool
 }
 
 func (h *BotHandler) cancelActiveRequest(peerID int64) {
@@ -779,6 +782,7 @@ func (h *BotHandler) cancelActiveRequest(peerID int64) {
 	defer h.cancelMu.Unlock()
 	if entry, ok := h.cancelFuncs[peerID]; ok {
 		entry.cancel()
+		entry.cancelled = true
 		delete(h.cancelFuncs, peerID)
 		logger.DebugToFile("[cancelActiveRequest] Cancelled active request for peer %d", peerID)
 	}
@@ -787,7 +791,10 @@ func (h *BotHandler) cancelActiveRequest(peerID int64) {
 func (h *BotHandler) setCancelFunc(peerID int64, cancel context.CancelFunc) {
 	h.cancelMu.Lock()
 	defer h.cancelMu.Unlock()
-	if prev, ok := h.cancelFuncs[peerID]; ok {
+	// Отменяем предыдущий запрос только если он ещё активен. Если он уже
+	// отменён /clear'ом (cancelled=true), не трогаем: его ctx и так мёртв,
+	// а новая entry должна стать единственной живой.
+	if prev, ok := h.cancelFuncs[peerID]; ok && !prev.cancelled {
 		prev.cancel()
 	}
 	h.cancelFuncs[peerID] = &cancelEntry{cancel: cancel}

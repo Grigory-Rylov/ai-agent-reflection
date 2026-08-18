@@ -1,115 +1,240 @@
 package vk
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
-// SendFile отправляет файл пользователю через VK (упрощённая версия)
-func (c *BotClient) SendFile(filePath string, peerID int64, message string) (int64, error) {
+// vkBlockedExtensions — расширения, которые VK upload-сервер отвергает
+// (405 / wrong_file / no_file). Для них файл переименовывается в <base>.txt.
+var vkBlockedExtensions = map[string]bool{
+	"html": true, "htm": true, "svg": true, "js": true, "mjs": true,
+	"php": true, "asp": true, "aspx": true, "jsp": true, "exe": true,
+	"bat": true, "cmd": true, "sh": true, "py": true,
+}
+
+// SafeUploadName возвращает имя файла, безопасное для VK upload: если
+// расширение в чёрном списке, добавляет суффикс .txt (index.html ->
+// index.html.txt). Содержимое файла не меняется.
+func SafeUploadName(filename string) string {
+	if filename == "" {
+		return filename
+	}
+	ext := strings.ToLower(filepath.Ext(filename))
+	ext = strings.TrimPrefix(ext, ".")
+	if vkBlockedExtensions[ext] {
+		return filename + ".txt"
+	}
+	return filename
+}
+
+// UploadAndSendDocument загружает документ в VK и отправляет его пользователю.
+// Возвращает ID отправленного сообщения.
+func (c *BotClient) UploadAndSendDocument(filePath string, peerID int64, message string) (int64, error) {
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		return 0, fmt.Errorf("file not found: %s", filePath)
 	}
 
-	fname := filepath.Base(filePath)
-	msgText := ""
-	if message != "" {
-		msgText = message + "\n"
-	}
-	msgText += fmt.Sprintf("📎 %s (%s)", fname, filePath)
-
-	return c.sendSingleMessage(peerID, msgText, "", nil)
-}
-
-// UploadAndSendDocument загружает документ и отправляет его через VK API
-func (c *BotClient) UploadAndSendDocument(filePath string, peerID int64, message string) (int64, error) {
-	params := map[string]interface{}{
-		"type":         "doc",
-		"peer_id":      peerID,
-		"v":            c.apiVersion,
-		"access_token": c.token,
-	}
-
-	resp, err := c.doRequestPOST("docs.getUploadServer", params)
-	if err != nil {
-		return 0, fmt.Errorf("docs.getUploadServer: %w", err)
-	}
-
-	var uploadResp struct {
-		Response map[string]interface{} `json:"response"`
-	}
-	if err := json.Unmarshal(resp, &uploadResp); err != nil {
-		return 0, fmt.Errorf("parse upload response: %w", err)
-	}
-
-	uploadURL, ok := uploadResp.Response["upload_url"].(string)
-	if !ok {
-		return 0, fmt.Errorf("no upload_url in response")
-	}
+	filename := filepath.Base(filePath)
+	safeName := SafeUploadName(filename)
 
 	fileData, err := os.ReadFile(filePath)
 	if err != nil {
 		return 0, fmt.Errorf("read file: %w", err)
 	}
 
-	resp2, err := http.PostForm(uploadURL, map[string][]string{
-		"file": []string{string(fileData)},
+	fileField, err := c.uploadDoc(peerID, fileData, safeName)
+	if err != nil {
+		return 0, err
+	}
+
+	ownerID, docID, err := c.saveDoc(fileField, filename)
+	if err != nil {
+		return 0, err
+	}
+
+	attachment := fmt.Sprintf("doc%d_%d", ownerID, docID)
+	return c.sendMessageWithAttachment(peerID, attachment, message)
+}
+
+// getDocUploadURL запрашивает URL upload-сервера для документа peer-сообщения.
+func (c *BotClient) getDocUploadURL(peerID int64) (string, error) {
+	resp, err := c.doRequestGET("docs.getMessagesUploadServer", map[string]interface{}{
+		"type":    "doc",
+		"peer_id": peerID,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("upload to VK: %w", err)
+		return "", fmt.Errorf("docs.getMessagesUploadServer: %w", err)
 	}
-	defer resp2.Body.Close()
 
-	saveResp, err := c.doRequestPOST("docs.save", map[string]interface{}{
-		"file_name": filepath.Base(filePath),
-		"v":         c.apiVersion,
+	var out struct {
+		Response struct {
+			UploadURL string `json:"upload_url"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(resp, &out); err != nil {
+		return "", fmt.Errorf("parse upload server response: %w", err)
+	}
+	if out.Response.UploadURL == "" {
+		return "", fmt.Errorf("no upload_url in response")
+	}
+	return out.Response.UploadURL, nil
+}
+
+// uploadDoc загружает файл на VK upload-сервер вручную собранным multipart
+// (VK отвергает стандартный Go multipart) и возвращает поле "file" из ответа.
+// VK upload-сервер нестабилен: иногда отвечает no_file / 405 на валидный
+// multipart. Поэтому при таких ответах запрашиваем свежий upload URL и
+// повторяем (до 3 раз).
+func (c *BotClient) uploadDoc(peerID int64, fileData []byte, filename string) (string, error) {
+	uploadURL, err := c.getDocUploadURL(peerID)
+	if err != nil {
+		return "", err
+	}
+
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		fileField, retryable, err := c.tryUploadOnce(uploadURL, fileData, filename)
+		if err == nil {
+			return fileField, nil
+		}
+		lastErr = err
+		if !retryable || attempt == maxAttempts {
+			break
+		}
+		// VK отказался (no_file/405) — берём свежий upload URL и повторяем.
+		if fresh, uerr := c.getDocUploadURL(peerID); uerr == nil {
+			uploadURL = fresh
+		}
+	}
+	return "", lastErr
+}
+
+// tryUploadOnce выполняет одну попытку upload. Возвращает поле "file" при
+// успехе; при отказе VK (no_file/405) — retryable=true.
+func (c *BotClient) tryUploadOnce(uploadURL string, fileData []byte, filename string) (string, bool, error) {
+	boundary := fmt.Sprintf("----WebKitFormBoundary%d", rand.Int63n(1000000000000))
+	var buf bytes.Buffer
+	buf.WriteString("--" + boundary + "\r\n")
+	buf.WriteString(fmt.Sprintf("Content-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n", filename))
+	buf.WriteString("Content-Type: application/octet-stream\r\n")
+	buf.WriteString("\r\n")
+	buf.Write(fileData)
+	buf.WriteString("\r\n--" + boundary + "--\r\n")
+
+	req, err := http.NewRequest("POST", uploadURL, &buf)
+	if err != nil {
+		return "", false, fmt.Errorf("create upload request: %w", err)
+	}
+	req.Header.Set("Content-Type", "multipart/form-data; boundary="+boundary)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", false, fmt.Errorf("upload request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", false, fmt.Errorf("read upload response: %w", err)
+	}
+	if resp.StatusCode == http.StatusMethodNotAllowed {
+		// 405 — VK временами отвергает multipart; стоит повторить.
+		return "", true, fmt.Errorf("upload rejected (405): %s", truncateBody(body))
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", false, fmt.Errorf("upload failed: HTTP %d - %s", resp.StatusCode, truncateBody(body))
+	}
+
+	var out struct {
+		File    string `json:"file"`
+		Error   string `json:"error"`
+		ErrDesc string `json:"error_descr"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", false, fmt.Errorf("parse upload response: %w", err)
+	}
+	if out.File != "" {
+		return out.File, false, nil
+	}
+	// no_file / wrong_file — VK не принял multipart; повторяем со свежим URL.
+	if out.Error == "no_file" || out.Error == "wrong_file" {
+		return "", true, fmt.Errorf("upload rejected by VK (%s): %s", out.Error, truncateBody(body))
+	}
+	return "", false, fmt.Errorf("no file field in upload response: %s", truncateBody(body))
+}
+
+// saveDoc сохраняет загруженный документ через docs.save и возвращает
+// owner_id и id документа.
+func (c *BotClient) saveDoc(fileField, title string) (ownerID, docID int64, err error) {
+	resp, err := c.doRequestPOST("docs.save", map[string]interface{}{
+		"file":         fileField,
+		"title":        title,
+		"v":            c.apiVersion,
 		"access_token": c.token,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("docs.save: %w", err)
+		return 0, 0, fmt.Errorf("docs.save: %w", err)
 	}
 
-	var saveResult struct {
-		Response []struct {
-			ID int64 `json:"id"`
+	var out struct {
+		Response struct {
+			Doc struct {
+				ID      int64 `json:"id"`
+				OwnerID int64 `json:"owner_id"`
+			} `json:"doc"`
 		} `json:"response"`
 	}
-	if err := json.Unmarshal(saveResp, &saveResult); err != nil {
-		return 0, fmt.Errorf("parse save response: %w", err)
+	if err := json.Unmarshal(resp, &out); err != nil {
+		return 0, 0, fmt.Errorf("parse docs.save response: %w", err)
 	}
-	if len(saveResult.Response) == 0 {
-		return 0, fmt.Errorf("empty save response")
+	if out.Response.Doc.ID == 0 {
+		return 0, 0, fmt.Errorf("empty docs.save response: %s", truncateBody(resp))
 	}
+	return out.Response.Doc.OwnerID, out.Response.Doc.ID, nil
+}
 
-	attachment := fmt.Sprintf("doc0:%d", saveResult.Response[0].ID)
-
-	params2 := map[string]interface{}{
+// sendMessageWithAttachment отправляет сообщение с вложением пользователю.
+func (c *BotClient) sendMessageWithAttachment(peerID int64, attachment, message string) (int64, error) {
+	params := map[string]interface{}{
 		"peer_id":      peerID,
+		"attachment":   attachment,
 		"random_id":    time.Now().UnixMilli(),
 		"v":            c.apiVersion,
 		"access_token": c.token,
-		"attachment":   attachment,
 	}
-
 	if message != "" {
-		params2["message"] = message
+		params["message"] = message
 	}
 
-	msgResp, err := c.doRequestPOST("messages.send", params2)
+	resp, err := c.doRequestPOST("messages.send", params)
 	if err != nil {
 		return 0, fmt.Errorf("messages.send: %w", err)
 	}
 
-	var finalResp struct {
+	var out struct {
 		Response interface{} `json:"response"`
 	}
-	if err := json.Unmarshal(msgResp, &finalResp); err != nil {
-		return 0, fmt.Errorf("parse send response: %w", err)
+	if err := json.Unmarshal(resp, &out); err != nil {
+		return 0, fmt.Errorf("parse messages.send response: %w", err)
 	}
+	return extractMessageID(out.Response)
+}
 
-	return extractMessageID(finalResp.Response)
+// truncateBody обрезает тело ответа для логирования.
+func truncateBody(b []byte) string {
+	const max = 300
+	if len(b) <= max {
+		return string(b)
+	}
+	return string(b[:max]) + "..."
 }

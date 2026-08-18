@@ -176,6 +176,7 @@ func main() {
 
 	toolRegistry := tools.NewRegistry()
 	registerTools(toolRegistry)
+	tools.SetSendFileDependencies(vkClient, config.PeerID)
 
 	allowedDirs := []string{tools.WorkingDir}
 	allowedDirs = append(allowedDirs, config.AllowedDirs...)
@@ -210,7 +211,10 @@ func main() {
 
 	tools.SetImage2TextConfig(tools.Image2TextConfig{
 		ModelHolder: modelHolder,
-		MaxTokens:   maxTokens,
+		// max_tokens — лимит OUTPUT (описания), а не контекста модели.
+		// Передавать maxTokens (весь контекст) нельзя: vLLM отдаст 400
+		// «requested N output tokens». Для описания изображения 4096 достаточно.
+		MaxTokens: 4096,
 	})
 
 	if modelHolder.GetCurrentVision() {
@@ -625,6 +629,7 @@ func registerTools(r *tools.Registry) {
 	r.Register(&tools.EditTool{})
 	r.Register(&tools.ApplyPatchTool{})
 	r.Register(&tools.QuestionTool{})
+	r.Register(&tools.SendFileTool{})
 	r.Register(tools.GlobalTodo)
 }
 

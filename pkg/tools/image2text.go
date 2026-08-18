@@ -173,12 +173,14 @@ func currentImage2TextModel() (model, host string) {
 	return model, host
 }
 
-// image2TextMaxTokens возвращает лимит токенов ответа (по умолчанию 1024).
+// image2TextMaxTokens возвращает лимит токенов ответа (по умолчанию 4096).
+// Это лимит OUTPUT (описания), не контекста модели — передавать весь
+// контекст сюда нельзя (vLLM отдаст 400).
 func image2TextMaxTokens() int {
 	if globalImage2Text.MaxTokens > 0 {
 		return globalImage2Text.MaxTokens
 	}
-	return 1024
+	return 4096
 }
 
 // imageMimeType определяет MIME-тип изображения по расширению файла.
