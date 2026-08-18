@@ -139,11 +139,6 @@ func main() {
 		fmt.Println("[restarter] Agent built successfully")
 	}
 
-	if err := agent.start(agentPath, agentArgs); err != nil {
-		fmt.Fprintf(os.Stderr, "[restarter] Failed to start agent: %v\n", err)
-		os.Exit(1)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -160,11 +155,22 @@ func main() {
 	}()
 
 	go monitorAgent(ctx, &agent, agentPath, agentArgs, vkClient, config.PeerID)
+	go runVKListener(ctx, vkClient, config, &agent, agentPath, agentArgs)
 
-	fmt.Println("[restarter] Agent commands (/restart, /update, /b) routed via signal files")
+	sendWelcome(vkClient, config.PeerID)
+	fmt.Println("[restarter] Waiting for /restart command to start agent")
 
 	<-done
 	fmt.Println("[restarter] Shutdown complete")
+}
+
+// sendWelcome отправляет приветственный статус, если агент ещё не запущен.
+func sendWelcome(vkClient *vk.BotClient, peerID int64) {
+	if peerID <= 0 {
+		return
+	}
+	msg := fmt.Sprintf("🤖 Restarter v%s запущен. Агент остановлен — отправьте /restart для запуска.\n", Version)
+	vkClient.SendMessage(peerID, msg)
 }
 
 // monitorAgent — НИКОГДА не рестартит агента автоматически.
@@ -223,8 +229,6 @@ func restartAgent(ap *agentProc, agentPath string, agentArgs []string, vkClient 
 	if err := ap.start(agentPath, agentArgs); err != nil {
 		vkClient.SendMessage(peerID, fmt.Sprintf("❌ Ошибка перезапуска: %v", err))
 		time.Sleep(5 * time.Second)
-	} else {
-		vkClient.SendMessage(peerID, "✅ Агент перезапущен")
 	}
 }
 
@@ -340,6 +344,22 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 					replyPeerID = config.PeerID
 				}
 
+				// Если агент ЗАПУЩЕН, он сам обрабатывает /restart, /update, /b
+				// (пишет файлы-сигналы .agent-restart/.agent-update/.agent-branch),
+				// а monitorAgent по ним единолично рестартит. Здесь дублировать
+				// рестарт НЕЛЬЗЯ: два обработчика (listener + monitor) на один
+				// agentProc → гонка, двойной ap.start() и два «✅ Агент перезапущен».
+				// Listener нужен ТОЛЬКО чтобы запустить агента, когда он остановлен.
+				if ap.isRunning() {
+					switch {
+					case cmd == "/status":
+						sendRestarterStatus(vkClient, replyPeerID, ap)
+					case cmd == "/help":
+						vkClient.SendMessage(replyPeerID, restarterHelpText())
+					}
+					continue
+				}
+
 				switch {
 				case cmd == "/restart":
 					vkClient.SendMessage(replyPeerID, "Перезапуск агента...")
@@ -347,8 +367,6 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 					ap.stop()
 					if err := ap.start(agentPath, agentArgs); err != nil {
 						vkClient.SendMessage(replyPeerID, fmt.Sprintf("❌ Ошибка перезапуска: %v", err))
-					} else {
-						vkClient.SendMessage(replyPeerID, "✅ Агент перезапущен")
 					}
 					ap.setRestarting(false)
 
@@ -425,32 +443,40 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 					ap.setRestarting(false)
 
 				case cmd == "/status":
-					status := fmt.Sprintf("Restarter v%s (build %s)\n", Version, buildinfo.HumanReadable())
-					if ap.isRunning() {
-						status += fmt.Sprintf("Агент: запущен (PID %d)\n", ap.pid())
-					} else {
-						status += "Агент: остановлен\n"
-					}
-					branchOutput, _ := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
-					if len(branchOutput) > 0 {
-						status += fmt.Sprintf("Ветка: %s", strings.TrimSpace(string(branchOutput)))
-					}
-					vkClient.SendMessage(replyPeerID, status)
+					sendRestarterStatus(vkClient, replyPeerID, ap)
 
 				case cmd == "/help":
-					help := "Restarter команды:\n" +
-						"/restart - Перезапустить агента без пересборки\n" +
-						"/update - git pull, пересобрать, перезапустить\n" +
-						"/b <branch> - Переключиться на ветку, пересобрать, перезапустить\n" +
-						"/status - Статус агента и текущая ветка\n" +
-						"/help - Показать список команд"
-					vkClient.SendMessage(replyPeerID, help)
+					vkClient.SendMessage(replyPeerID, restarterHelpText())
 
 				default:
 				}
 			}
 		}
 	}
+}
+
+// sendRestarterStatus отправляет статус рестартера и агента.
+func sendRestarterStatus(vkClient *vk.BotClient, peerID int64, ap *agentProc) {
+	status := fmt.Sprintf("Restarter v%s (build %s)\n", Version, buildinfo.HumanReadable())
+	if ap.isRunning() {
+		status += fmt.Sprintf("Агент: запущен (PID %d)\n", ap.pid())
+	} else {
+		status += "Агент: остановлен\n"
+	}
+	branchOutput, _ := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if len(branchOutput) > 0 {
+		status += fmt.Sprintf("Ветка: %s", strings.TrimSpace(string(branchOutput)))
+	}
+	vkClient.SendMessage(peerID, status)
+}
+
+func restarterHelpText() string {
+	return "Restarter команды:\n" +
+		"/restart - Перезапустить агента без пересборки\n" +
+		"/update - git pull, пересобрать, перезапустить\n" +
+		"/b <branch> - Переключиться на ветку, пересобрать, перезапустить\n" +
+		"/status - Статус агента и текущая ветка\n" +
+		"/help - Показать список команд"
 }
 
 func buildAgent(agentPath string) error {
