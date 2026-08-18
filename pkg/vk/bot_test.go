@@ -264,6 +264,52 @@ func TestParseMessageNewUpdate(t *testing.T) {
 			t.Errorf("expected empty message for outgoing, got ID %d", msg.ID)
 		}
 	})
+
+	t.Run("falls back to top-level message_id when message.id missing", func(t *testing.T) {
+		// Bots Long Poll: object.message_id + object.message, где message.id
+		// может отсутствовать. Без фолбэка id=0 → fetchFullMessages пропускает
+		// сообщение → getById не вызывается → аттачи не скачиваются.
+		object := map[string]interface{}{
+			"message_id": float64(987654),
+			"message": map[string]interface{}{
+				"peer_id":   float64(2000000001),
+				"from_id":   float64(123),
+				"out":       float64(0),
+				"text":      "смотри фото",
+				"attachments": []interface{}{
+					map[string]interface{}{
+						"type":  "photo",
+						"photo": map[string]interface{}{"id": float64(1)},
+					},
+				},
+			},
+		}
+
+		msg := parseMessageNewUpdate(object)
+		if msg.ID != 987654 {
+			t.Errorf("expected ID 987654 from message_id fallback, got %d", msg.ID)
+		}
+		if len(msg.Attachments) != 1 {
+			t.Errorf("expected 1 attachment, got %d", len(msg.Attachments))
+		}
+	})
+
+	t.Run("message.id takes precedence over message_id", func(t *testing.T) {
+		object := map[string]interface{}{
+			"message_id": float64(111),
+			"message": map[string]interface{}{
+				"id":      float64(222),
+				"peer_id": float64(2000000001),
+				"out":     float64(0),
+				"text":    "hi",
+			},
+		}
+
+		msg := parseMessageNewUpdate(object)
+		if msg.ID != 222 {
+			t.Errorf("expected ID 222 from message.id, got %d", msg.ID)
+		}
+	})
 }
 
 func TestParseMessageEventUpdate(t *testing.T) {

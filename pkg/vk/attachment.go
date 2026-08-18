@@ -154,6 +154,8 @@ func extractStickerURL(attData map[string]interface{}) (string, string, bool) {
 // DownloadAttachments downloads all attachments to saveDir.
 // Creates saveDir if it doesn't exist.
 // Prepends timestamp (YYYYMMDD_HHmmSS) to each filename.
+// On individual download failure returns already-downloaded files plus
+// the error, so callers can still use the partial results.
 func DownloadAttachments(attachments []map[string]interface{}, saveDir string) ([]DownloadedAttachment, error) {
 	absDir, err := filepath.Abs(saveDir)
 	if err != nil {
@@ -165,6 +167,7 @@ func DownloadAttachments(attachments []map[string]interface{}, saveDir string) (
 
 	var results []DownloadedAttachment
 	timestamp := time.Now().Format("20060102_150405")
+	var firstErr error
 
 	for _, att := range attachments {
 		url, filename, ok := GetAttachmentDownloadURL(att)
@@ -179,13 +182,16 @@ func DownloadAttachments(attachments []map[string]interface{}, saveDir string) (
 
 		result, err := downloadSingle(url, filepath.Join(absDir, timedName))
 		if err != nil {
-			return results, fmt.Errorf("download %s: %w", filename, err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("download %s: %w", filename, err)
+			}
+			continue
 		}
 		result.Type = attType
 		results = append(results, result)
 	}
 
-	return results, nil
+	return results, firstErr
 }
 
 // downloadSingle fetches a URL and saves it to the given path.

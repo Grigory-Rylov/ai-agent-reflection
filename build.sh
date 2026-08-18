@@ -1,6 +1,6 @@
 #!/bin/sh
 set -ex
-export PATH="${PATH}:/usr/local/go/bin"
+export PATH="${PATH}:/usr/local/go/bin:/mnt/data/usr/local/go/bin"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LDFLAGS="-X github.com/Grigory-Rylov/ai-agent-reflection/pkg/buildinfo.BuildTime=${BUILD_TIME}"
 go build -ldflags "${LDFLAGS}" -o agent .

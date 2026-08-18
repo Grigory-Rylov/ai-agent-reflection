@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 )
 
 // ============================================================
@@ -349,8 +351,18 @@ func parseMessageNewUpdate(object map[string]interface{}) VKMessage {
 		return VKMessage{}
 	}
 
+	// Bots Long Poll отдаёт message_new как object.message_id + object.message,
+	// причём message.id может отсутствовать (частичное сообщение). Тогда
+	// берём id из верхнеуровневого message_id — иначе fetchFullMessages
+	// пропускает сообщение (id=0) и getById не вызывается, и аттачи не
+	// скачиваются (путь к файлу не попадает в промпт).
+	id := toInt64(raw["id"])
+	if id == 0 {
+		id = toInt64(object["message_id"])
+	}
+
 	msg := VKMessage{
-		ID:     toInt64(raw["id"]),
+		ID:     id,
 		PeerID: toInt64(raw["peer_id"]),
 		FromID: toInt64(raw["from_id"]),
 		Date:   toInt64(raw["date"]),
@@ -565,12 +577,15 @@ func (c *BotClient) GetMessagesByID(messageIDs []int64) ([]VKMessage, error) {
 		idsStr += fmt.Sprintf("%d", id)
 	}
 
+	logger.DebugToFile("[vk] messages.getById request: ids=%s", idsStr)
+
 	params := map[string]interface{}{
 		"message_ids": idsStr,
 	}
 
 	responseBody, err := c.doRequestGET("messages.getById", params)
 	if err != nil {
+		logger.DebugToFile("[vk] messages.getById failed: ids=%s err=%v", idsStr, err)
 		return nil, err
 	}
 
@@ -580,10 +595,19 @@ func (c *BotClient) GetMessagesByID(messageIDs []int64) ([]VKMessage, error) {
 		} `json:"response"`
 	}
 	if err := json.Unmarshal(responseBody, &response); err != nil {
+		logger.DebugToFile("[vk] messages.getById: parse error: ids=%s body=%s", idsStr, truncateForLog(responseBody, 300))
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
+	logger.DebugToFile("[vk] messages.getById ok: ids=%s items=%d", idsStr, len(response.Response.Items))
 	return response.Response.Items, nil
+}
+
+func truncateForLog(data []byte, max int) string {
+	if len(data) <= max {
+		return string(data)
+	}
+	return string(data[:max]) + "..."
 }
 
 // ============================================================

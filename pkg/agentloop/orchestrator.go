@@ -338,16 +338,7 @@ func (o *Orchestrator) GetActiveAgentSessions(peerID int64) (string, error) {
 func (o *Orchestrator) ClearActiveSessions(peerID int64) {
 	// Отменяем все зарегистрированные контексты агентов для этого peer,
 	// чтобы работающие сабагенты получили context.Canceled и остановились.
-	var cancelled []string
-	o.activeAgentsMu.Lock()
-	for id, entry := range o.activeAgents {
-		if entry.peerID == peerID {
-			entry.cancel()
-			cancelled = append(cancelled, id)
-			delete(o.activeAgents, id)
-		}
-	}
-	o.activeAgentsMu.Unlock()
+	cancelled := o.ClearRegisteredAgents(peerID)
 
 	// Освобождаем слоты отменённых агентов (KV-cache stale после cancel).
 	for _, id := range cancelled {
@@ -361,6 +352,24 @@ func (o *Orchestrator) ClearActiveSessions(peerID int64) {
 		return
 	}
 	o.config.Store.ClearAgentChain(peerID)
+}
+
+// ClearRegisteredAgents отменяет ВСЕ зарегистрированные контексты агентов для
+// пира (включая сабагентов, запущенных через task-инструмент главного агента —
+// их ctx не наследуется от ctx запроса и не отменяется cancelActiveRequest).
+// Возвращает список отменённых sessionID для освобождения слотов.
+func (o *Orchestrator) ClearRegisteredAgents(peerID int64) []string {
+	var cancelled []string
+	o.activeAgentsMu.Lock()
+	for id, entry := range o.activeAgents {
+		if entry.peerID == peerID {
+			entry.cancel()
+			cancelled = append(cancelled, id)
+			delete(o.activeAgents, id)
+		}
+	}
+	o.activeAgentsMu.Unlock()
+	return cancelled
 }
 
 // ResumeActiveChains восстанавливает незавершённые цепочки сабагентов после рестарта.

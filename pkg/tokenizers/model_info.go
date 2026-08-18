@@ -10,14 +10,15 @@ import (
 	"time"
 )
 
-// ModelInfo содержит информацию о модели от llama-server
+// ModelInfo содержит информацию о модели от llama-server или vLLM
 type ModelInfo struct {
-	ID      string       `json:"id"`
-	Object  string       `json:"object"`
-	Created int64        `json:"created"`
-	OwnedBy string       `json:"owned_by"`
-	Meta    *ModelMeta   `json:"meta"`
-	Status  *ModelStatus `json:"status"`
+	ID           string       `json:"id"`
+	Object       string       `json:"object"`
+	Created      int64        `json:"created"`
+	OwnedBy      string       `json:"owned_by"`
+	Meta         *ModelMeta   `json:"meta"`
+	Status       *ModelStatus `json:"status"`
+	MaxModelLen  int          `json:"max_model_len"` // vLLM
 }
 
 // ModelStatus содержит статус модели (аргументы запуска сервера)
@@ -172,12 +173,20 @@ func (c *ServerInfoClient) getContextFromV1Models(model string) int {
 		return ctxLen
 	}
 
-	// 2. Реальный контекст сервера
+	// 2. Реальный контекст сервера (llama.cpp)
 	if matched.Meta != nil && matched.Meta.NCtx > 0 {
 		if c.debug {
 			fmt.Printf("[server-info] Got n_ctx=%d for model %q from /v1/models\n", matched.Meta.NCtx, model)
 		}
 		return matched.Meta.NCtx
+	}
+
+	// 3. vLLM: max_model_len
+	if matched.MaxModelLen > 0 {
+		if c.debug {
+			fmt.Printf("[server-info] Got max_model_len=%d for model %q from /v1/models\n", matched.MaxModelLen, model)
+		}
+		return matched.MaxModelLen
 	}
 
 	return -1

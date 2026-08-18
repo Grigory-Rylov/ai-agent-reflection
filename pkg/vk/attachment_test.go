@@ -8,7 +8,18 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 )
+
+func mustLogger(t *testing.T) *logger.Logger {
+	t.Helper()
+	log, err := logger.New(logger.DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return log
+}
 
 func TestVKAttachmentUnmarshalJSON(t *testing.T) {
 	tests := []struct {
@@ -216,5 +227,114 @@ func TestDownloadAttachmentsAbsolutePath(t *testing.T) {
 	info := FormatAttachmentInfo(downloaded)
 	if !strings.Contains(info, path) {
 		t.Errorf("attachment info should contain full path %q, got: %s", path, info)
+	}
+}
+
+// TestBuildFullTextLongPollFallback проверяет, что когда getById не принёс
+// сообщение (id=0 / fullMsgMap пуст), buildFullText всё равно скачивает аттачи
+// из самого long-poll события и дописывает путь к файлу в промпт. Без этого
+// фикса агент не видел путь к картинке/файлу и не понимал, о чём его просят.
+func TestBuildFullTextLongPollFallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("photo-bytes"))
+	}))
+	defer srv.Close()
+
+	var att VKAttachment
+	mustUnmarshal := func(t *testing.T, s string) {
+		t.Helper()
+		if err := json.Unmarshal([]byte(s), &att); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustUnmarshal(t, `{
+		"type": "photo",
+		"photo": {
+			"id": 555,
+			"sizes": [{"type": "w", "url": "` + srv.URL + `/photo.jpg"}]
+		}
+	}`)
+
+	dir := t.TempDir()
+	h := NewBotHandler(nil, newMockAgentLoop(), mustLogger(t))
+	h.attachmentsDir = dir
+
+	// id=0 и fullMsgMap пуст — ровно тот сценарий из лога:
+	// "long poll carried 1 attachment(s) but full message not fetched".
+	msg := &VKMessage{ID: 0, PeerID: 2000000001, Text: "что на фото", Attachments: []VKAttachment{att}}
+	out := h.buildFullText(msg, nil)
+
+	if !strings.Contains(out, "что на фото") {
+		t.Errorf("prompt should keep original text, got: %s", out)
+	}
+	if !strings.Contains(out, "saved to:") {
+		t.Fatalf("prompt should contain downloaded file path, got: %s", out)
+	}
+	// Путь должен указывать на реально скачанный файл в attachmentsDir.
+	if !strings.Contains(out, dir) {
+		t.Errorf("prompt should contain path under %s, got: %s", dir, out)
+	}
+}
+
+// TestBuildFullTextNoAttachmentsWithoutFullMsg — без аттачей и без getById
+// возвращается только текст (без падений).
+func TestBuildFullTextNoAttachmentsWithoutFullMsg(t *testing.T) {
+	h := NewBotHandler(nil, newMockAgentLoop(), mustLogger(t))
+	h.attachmentsDir = t.TempDir()
+
+	msg := &VKMessage{ID: 0, PeerID: 2000000001, Text: "просто текст"}
+	if got := h.buildFullText(msg, nil); got != "просто текст" {
+		t.Errorf("expected plain text, got %q", got)
+	}
+}
+
+func TestDownloadAttachmentsPartialOnFailure(t *testing.T) {
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Write([]byte("ok-content"))
+	}))
+	defer srv.Close()
+
+	attachments := []map[string]interface{}{
+		{
+			"type": "doc",
+			"doc": map[string]interface{}{
+				"id":    float64(1),
+				"title": "bad.txt",
+				"url":   srv.URL + "/bad.txt",
+			},
+		},
+		{
+			"type": "doc",
+			"doc": map[string]interface{}{
+				"id":    float64(2),
+				"title": "good.txt",
+				"url":   srv.URL + "/good.txt",
+			},
+		},
+	}
+
+	downloaded, err := DownloadAttachments(attachments, t.TempDir())
+	if err == nil {
+		t.Fatal("expected error for failed download, got nil")
+	}
+	if len(downloaded) != 1 {
+		t.Fatalf("expected 1 downloaded file (partial), got %d", len(downloaded))
+	}
+	if !strings.Contains(downloaded[0].Path, "good") {
+		t.Errorf("expected the good file to be downloaded, got %q", downloaded[0].Path)
+	}
+	if _, err := os.Stat(downloaded[0].Path); err != nil {
+		t.Errorf("downloaded file should exist: %v", err)
+	}
+
+	info := FormatAttachmentInfo(downloaded)
+	if !strings.Contains(info, downloaded[0].Path) {
+		t.Errorf("partial attachment info should contain path %q, got: %s", downloaded[0].Path, info)
 	}
 }

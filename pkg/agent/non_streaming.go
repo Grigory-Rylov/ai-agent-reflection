@@ -92,11 +92,14 @@ func buildToolCallForRequest(tc ToolCall) ToolCall {
 	if argsStr == "" {
 		return tc
 	}
-	var argsObj interface{}
-	if err := json.Unmarshal([]byte(argsStr), &argsObj); err != nil {
+	// vLLM требует arguments как JSON-строку, llama.cpp — как объект.
+	// Проверяем текущий формат: если уже строка (с кавычками) — оставляем,
+	// если объект — конвертируем в строку для совместимости с vLLM.
+	raw := string(tc.Function.Arguments)
+	if len(raw) > 0 && raw[0] == '"' {
 		return tc
 	}
-	rawArgs, _ := json.Marshal(argsObj)
-	tc.Function.Arguments = rawArgs
+	quoted, _ := json.Marshal(argsStr)
+	tc.Function.Arguments = quoted
 	return tc
 }
