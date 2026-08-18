@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -158,6 +159,23 @@ func (s *sqliteDB) ClearAgentChain(peerID int64) error {
 
 	_, err := s.db.Exec(`DELETE FROM active_agent_chain WHERE peer_id = ?`, peerID)
 	return err
+}
+
+// ClearPeerData полностью удаляет все данные пира: сессии сабагентов,
+// активную цепочку и todos. В отличие от ClearAgentChain (которая лишь
+// помечает сессии 'cancelled'), здесь строки удаляются физически — чтобы
+// ни ResumeActiveChains, ни /sessions не увидели «остатки» после /clear.
+func (s *sqliteDB) ClearPeerData(peerID int64) error {
+	if _, err := s.db.Exec(`DELETE FROM agent_sessions WHERE peer_id = ?`, peerID); err != nil {
+		return fmt.Errorf("delete agent sessions: %w", err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM active_agent_chain WHERE peer_id = ?`, peerID); err != nil {
+		return fmt.Errorf("delete active agent chain: %w", err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM todos WHERE session_id = ?`, strconv.FormatInt(peerID, 10)); err != nil {
+		return fmt.Errorf("delete todos: %w", err)
+	}
+	return nil
 }
 
 func (s *sqliteDB) GetAllActiveChains() ([]AgentChainData, error) {

@@ -15,6 +15,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/compress"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/store"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util/stringutil"
@@ -34,6 +35,14 @@ type AgentLoop interface {
 	Start(ctx context.Context)
 	Stop()
 	ResetSession(peerID int64)
+	// ClearPeerSession полностью сбрасывает состояние пира: история и pinned
+	// в памяти, сообщения/сессия в сторе, KV-cache слот. Используется /clear
+	// до отмены активного запроса, чтобы вставший в очередь обработчик (ctx
+	// ещё не отменён) не записал устаревшую историю в очищенный стор.
+	ClearPeerSession(peerID int64)
+	// GetSessionConfig возвращает конфигурацию сессии (системный промпт,
+	// store, working dir) — для пересоздания сессии после сброса.
+	GetSessionConfig(peerID int64) (session.Config, bool)
 	GetSession(peerID int64) *session.Session
 	EnsureSession(peerID int64) *session.Session
 	// ResumeInterruptedTask продолжает незавершённую задачу главного агента
@@ -48,6 +57,9 @@ type AgentLoop interface {
 	GetModelHolder() *modelsconfig.Holder
 	GetSlotManager() *SlotManager
 	GetSlots() *SlotClient
+	// GetStore возвращает SQLite-стор сессий — чтобы /clear мог полностью
+	// удалить данные пира (сабагенты, цепочка, todos) из БД.
+	GetStore() store.Store
 }
 
 type agentLoop struct {
@@ -165,6 +177,10 @@ func (al *agentLoop) GetSlotManager() *SlotManager {
 
 func (al *agentLoop) GetSlots() *SlotClient {
 	return al.slots
+}
+
+func (al *agentLoop) GetStore() store.Store {
+	return al.config.SessionConfig.Store
 }
 
 // resolveMaxTokens возвращает лимит контекста модели: из models.json (поле context),
@@ -1149,6 +1165,51 @@ func (al *agentLoop) ResetSession(peerID int64) {
 			al.log.InfoLogf("Session reset for peer %d", peerID)
 		}
 	}
+}
+
+// ClearPeerSession полностью сбрасывает состояние пира: история и pinned в
+// памяти, сообщения/сессия в сторе, KV-cache слот. Вызывается /clear ДО отмены
+// активного запроса: вставший в очередь обработчик (его ctx ещё не отменён,
+// т.к. cancel func принадлежит самому обработчику) иначе записал бы устаревшую
+// историю в только что очищенный стор.
+func (al *agentLoop) ClearPeerSession(peerID int64) {
+	al.ResetSession(peerID)
+	if err := al.clearPeerStore(peerID); err != nil && al.log != nil {
+		al.log.WarnLogf("ClearPeerSession: clear store for peer %d: %v", peerID, err)
+	}
+}
+
+// clearPeerStore удаляет сообщения и данные сессии пира из стора.
+func (al *agentLoop) clearPeerStore(peerID int64) error {
+	st := al.config.SessionConfig.Store
+	if st == nil {
+		return nil
+	}
+	if err := st.ClearMessages(peerID); err != nil {
+		return err
+	}
+	return st.SaveSession(&store.SessionData{
+		PeerID:     peerID,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+		WorkingDir: al.config.SessionConfig.WorkingDir,
+	})
+}
+
+// GetSessionConfig возвращает конфигурацию сессии (системный промпт, store,
+// working dir) — для пересоздания сессии после сброса.
+func (al *agentLoop) GetSessionConfig(peerID int64) (session.Config, bool) {
+	if val, ok := al.sessionM.Load(peerID); ok {
+		sess := val.(*session.Session)
+		cfg := al.config.SessionConfig
+		cfg.PeerID = peerID
+		cfg.SystemPrompt = sess.GetSystemPrompt()
+		cfg.WorkingDir = sess.GetWorkingDir()
+		return cfg, true
+	}
+	cfg := al.config.SessionConfig
+	cfg.PeerID = peerID
+	return cfg, false
 }
 
 func (al *agentLoop) GetSession(peerID int64) *session.Session {

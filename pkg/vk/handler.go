@@ -39,6 +39,10 @@ type AgentOrchestrator interface {
 	GetCurrentAgent() string
 	GetActiveAgentSessions(peerID int64) (string, error)
 	ClearActiveSessions(peerID int64)
+	// ClearRegisteredAgents отменяет все зарегистрированные контексты агентов
+	// пира (включая сабагентов через task-инструмент главного агента) и
+	// возвращает их sessionID для освобождения слотов.
+	ClearRegisteredAgents(peerID int64) []string
 	// IsPrimary сообщает, помечен ли агент как primary (mode: primary|all
 	// в config.json). Primary-агенты используют общий контекст главного агента.
 	IsPrimary(agentName string) bool
@@ -56,7 +60,7 @@ type BotHandler struct {
 	mainPeerID     int64
 	thinkingPeerID int64
 	modelHolder    *modelsconfig.Holder
-	cancelFuncs    map[int64]context.CancelFunc
+	cancelFuncs    map[int64]*cancelEntry
 	cancelMu       sync.RWMutex
 	attachmentsDir string
 	// peerProcessors — per-peer mutex для сериализации обработки сообщений.
@@ -86,7 +90,7 @@ func NewBotHandler(vkClient *BotClient, aiAgent agentloop.AgentLoop, log *logger
 		aiAgent:          aiAgent,
 		log:              log,
 		sessions:         make(map[int64]*session.Session),
-		cancelFuncs:      make(map[int64]context.CancelFunc),
+		cancelFuncs:      make(map[int64]*cancelEntry),
 		peerProcessors:   make(map[int64]*sync.Mutex),
 		pendingKeyboards: make(map[int64]map[string]interface{}),
 		waitingCounts:    make(map[int64]int),
@@ -106,7 +110,7 @@ func NewBotHandlerWithPeerID(vkClient *BotClient, aiAgent agentloop.AgentLoop, l
 		mainPeerID:       mainPeerID,
 		thinkingPeerID:   thinkingPeerID,
 		modelHolder:      modelHolder,
-		cancelFuncs:      make(map[int64]context.CancelFunc),
+		cancelFuncs:      make(map[int64]*cancelEntry),
 		peerProcessors:   make(map[int64]*sync.Mutex),
 		pendingKeyboards: make(map[int64]map[string]interface{}),
 		waitingCounts:    make(map[int64]int),
@@ -189,8 +193,9 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	defer cancel()
 	// Атомарная замена cancel func: старый (если есть) отменяется, новый
 	// устанавливается без промежутка, в котором /clear не нашёл бы cancel.
-	h.setCancelFunc(peerID, cancel)
-	defer h.clearCancelFunc(peerID)
+	cancelEntry := &cancelEntry{cancel: cancel}
+	h.setCancelFunc(peerID, cancelEntry.cancel)
+	defer h.clearCancelFunc(peerID, cancelEntry)
 
 	if agentName, task := ParseAgentHashMention(message, h.agentNames()); agentName != "" {
 		if h.log != nil {
@@ -349,8 +354,9 @@ func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, _ t
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	h.setCancelFunc(peerID, cancel)
-	defer h.clearCancelFunc(peerID)
+	cancelEntry := &cancelEntry{cancel: cancel}
+	h.setCancelFunc(peerID, cancelEntry.cancel)
+	defer h.clearCancelFunc(peerID, cancelEntry)
 
 	s := h.aiAgent.GetSession(peerID)
 	if s != nil && s.IsLoopDetected() {
@@ -608,6 +614,11 @@ func (h *BotHandler) handlePinCommand(input string, peerID int64) string {
 		}
 
 		pinCtx, pinCancel := context.WithCancel(context.Background())
+		// Регистрируем cancel func, чтобы /clear мог отменить выполнение /pin
+		// (и его сабагентов). Иначе /pin крутится на фоне после /clear.
+		pinEntry := &cancelEntry{cancel: pinCancel}
+		h.setCancelFunc(peerID, pinEntry.cancel)
+		defer h.clearCancelFunc(peerID, pinEntry)
 		defer pinCancel()
 		response, err := h.aiAgent.ProcessMessage(pinCtx, content, peerID)
 		if errors.Is(err, context.Canceled) {
@@ -674,18 +685,35 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 		return fmt.Sprintf("Ошибка: не удалось получить абсолютный путь: %v", err)
 	}
 
-	// Отменяем активный LLM-запрос главного агента (если есть).
-	// Команды обрабатываются без peer-мьютекса, поэтому /clear и /n могут
-	// выполняться параллельно с ProcessMessage — без отмены контекста агент
-	// продолжит работу и после завершения запишет ответ в уже очищенную сессию.
+	// Сначала отменяем ВСЕ активные запросы (главный агент + сабагенты),
+	// ТОЛЬКО ПОТОМ чистим сессии. Команды обрабатываются без peer-мьютекса,
+	// поэтому /clear и /n выполняются параллельно с ProcessMessage: если
+	// очистить сессию до отмены, работающий агент продолжит писать в
+	// очищенную сессию (reasoning/tool calls продолжатся после /clear).
 	h.cancelActiveRequest(peerID)
-
-	tools.UnregisterPendingQuestion(peerID)
-	h.aiAgent.ResetSession(peerID)
-	tools.ClearGrants(peerID)
 	if h.orchestrator != nil {
 		h.orchestrator.ClearActiveSessions(peerID)
 	}
+
+	tools.UnregisterPendingQuestion(peerID)
+	// ClearPeerSession (а не ResetSession): сбрасывает историю/pinned в памяти,
+	// слот KV-cache и сообщения в сторе. ResetSession трогает только память —
+	// в сторе остаётся старая история, и после рестарта процесс "продолжит"
+	// прерванную задачу (ResumeInterruptedTask), а agentLoop.getOrCreateSession
+	// поднимет старую историю из стора в новую сессию.
+	h.aiAgent.ClearPeerSession(peerID)
+	tools.ClearGrants(peerID)
+
+	// Физически удаляем из БД всё, что /clear мог не отменить: сессии
+	// сабагентов (agent_sessions), активную цепочку (active_agent_chain) и
+	// todos. Без этого после рестарта ResumeActiveChains / ResumeInterruptedTask
+	// поднимали бы «продолжение» уже очищенной задачи.
+	if st := h.aiAgent.GetStore(); st != nil {
+		if err := st.ClearPeerData(peerID); err != nil && h.log != nil {
+			h.log.WarnLogf("ClearPeerData for peer %d: %v", peerID, err)
+		}
+	}
+	tools.GlobalTodo.Reset()
 
 	if s := h.aiAgent.GetSession(peerID); s != nil {
 		s.SetWorkingDir(absPath)
@@ -740,11 +768,17 @@ func (h *BotHandler) clearHandlerSession(peerID int64) {
 	delete(h.sessions, peerID)
 }
 
+// cancelEntry — обёртка над cancel func: указатель на структуру сравниваем,
+// в отличие от самого func (в Go функции нельзя сравнивать на равенство).
+type cancelEntry struct {
+	cancel context.CancelFunc
+}
+
 func (h *BotHandler) cancelActiveRequest(peerID int64) {
 	h.cancelMu.Lock()
 	defer h.cancelMu.Unlock()
-	if cancel, ok := h.cancelFuncs[peerID]; ok {
-		cancel()
+	if entry, ok := h.cancelFuncs[peerID]; ok {
+		entry.cancel()
 		delete(h.cancelFuncs, peerID)
 		logger.DebugToFile("[cancelActiveRequest] Cancelled active request for peer %d", peerID)
 	}
@@ -754,15 +788,20 @@ func (h *BotHandler) setCancelFunc(peerID int64, cancel context.CancelFunc) {
 	h.cancelMu.Lock()
 	defer h.cancelMu.Unlock()
 	if prev, ok := h.cancelFuncs[peerID]; ok {
-		prev()
+		prev.cancel()
 	}
-	h.cancelFuncs[peerID] = cancel
+	h.cancelFuncs[peerID] = &cancelEntry{cancel: cancel}
 }
 
-func (h *BotHandler) clearCancelFunc(peerID int64) {
+func (h *BotHandler) clearCancelFunc(peerID int64, entry *cancelEntry) {
 	h.cancelMu.Lock()
 	defer h.cancelMu.Unlock()
-	delete(h.cancelFuncs, peerID)
+	// Удаляем только если в мапе ещё НАША entry. Если за время разворота
+	// запроса новый запрос уже поставил свою entry (setCancelFunc), не
+	// удаляем чужую — иначе новый активный агент станет неотменяемым /clear.
+	if cur, ok := h.cancelFuncs[peerID]; ok && cur == entry {
+		delete(h.cancelFuncs, peerID)
+	}
 }
 
 // beginProcessingWait отмечает не-командное сообщение как «в очереди» и
@@ -987,27 +1026,57 @@ func (h *BotHandler) launchMessageHandler(
 
 func (h *BotHandler) buildFullText(msg *VKMessage, fullMsgMap map[int64]VKMessage) string {
 	full, found := fullMsgMap[msg.ID]
-	if !found || len(full.Attachments) == 0 {
-		return msg.Text
+	// Приоритет: аттачи из getById (полные URL), иначе — из самого long-poll
+	// события. Bots Long Poll иногда отдаёт message_new без message.id (id=0),
+	// тогда fetchFullMessages его пропускает и getById не вызывается — но
+	// вlayout long-poll уже несёт аттачи с URL, их можно скачать напрямую.
+	// Без этого фолбэка путь к файлу в промпт не попадает (фича «аттач → путь»
+	// молча не работает).
+	atts := full.Attachments
+	attSource := "getById"
+	if !found || len(atts) == 0 {
+		if len(msg.Attachments) > 0 {
+			atts = msg.Attachments
+			attSource = "longpoll"
+			if !found {
+				logger.DebugToFile("[buildFullText] msg id=%d: full message not fetched (id=%d), falling back to long-poll attachments", msg.ID, msg.ID)
+			}
+		} else {
+			return msg.Text
+		}
 	}
+
 	absAttachmentsDir, _ := filepath.Abs(h.attachmentsDir)
 	if ctrl := tools.GetAccessController(); ctrl != nil {
 		ctrl.AddAllowedDir(absAttachmentsDir)
 	}
 
-	rawAttachments := toRawAttachments(full.Attachments)
-	downloaded, err := DownloadAttachments(rawAttachments, h.attachmentsDir)
+	logger.DebugToFile("[buildFullText] msg id=%d: %d attachment(s) from %s: %s", msg.ID, len(atts), attSource, describeAttachments(atts))
+	downloaded, err := h.downloadAttachments(atts)
 	if err != nil {
-		if h.log != nil {
-			h.log.WarnLogf("Failed to download attachments: %v", err)
-		}
-		return msg.Text
+		logger.DebugToFile("[buildFullText] msg id=%d: download failed: %v (downloaded %d of %d)", msg.ID, err, len(downloaded), len(atts))
 	}
 	info := FormatAttachmentInfo(downloaded)
 	if info == "" {
+		logger.DebugToFile("[buildFullText] msg id=%d: no attachments could be downloaded, LLM will not see file paths", msg.ID)
 		return msg.Text
 	}
+	logger.DebugToFile("[buildFullText] msg id=%d: %d file(s) saved, paths appended to prompt", msg.ID, len(downloaded))
 	return msg.Text + "\n\n" + info
+}
+
+// downloadAttachments скачивает аттачи в h.attachmentsDir и возвращает их пути.
+func (h *BotHandler) downloadAttachments(atts []VKAttachment) ([]DownloadedAttachment, error) {
+	return DownloadAttachments(toRawAttachments(atts), h.attachmentsDir)
+}
+
+// describeAttachments строит краткое описание аттачей для логов.
+func describeAttachments(atts []VKAttachment) string {
+	parts := make([]string, 0, len(atts))
+	for _, a := range atts {
+		parts = append(parts, a.Type)
+	}
+	return strings.Join(parts, ",")
 }
 
 func toRawAttachments(attachments []VKAttachment) []map[string]interface{} {

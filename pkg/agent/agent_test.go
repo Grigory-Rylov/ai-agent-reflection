@@ -453,6 +453,7 @@ func (m *mockStoreWorkingDir) GetAgentChain(peerID int64) (*store.AgentChainData
 func (m *mockStoreWorkingDir) SaveAgentChain(peerID int64, chain []string) error   { return nil }
 func (m *mockStoreWorkingDir) ClearAgentChain(peerID int64) error                  { return nil }
 func (m *mockStoreWorkingDir) GetAllActiveChains() ([]store.AgentChainData, error) { return nil, nil }
+func (m *mockStoreWorkingDir) ClearPeerData(peerID int64) error                  { return nil }
 
 func TestWorkingDirRestoredFromStore(t *testing.T) {
 	savedDir, err := os.MkdirTemp("", "wd_test_*")

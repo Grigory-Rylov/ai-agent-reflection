@@ -401,6 +401,7 @@ func (m *mockWorkingDirStore) GetAgentChain(peerID int64) (*store.AgentChainData
 func (m *mockWorkingDirStore) SaveAgentChain(peerID int64, chain []string) error   { return nil }
 func (m *mockWorkingDirStore) ClearAgentChain(peerID int64) error                  { return nil }
 func (m *mockWorkingDirStore) GetAllActiveChains() ([]store.AgentChainData, error) { return nil, nil }
+func (m *mockWorkingDirStore) ClearPeerData(peerID int64) error                  { return nil }
 
 // ============================================================
 // Тесты Pinned промптов (/pin)

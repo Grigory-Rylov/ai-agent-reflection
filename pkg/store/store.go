@@ -107,6 +107,10 @@ type Store interface {
 	SaveAgentChain(peerID int64, chain []string) error
 	ClearAgentChain(peerID int64) error
 	GetAllActiveChains() ([]AgentChainData, error)
+	// ClearPeerData полностью удаляет все данные пира: сессии сабагентов,
+	// активную цепочку и todos. Вызывается /clear, чтобы в БД не осталось
+	// ничего, что могло бы возродить задачу после рестарта.
+	ClearPeerData(peerID int64) error
 }
 
 type sqliteDB struct {

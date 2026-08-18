@@ -13,6 +13,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agentloop"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/store"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
@@ -97,6 +98,12 @@ func (m *mockAgentLoop) ResetSession(peerID int64) {
 	delete(m.sessions, peerID)
 	m.mu.Unlock()
 }
+func (m *mockAgentLoop) ClearPeerSession(peerID int64) {
+	m.ResetSession(peerID)
+}
+func (m *mockAgentLoop) GetSessionConfig(peerID int64) (session.Config, bool) {
+	return session.DefaultConfig(), false
+}
 func (m *mockAgentLoop) SetThinkingCallback(cb func(peerID int64, content string) error) {}
 
 func (m *mockAgentLoop) GetSession(peerID int64) *session.Session {
@@ -141,6 +148,7 @@ func (m *mockAgentLoop) GetModelHolder() *modelsconfig.Holder {
 
 func (m *mockAgentLoop) GetSlotManager() *agentloop.SlotManager { return nil }
 func (m *mockAgentLoop) GetSlots() *agentloop.SlotClient        { return nil }
+func (m *mockAgentLoop) GetStore() store.Store                  { return nil }
 
 func (m *mockAgentLoop) getOrCreateSession(peerID int64) *session.Session {
 	m.mu.Lock()
@@ -209,6 +217,10 @@ func (m *mockOrchestrator) ClearActiveSessions(peerID int64) {
 	if m.clearedPeers != nil {
 		m.clearedPeers[peerID] = true
 	}
+}
+
+func (m *mockOrchestrator) ClearRegisteredAgents(peerID int64) []string {
+	return nil
 }
 
 func (m *mockOrchestrator) GetActiveAgentSessions(peerID int64) (string, error) {
