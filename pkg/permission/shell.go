@@ -9,7 +9,7 @@ import (
 func ScanCommand(command string) Scan {
 	scan := Scan{}
 	for _, source := range SplitCommands(command) {
-		tokens := tokenize(source)
+		tokens := Tokenize(source)
 		if len(tokens) == 0 {
 			continue
 		}
@@ -145,7 +145,11 @@ func (s *Scan) addUniqueAlways(always string) {
 }
 
 
-func tokenize(source string) []string {
+// Tokenize splits a command into whitespace-separated tokens while keeping
+// quoted segments (single and double quotes) and $() substitutions whole.
+// The quotes are preserved in the resulting tokens, so callers can tell a
+// quoted string (e.g. a search pattern) apart from an unquoted path argument.
+func Tokenize(source string) []string {
 	var tokens []string
 	var current strings.Builder
 	inSingle, inDouble := false, false

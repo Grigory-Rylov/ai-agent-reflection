@@ -176,6 +176,12 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 		logger.DebugToFile("[ProcessMessage] ResolvePendingQuestion returned false for peer %d, command=%s", peerID, stringutil.Truncate(command, 50, "..."))
 	}
 
+	// Hand the message to the peer's inbox before waiting for the run lock. If
+	// a run is already active, its loop will promote this message into the next
+	// LLM turn (opencode "steer") and our Claim below will fail, so we return
+	// without processing it separately.
+	h.admitPeerInput(peerID, message)
+
 	releaseQueueSlot, generationAtArrival := h.beginProcessingWait(peerID)
 	mu := h.getPeerMutex(peerID)
 	mu.Lock()
@@ -186,6 +192,13 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	
 	if h.peerGeneration(peerID) != generationAtArrival {
 		logger.DebugToFile("[ProcessMessage] peer %d: session was reset while message waited in queue, dropping stale message", peerID)
+		return ""
+	}
+
+	// If the running loop already promoted our message into the current turn,
+	// drop it here — it will be answered as part of that turn.
+	if !h.claimPeerInput(peerID, message) {
+		logger.DebugToFile("[ProcessMessage] peer %d: message already promoted into running turn, dropping", peerID)
 		return ""
 	}
 
@@ -300,6 +313,32 @@ func (h *BotHandler) getPeerMutex(peerID int64) *sync.Mutex {
 	return mu
 }
 
+// admitPeerInput puts the message into the peer's inbox so a running agent loop
+// can promote it into the current turn at the next LLM boundary.
+func (h *BotHandler) admitPeerInput(peerID int64, message string) {
+	s := h.aiAgent.EnsureSession(peerID)
+	if s == nil {
+		return
+	}
+	if in := s.GetPeerInput(); in != nil {
+		in.Admit(message)
+	}
+}
+
+// claimPeerInput removes the message from the peer's inbox. It returns false if
+// the running loop already promoted (drained) the message into its turn — in
+// which case the caller must drop it instead of processing it again.
+func (h *BotHandler) claimPeerInput(peerID int64, message string) bool {
+	s := h.aiAgent.GetSession(peerID)
+	if s == nil {
+		return true
+	}
+	if in := s.GetPeerInput(); in != nil {
+		return in.Claim(message)
+	}
+	return true
+}
+
 func extractCommand(message string) string {
 	message = strings.TrimSpace(message)
 
@@ -412,6 +451,7 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 			"/help - Показать эту справку\n" +
 			"/status - Показать статус агента (сообщения, символы, токены)\n" +
 			"/test-llama - Тест соединения с llama-server\n" +
+			"/log, /logs - Отправить файл логов (debug/debug.log)\n" +
 			"/m, /models - Список доступных моделей\n" +
 			"/r [alias] - Переключить текущую модель\n" +
 			"/pin <промпт> - Закрепить промпт (переживает компактизацию) и выполнить его\n" +
@@ -428,6 +468,9 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 
 	case "/test-llama":
 		return h.handleTestLlama()
+
+	case "/log", "/logs":
+		return h.handleLogCommand(peerID)
 
 	case "/status":
 		h.aiAgent.EnsureSession(peerID)
@@ -694,6 +737,14 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 	}
 
 	tools.UnregisterPendingQuestion(peerID)
+
+	// Drop any messages sitting in the peer's inbox: they were admitted before
+	// the reset and must not leak into the fresh session.
+	if s := h.aiAgent.GetSession(peerID); s != nil {
+		if in := s.GetPeerInput(); in != nil {
+			in.Clear()
+		}
+	}
 	
 	
 	
@@ -758,6 +809,50 @@ func (h *BotHandler) handleTestLlama() string {
 	}
 
 	return result
+}
+
+// handleLogCommand sends the debug log file (debug/debug.log) to the user as a
+// document, bypassing the LLM. Mirrors the /logs command in the opencode bot.
+func (h *BotHandler) handleLogCommand(peerID int64) string {
+	logPath := "debug/debug.log"
+	if h.log != nil {
+		if configured := h.log.LogFilePath(); configured != "" {
+			logPath = configured
+		}
+	}
+
+	absPath, err := filepath.Abs(logPath)
+	if err != nil {
+		absPath = logPath
+	}
+
+	if _, err := os.Stat(absPath); os.IsNotExist(err) {
+		if h.log != nil {
+			h.log.WarnLogf("/log: log file not found: %s", absPath)
+		}
+		return fmt.Sprintf("❌ Лог-файл не найден: %s", absPath)
+	}
+	if h.vkClient == nil {
+		if h.log != nil {
+			h.log.WarnLogf("/log: VK client is nil, cannot send %s", absPath)
+		}
+		return "❌ VK client не настроен"
+	}
+
+	// Route the file to the same peer a text reply would go to.
+	targetPeer := peerID
+	if h.mainPeerID > 0 {
+		targetPeer = h.mainPeerID
+	}
+
+	logger.DebugToFile("[handleLogCommand] sending %s to peer %d", absPath, targetPeer)
+	if _, err := h.vkClient.UploadAndSendDocument(absPath, targetPeer, "📋 Логи"); err != nil {
+		if h.log != nil {
+			h.log.ErrorLogf("/log: failed to send log file: %v", err)
+		}
+		return fmt.Sprintf("❌ Ошибка отправки лог-файла: %v", err)
+	}
+	return "📋 Лог-файл отправлен"
 }
 
 func (h *BotHandler) clearHandlerSession(peerID int64) {

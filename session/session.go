@@ -103,15 +103,16 @@ type Session struct {
 	config      Config
 	sessionID   string
 	messages    []Message
-	pinned      []string 
-	loopHistory []string 
-	loopCount   int      
-	isLooped    bool     
+	pinned      []string
+	loopHistory []string
+	loopCount   int
+	isLooped    bool
 	mu          sync.RWMutex
 	createdAt   time.Time
 	updatedAt   time.Time
-	workingDir  string 
-	resumePrompt string 
+	workingDir  string
+	resumePrompt string
+	peerInput   *PeerInput
 }
 
 
@@ -124,6 +125,7 @@ func NewSession(config Config) *Session {
 		createdAt:   time.Now(),
 		updatedAt:   time.Now(),
 		workingDir:  config.WorkingDir,
+		peerInput:   &PeerInput{},
 	}
 
 	
@@ -683,8 +685,11 @@ func (s *Session) Reset() {
 	s.isLooped = false
 	s.updatedAt = time.Now()
 
-	
 	s.resumePrompt = ""
+
+	if s.peerInput != nil {
+		s.peerInput.Clear()
+	}
 
 	if s.config.AutoSave {
 		s.saveNow()
@@ -941,6 +946,21 @@ func (s *Session) GetSessionID() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.sessionID
+}
+
+
+// GetPeerInput returns the shared per-peer inbox used to hand user messages
+// that arrive mid-turn to the running agent loop.
+func (s *Session) GetPeerInput() *PeerInput {
+	return s.peerInput
+}
+
+
+// SetPeerInput replaces the inbox. The agent-loop layer points a fresh agent
+// session at the durable session's inbox so the running tool loop sees messages
+// admitted while it executes.
+func (s *Session) SetPeerInput(in *PeerInput) {
+	s.peerInput = in
 }
 
 

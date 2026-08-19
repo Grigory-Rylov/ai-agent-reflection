@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -385,8 +386,13 @@ func (m *WorkflowManager) ListWorkflowArtifacts(workflowID, taskID string) ([]st
 }
 
 
+// idCounter guarantees unique IDs even when the clock granularity is too coarse
+// to distinguish consecutive calls to time.Now().
+var idCounter uint64
+
 func generateID() string {
-	return fmt.Sprintf("wf_%d_%d", time.Now().UnixNano(), time.Now().Nanosecond())
+	n := atomic.AddUint64(&idCounter, 1)
+	return fmt.Sprintf("wf_%d_%d", time.Now().UnixNano(), n)
 }
 
 func sanitizeFilename(name string) string {

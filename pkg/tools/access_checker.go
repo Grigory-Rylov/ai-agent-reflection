@@ -3,6 +3,7 @@ package tools
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/access"
@@ -174,7 +175,7 @@ func ExtractShellPaths(command string) []string {
 		return nil
 	}
 
-	parts := strings.Fields(command)
+	parts := permission.Tokenize(command)
 	if len(parts) == 0 {
 		return nil
 	}
@@ -241,7 +242,7 @@ func ShellCommandPathsAllowed(command string) bool {
 
 
 func shellSubcommandPathsAllowed(sub string, devPaths map[string]bool) bool {
-	parts := strings.Fields(sub)
+	parts := permission.Tokenize(sub)
 	if len(parts) == 0 {
 		return true
 	}
@@ -338,8 +339,12 @@ func isDiscardPath(p string) bool {
 }
 
 
+// nestedSubRe matches $(...) command substitutions so file operations inside
+// them are treated as file accesses too (e.g. "echo $(cat /etc/passwd)").
+var nestedSubRe = regexp.MustCompile(`\$\(([^)]+)\)`)
+
 func collectFilePaths(sub string, devPaths map[string]bool) []string {
-	parts := strings.Fields(sub)
+	parts := permission.Tokenize(sub)
 	if len(parts) == 0 {
 		return nil
 	}
@@ -372,12 +377,23 @@ func collectFilePaths(sub string, devPaths map[string]bool) []string {
 			paths = append(paths, tok)
 		}
 	}
+
+	// File paths referenced inside $(...) subcommands are file accesses too.
+	for _, m := range nestedSubRe.FindAllStringSubmatch(sub, -1) {
+		inner := m[1]
+		innerDev := collectDevicePaths(permission.SplitCommands(inner))
+		for _, p := range collectFilePaths(inner, innerDev) {
+			if !devPaths[p] && !isDiscardPath(p) {
+				paths = append(paths, p)
+			}
+		}
+	}
 	return paths
 }
 
 
 func remoteHostPaths(sub string) ([]string, bool) {
-	parts := strings.Fields(sub)
+	parts := permission.Tokenize(sub)
 	if len(parts) == 0 {
 		return nil, false
 	}
@@ -499,7 +515,7 @@ func collectDevicePaths(subs []string) map[string]bool {
 
 
 func devicePathsIn(sub string) []string {
-	parts := strings.Fields(sub)
+	parts := permission.Tokenize(sub)
 	if len(parts) == 0 {
 		return nil
 	}
@@ -616,7 +632,7 @@ func cwdTargetAllowed(parts []string) bool {
 
 func redirectionTargets(sub string) []string {
 	var targets []string
-	tokens := strings.Fields(sub)
+	tokens := permission.Tokenize(sub)
 	for i := 0; i < len(tokens); i++ {
 		idx := strings.LastIndexAny(tokens[i], "><")
 		if idx < 0 {

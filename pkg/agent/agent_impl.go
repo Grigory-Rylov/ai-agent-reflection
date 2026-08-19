@@ -242,6 +242,11 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 		history = s.GetHistory()
 	}
 
+	// Promote any user messages that arrived while the previous turn was still
+	// running (opencode "steer"): they become part of this turn's context, so
+	// the very next LLM call is the user's message.
+	a.promoteSteers(ctx, s)
+
 	
 	if a.compactor != nil {
 		a.compactIfNeeded(ctx, s, true)
@@ -277,6 +282,29 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 
 	
 	return a.processStreaming(ctx, apiMessages, s)
+}
+
+
+// promoteSteers drains user messages that arrived while the current turn was
+// running (opencode "steer" delivery) and adds them to the session so the next
+// LLM call sees them. It returns true if at least one message was promoted.
+func (a *agentImpl) promoteSteers(ctx context.Context, s *session.Session) bool {
+	if ctx.Err() != nil || s == nil {
+		return false
+	}
+	in := s.GetPeerInput()
+	if in == nil {
+		return false
+	}
+	msgs := in.Drain()
+	if len(msgs) == 0 {
+		return false
+	}
+	for _, m := range msgs {
+		s.AddUserMessage(m)
+		a.debugLog.Debug("promoted mid-turn user message into session: %q", m)
+	}
+	return true
 }
 
 
@@ -442,6 +470,12 @@ func (a *agentImpl) getSession(peerID int64) *session.Session {
 
 
 func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, session *session.Session) (string, error) {
+	// Promote mid-turn messages so the first LLM call of a streaming-only run
+	// sees them too.
+	if a.promoteSteers(ctx, session) {
+		messages = a.convertHistoryToAPIMessages(session.GetContextMessages())
+	}
+
 	streamConfig := StreamingConfig{
 		Model:       a.config.Model,
 		MaxTokens:   a.config.MaxTokens,
