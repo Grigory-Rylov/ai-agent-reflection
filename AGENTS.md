@@ -16,6 +16,11 @@
 - One function = One job
 - If a function does two things → split it
 
+### No comments in code
+- Do **NOT** write comments in code
+- Instead of comments, prefer "talking" (self-explanatory) names for functions, variables, and types — the name should describe what the code does
+- Exception: build directive comments (`//go:build`, `//go:generate`, `//nolint`) are allowed
+
 ## Testing (TDD)
 
 ### Process

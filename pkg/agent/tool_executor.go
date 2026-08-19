@@ -6,21 +6,23 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/compress"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/permission"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util/stringutil"
 )
 
-// MaxToolResultSize — максимальный размер результата инструмента в символах
+
 const MaxToolResultSize = 50000
 
-// ToolExecutor определяет интерфейс для выполнения инструментов
+
 type ToolExecutor interface {
 	ExecuteAll(ctx context.Context, toolCalls []ToolCall, peerID int64) FunctionCallResult
 }
 
-// agentToolExecutor реализует ToolExecutor через реестр инструментов агента
+
 type agentToolExecutor struct {
 	agent *agentImpl
 }
@@ -52,6 +54,34 @@ func (e *agentToolExecutor) ExecuteAll(ctx context.Context, toolCalls []ToolCall
 	}
 
 	return result
+}
+
+func (e *agentToolExecutor) sendContextSize(peerID int64) {
+	tokens := e.agent.estimateContextTokens(peerID)
+	if tokens <= 0 {
+		return
+	}
+	e.agent.sendThinking(peerID, fmt.Sprintf("[CONTEXT] %d tokens", tokens))
+}
+
+func (a *agentImpl) estimateContextTokens(peerID int64) int {
+	s := a.getSession(peerID)
+	if s == nil {
+		return 0
+	}
+	messages := s.GetContextMessages()
+	tokenMessages := make([]tokenizers.Message, len(messages))
+	for i, m := range messages {
+		content := m.Content
+		for _, tc := range m.ToolCalls {
+			content += tc.Function.Arguments
+		}
+		tokenMessages[i] = tokenizers.Message{
+			Role:    string(m.Role),
+			Content: content,
+		}
+	}
+	return compress.EstimateMessagesTokensSimple(tokenMessages)
 }
 
 func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, peerID int64) (ToolCallResult, error) {
@@ -86,14 +116,14 @@ func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, 
 		return e.agent.createErrorResult(toolCall.ID, toolName, errMsg), err
 	}
 
-	// Проверяем permission: если "ask" — спрашиваем пользователя
+	
 	if !e.checkPermissionAsk(ctx, toolName, args, peerID) {
 		errMsg := fmt.Sprintf("Permission denied for tool '%s' by user", toolName)
 		e.agent.sendThinking(peerID, "[TOOL] Denied: "+toolName)
 		return e.agent.createErrorResult(toolCall.ID, toolName, errMsg), fmt.Errorf("%s", errMsg)
 	}
 
-	// Проверяем доступ к путям: если запрещено — спрашиваем пользователя
+	
 	if !e.checkPathAccess(ctx, toolName, args, peerID) {
 		errMsg := fmt.Sprintf("Access denied for tool '%s' by user", toolName)
 		e.agent.sendThinking(peerID, "[TOOL] Denied: "+toolName)
@@ -117,6 +147,7 @@ func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, 
 	if result.Success {
 		e.agent.debugLog.Debug(e.agent.agentPrefix()+"Result: %s success", toolName)
 		e.agent.sendThinking(peerID, "[TOOL] Result: "+toolName+" success")
+		e.sendContextSize(peerID)
 	} else {
 		resultMsg := fmt.Sprintf("[TOOL] Result: %s failed - %s", toolName, stringutil.Truncate(content, 200, "..."))
 		e.agent.debugLog.Info("%s", resultMsg)
@@ -131,8 +162,7 @@ func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, 
 	}, nil
 }
 
-// truncateToolOutput обрезает вывод инструмента в стиле opencode перед
-// отправкой в LLM: полный вывод сохраняется в файл, в ответ уходит превью.
+
 func (e *agentToolExecutor) truncateToolOutput(peerID int64, content string) string {
 	opts := tools.TruncateOptions{
 		Dir:         filepath.Join(tools.WorkingDir, "tool-output"),
@@ -182,8 +212,8 @@ func (e *agentToolExecutor) checkShellPermission(ctx context.Context, checker pe
 		return true
 	}
 
-	// Команда не трогает файлы вне разрешённых директорий
-	// (нет хостовых путей или все они в allowed_dirs) — не спрашиваем.
+	
+	
 	if tools.ShellCommandFilesystemSafe(command) {
 		logger.DebugToFile("[checkPermissionAsk] shell_execute: filesystem-safe command, skip ask")
 		return true
@@ -196,7 +226,7 @@ func (e *agentToolExecutor) checkShellPermission(ctx context.Context, checker pe
 func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName string, args map[string]string, peerID int64) bool {
 	logger.DebugToFile("[checkPermissionAsk] enter: tool=%s, peer=%d, args=%v", toolName, peerID, args)
 
-	// Проверяем path grant — если путь разрешён, любой инструмент на нём проходим
+	
 	if toolPath := extractToolPath(toolName, args); toolPath != "" {
 		if tools.IsPathGranted(peerID, toolPath) {
 			logger.DebugToFile("[checkPermissionAsk] path=%s granted for peer %d, allow all tools", toolPath, peerID)
@@ -218,25 +248,25 @@ func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName str
 		e.agent.sendThinking(peerID, fmt.Sprintf("[TOOL] Denied: %s (permission)", toolName))
 		return false
 	case "ask":
-		// Для файловых инструментов: не спрашиваем, если все пути
-		// находятся в разрешённых директориях (рабочая папка сессии и др.)
+		
+		
 		if paths := tools.FileToolPaths(toolName, args); len(paths) > 0 {
 			if tools.PathsAllAllowed(paths) {
 				logger.DebugToFile("[checkPermissionAsk] %s: all %d paths in allowed dirs, skip ask", toolName, len(paths))
 				return true
 			}
 		}
-		// Для shell_execute: оцениваем каждую подкоманду по паттернам
-		// правил (opencode-модель): все allow -> allow, любой deny -> deny,
-		// иначе спрашиваем пользователя.
+		
+		
+		
 		if toolName == "shell_execute" || toolName == "shell" {
 			if cmd, ok := args["command"]; ok {
 				return e.checkShellPermission(ctx, checker, cmd, peerID)
 			}
 		}
-		// ask user below
+		
 	default:
-		return true // "allow" or unknown
+		return true 
 	}
 
 	e.agent.sendThinking(peerID, fmt.Sprintf("[PERMISSION] Asking user for tool '%s'...", toolName))
@@ -309,7 +339,7 @@ func (e *agentToolExecutor) checkPathAccess(ctx context.Context, toolName string
 	return true
 }
 
-// resolveToolPath приводит путь к абсолютному без проверки доступа.
+
 func resolveToolPath(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("path is empty")
@@ -343,10 +373,10 @@ func askUserPermission(ctx context.Context, peerID int64, toolName string, args 
 
 	logger.DebugToFile("[askUserPermission] asking user for tool=%s, args=%v, peer=%d", toolName, args, peerID)
 
-	// Собираем подробное описание операции
+	
 	detail := buildToolPermissionDetail(toolName, args)
 
-	// Используем русские подписи для VK клавиатуры
+	
 	q := map[string]interface{}{
 		"question": fmt.Sprintf("Allow: %s?", detail),
 		"header":   "🔐 " + toolName,
@@ -401,9 +431,7 @@ func getQuestionState() (func(int64, map[string]interface{}) (map[string]interfa
 	return tools.GetQuestionState()
 }
 
-// askShellPermission спрашивает пользователя о разрешении shell-команды.
-// При выборе "Always allow" запоминаются always-префиксы (например "git *")
-// в виде правил allow для текущей сессии.
+
 func askShellPermission(ctx context.Context, checker permissionChecker, scan permission.Scan, peerID int64) bool {
 	cb, _ := getQuestionState()
 	if cb == nil {
@@ -469,7 +497,7 @@ func extractToolPath(toolName string, args map[string]string) string {
 		return p
 	}
 	if cmd, ok := args["command"]; ok && cmd != "" {
-		// Extract path from common shell commands
+		
 		parts := strings.Fields(cmd)
 		for i, part := range parts {
 			if strings.HasPrefix(part, "/") || strings.HasPrefix(part, "~") || strings.HasPrefix(part, ".") || strings.HasPrefix(part, "$") {
@@ -528,7 +556,7 @@ func buildToolPermissionDetail(toolName string, args map[string]string) string {
 }
 
 var toolAliases = map[string]string{
-	// opencode PascalCase aliases
+	
 	"WebFetch":  "web_fetch",
 	"WebSearch": "web_search",
 	"Glob":      "glob",
@@ -540,7 +568,7 @@ var toolAliases = map[string]string{
 	"Task":      "task",
 	"TodoWrite": "todowrite",
 	"TodoRead":  "todoread",
-	// legacy aliases
+	
 	"grep":        "search_code",
 	"grep_search": "search_code",
 	"read_file":   "file_read",
@@ -670,8 +698,7 @@ func (a *agentImpl) sendThinking(peerID int64, content string) {
 	}
 }
 
-// sendThinkingTokens отправляет в thinking чат количество токенов
-// (подано/ответ) после ответа LLM.
+
 func (a *agentImpl) sendThinkingTokens(peerID int64, promptTokens, completionTokens int) {
 	if a.thinkingCallback == nil || (promptTokens <= 0 && completionTokens <= 0) {
 		return

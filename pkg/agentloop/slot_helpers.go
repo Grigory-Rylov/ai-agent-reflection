@@ -6,20 +6,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agent"
 )
 
-// AssignSessionSlot выделяет слот для sessionID и подготавливает его к запросу:
-//   - проверяет доступность фичи (GET /slots), кэширует результат по хосту;
-//   - при LRU-вытеснении сохраняет KV-cache вытесненной сессии в её файл
-//     {model}_slot{N}.bin и очищает серверный слот, чтобы новая сессия не
-//     унаследовала чужой контекст (файл ключуется по слоту, поэтому новый
-//     владелец стартует cold);
-//   - иначе восстанавливает собственный кэш сессии (no-op для свежего слота).
-//
-// Возвращает назначенный slotID (-1, если фича недоступна). Вызывающий
-// проставляет cfg.SlotID = slotID и cfg.SlotSave = true.
-//
-// Контракт: один и тот же sessionID используется для слота, сессии (через
-// cfg.SessionConfig.SessionID) и строки в БД — это гарантирует, что cleanup
-// по sessionID освободит именно тот слот, что был выделен.
+
 func AssignSessionSlot(mgr *SlotManager, client *SlotClient, holder slotModelProvider, sessionID string, log Logger) int {
 	if mgr == nil || holder == nil || sessionID == "" {
 		return -1
@@ -47,7 +34,7 @@ func AssignSessionSlot(mgr *SlotManager, client *SlotClient, holder slotModelPro
 	}
 
 	if evicted != "" {
-		// Сохраняем кэш вытесненной сессии в файл её (теперь уже бывшего) слота.
+		
 		filename := SlotFileName(modelName, slotID)
 		if err := client.saveSlot(context.Background(), host, slotID, modelName, filename); err != nil {
 			if log != nil {
@@ -56,7 +43,7 @@ func AssignSessionSlot(mgr *SlotManager, client *SlotClient, holder slotModelPro
 		} else if log != nil {
 			log.InfoLogf("[SLOT] saved evicted session %s → slot %d (%s)", evicted, slotID, filename)
 		}
-		// Очищаем серверный слот (erase) — новая сессия стартует cold.
+		
 		if err := client.eraseSlot(context.Background(), host, slotID, modelName); err != nil {
 			if log != nil {
 				log.DebugLogf("[SLOT] erase slot %d after eviction: %v", slotID, err)
@@ -68,7 +55,7 @@ func AssignSessionSlot(mgr *SlotManager, client *SlotClient, holder slotModelPro
 		return slotID
 	}
 
-	// Свой слот (повторное использование) или свежий — восстанавливаем кэш.
+	
 	filename := SlotFileName(modelName, slotID)
 	if err := client.restoreSlot(context.Background(), host, slotID, modelName, filename); err != nil {
 		switch {
@@ -92,10 +79,7 @@ func AssignSessionSlot(mgr *SlotManager, client *SlotClient, holder slotModelPro
 	return slotID
 }
 
-// SaveSessionSlot сохраняет KV-cache слота сессии в файл {model}_slot{N}.bin
-// (action=save). Вызывается после завершения LLM-запроса/ответа, пока слот
-// ещё держит актуальный кэш в памяти. Ошибки конфигурации помечают хост
-// недоступным (один info-лог), прочие — warn. Никогда не валят обработку.
+
 func SaveSessionSlot(mgr *SlotManager, client *SlotClient, holder slotModelProvider, sessionID string, log Logger) {
 	if mgr == nil || client == nil || holder == nil || sessionID == "" {
 		return
@@ -127,11 +111,7 @@ func SaveSessionSlot(mgr *SlotManager, client *SlotClient, holder slotModelProvi
 	}
 }
 
-// ReleaseSessionSlot стирает KV-cache слота сессии в памяти сервера
-// (action=erase) и возвращает слот в свободный пул SlotManager. Файл кэша на
-// диске не удаляется (llama-server не предоставляет такого HTTP-действия) —
-// он перезапишется при следующем save этого слота. No-op, если у сессии нет
-// слота. Используется при завершении/сбросе сессии агента.
+
 func ReleaseSessionSlot(mgr *SlotManager, client *SlotClient, holder slotModelProvider, sessionID string, log Logger) {
 	if mgr == nil || client == nil || holder == nil || sessionID == "" {
 		return
@@ -157,15 +137,13 @@ func ReleaseSessionSlot(mgr *SlotManager, client *SlotClient, holder slotModelPr
 	}
 }
 
-// slotModelProvider — минимальный интерфейс доступа к текущей модели,
-// реализуемый *modelsconfig.Holder (и тестовыми заглушками).
+
 type slotModelProvider interface {
 	GetCurrent() (alias, modelName, host string)
 	GetCurrentSlotSave() bool
 }
 
-// slotSaverImpl реализует agent.SlotSaver: сохраняет KV-cache слота сессии
-// после каждого ответа LLM. Вызывается из agent_impl.streamAndCollect.
+
 type slotSaverImpl struct {
 	mgr       *SlotManager
 	client    *SlotClient
@@ -174,9 +152,7 @@ type slotSaverImpl struct {
 	log       Logger
 }
 
-// NewSlotSaver строит agent.SlotSaver для сессии. Возвращает nil, если
-// слот-фича не настроена — тогда агент не будет дёргать save. sessionID —
-// тот же ID, что привязан к слоту в SlotManager (и к session.SessionID).
+
 func NewSlotSaver(mgr *SlotManager, client *SlotClient, holder slotModelProvider, sessionID string, log Logger) agent.SlotSaver {
 	if mgr == nil || client == nil || holder == nil || sessionID == "" {
 		return nil

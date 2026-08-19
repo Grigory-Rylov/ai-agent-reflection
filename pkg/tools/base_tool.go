@@ -6,66 +6,58 @@ import (
 	"fmt"
 )
 
-// ============================================================
-// Tool Interface — базовый интерфейс для всех инструментов
-// ============================================================
 
-// ToolResult представляет результат выполнения инструмента
 type ToolResult struct {
 	Success bool        `json:"success"`
 	Data    interface{} `json:"data,omitempty"`
 	Error   string      `json:"error,omitempty"`
 }
 
-// Tool определяет интерфейс для всех инструментов
+
 type Tool interface {
-	// Name возвращает идентификатор инструмента
+	
 	Name() string
 
-	// Description предоставляет описание инструмента для LLM
+	
 	Description() string
 
-	// Schema возвращает JSON Schema для параметров
+	
 	Schema() map[string]interface{}
 
-	// Execute выполняет инструмент с заданными параметрами
+	
 	Execute(ctx context.Context, inputs map[string]string) (ToolResult, error)
 }
 
-// ============================================================
-// Tool Registry — реестр инструментов
-// ============================================================
 
-// Registry хранит и управляет доступными инструментами
 type Registry struct {
 	tools map[string]Tool
 }
 
-// NewRegistry создаёт новый реестр инструментов
+
 func NewRegistry() *Registry {
 	return &Registry{
 		tools: make(map[string]Tool),
 	}
 }
 
-// Register регистрирует инструмент в реестре
+
 func (r *Registry) Register(tool Tool) {
 	r.tools[tool.Name()] = tool
 }
 
-// Unregister удаляет инструмент из реестра по имени (no-op, если его нет)
+
 func (r *Registry) Unregister(name string) {
 	delete(r.tools, name)
 }
 
-// Get возвращает инструмент по имени с поддержкой алиасов
+
 func (r *Registry) Get(name string) (Tool, bool) {
-	// Прямой поиск
+	
 	if tool, ok := r.tools[name]; ok {
 		return tool, true
 	}
 
-	// Алиасы для совместимости с разными форматами вызова
+	
 	aliases := map[string]string{
 		"read_file":    "file_read",
 		"write_file":   "file_write",
@@ -92,7 +84,7 @@ func (r *Registry) Get(name string) (Tool, bool) {
 	return nil, false
 }
 
-// GetAll возвращает все зарегистрированные инструменты
+
 func (r *Registry) GetAll() []Tool {
 	result := make([]Tool, 0, len(r.tools))
 	for _, tool := range r.tools {
@@ -101,18 +93,18 @@ func (r *Registry) GetAll() []Tool {
 	return result
 }
 
-// IsRegistered возвращает true если инструмент зарегистрирован
+
 func (r *Registry) IsRegistered(name string) bool {
 	_, ok := r.tools[name]
 	return ok
 }
 
-// ToOpenAISchema конвертирует реестр в формат OpenAI function calling
+
 func (r *Registry) ToOpenAISchema() []map[string]interface{} {
 	schema := make([]map[string]interface{}, 0)
 
 	for _, tool := range r.GetAll() {
-		// Правильный формат OpenAI: {"type": "function", "function": {...}}
+		
 		item := map[string]interface{}{
 			"type": "function",
 			"function": map[string]interface{}{
@@ -127,11 +119,7 @@ func (r *Registry) ToOpenAISchema() []map[string]interface{} {
 	return schema
 }
 
-// ============================================================
-// Утилиты для инструментов
-// ============================================================
 
-// CreateStringParameter создаёт параметр строкового типа
 func CreateStringParameter(name, description string, required bool) map[string]interface{} {
 	param := map[string]interface{}{
 		"type":        "string",
@@ -143,7 +131,7 @@ func CreateStringParameter(name, description string, required bool) map[string]i
 	return param
 }
 
-// CreateIntegerParameter создаёт параметр целочисленного типа
+
 func CreateIntegerParameter(name, description string, required bool) map[string]interface{} {
 	param := map[string]interface{}{
 		"type":        "integer",
@@ -155,7 +143,7 @@ func CreateIntegerParameter(name, description string, required bool) map[string]
 	return param
 }
 
-// CreateBooleanParameter создаёт параметр логического типа
+
 func CreateBooleanParameter(name, description string, required bool) map[string]interface{} {
 	param := map[string]interface{}{
 		"type":        "boolean",
@@ -167,7 +155,7 @@ func CreateBooleanParameter(name, description string, required bool) map[string]
 	return param
 }
 
-// CreateEnumParameter создаёт параметр с ограниченным набором значений
+
 func CreateEnumParameter(name, description string, values []string, required bool) map[string]interface{} {
 	param := map[string]interface{}{
 		"type":        "string",
@@ -180,7 +168,7 @@ func CreateEnumParameter(name, description string, values []string, required boo
 	return param
 }
 
-// CreateObjectParameter создаёт параметр-объект (для вложенных данных)
+
 func CreateObjectParameter(name, description string, properties map[string]interface{}, required bool) map[string]interface{} {
 	param := map[string]interface{}{
 		"type":        "object",
@@ -193,7 +181,7 @@ func CreateObjectParameter(name, description string, properties map[string]inter
 	return param
 }
 
-// MarshalToolResult marshals ToolResult to JSON string
+
 func MarshalToolResult(result ToolResult) string {
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -202,7 +190,7 @@ func MarshalToolResult(result ToolResult) string {
 	return string(data)
 }
 
-// UnmarshalToolResult unmarshals JSON string to ToolResult
+
 func UnmarshalToolResult(data string) (ToolResult, error) {
 	var result ToolResult
 	if err := json.Unmarshal([]byte(data), &result); err != nil {

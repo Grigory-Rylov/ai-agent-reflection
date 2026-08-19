@@ -2,32 +2,28 @@ package tokenizers
 
 import "fmt"
 
-// ============================================================
-// Tokenizer Interface — интерфейс для подсчёта токенов
-// ============================================================
 
-// Tokenizer определяет интерфейс для токенайзера
 type Tokenizer interface {
-	// CountTokens возвращает количество токенов в тексте
+	
 	CountTokens(text string) (int, error)
 
-	// CountMessagesTokens возвращает количество токенов в массиве сообщений
+	
 	CountMessagesTokens(messages []Message) (int, error)
 
-	// Encode кодирует текст в массив токенов
+	
 	Encode(text string) ([]int, error)
 
-	// Decode декодирует массив токенов обратно в текст
+	
 	Decode(tokens []int) (string, error)
 
-	// MaxContextLength возвращает максимальную длину контекста
+	
 	MaxContextLength() int
 
-	// Name возвращает имя токенайзера
+	
 	Name() string
 }
 
-// ContextSize представляет размер контекста в токенах
+
 type ContextSize struct {
 	PromptTokens     int
 	CompletionTokens int
@@ -36,14 +32,14 @@ type ContextSize struct {
 	IsWithinLimit    bool
 }
 
-// AddCompletion добавляет количество токенов завершения
+
 func (cs *ContextSize) AddCompletion(tokens int) {
 	cs.CompletionTokens += tokens
 	cs.TotalTokens = cs.PromptTokens + cs.CompletionTokens
 	cs.IsWithinLimit = cs.TotalTokens <= cs.MaxContextLength
 }
 
-// EstimateWithContext оценивает контекст с максимальной длиной
+
 func EstimateWithContext(promptTokens, completionTokens, maxContext int) *ContextSize {
 	return &ContextSize{
 		PromptTokens:     promptTokens,
@@ -54,7 +50,7 @@ func EstimateWithContext(promptTokens, completionTokens, maxContext int) *Contex
 	}
 }
 
-// EstimatePromptTokens оценивает количество токенов в промпте
+
 func EstimatePromptTokens(texts []string, tokenizer Tokenizer) (int, error) {
 	total := 0
 	for _, text := range texts {
@@ -67,39 +63,35 @@ func EstimatePromptTokens(texts []string, tokenizer Tokenizer) (int, error) {
 	return total, nil
 }
 
-// EstimateCompletionTokens оценивает ожидаемое количество токенов ответа
+
 func EstimateCompletionTokens(maxTokens int) int {
 	return maxTokens
 }
 
-// CompactionUserMessage — контент user-сообщения-маркера компактизации.
-// Как в opencode message-v2.ts toModelMessagesEffect: compaction-part рендерится
-// модели как естественный текст-рекап, а не как технический маркер.
+
 const CompactionUserMessage = "What did we do so far? Respond in the same language as the conversation."
 
-// CompactionAutoContinueText — синтетическое user-сообщение после проактивной
-// компактизации в tool loop. Модель понимает, что нужно продолжить работу.
+
 const CompactionAutoContinueText = "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed. Respond in the same language as the conversation."
 
-// CompactionOverflowContinueText — синтетическое user-сообщение после реактивной
-// компактизации при переполнении контекста (overflow).
+
 const CompactionOverflowContinueText = "The previous request exceeded the provider's size limit due to large context. Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed. Respond in the same language as the conversation."
 
-// Message представляет сообщение в чате
+
 type Message struct {
 	Role       string `json:"role"`
 	Content    string `json:"content"`
-	ToolCallID string `json:"tool_call_id,omitempty"` // ID инструмента для role=tool
-	Name       string `json:"name,omitempty"`         // имя инструмента для role=tool
-	Compacted  bool   `json:"compacted,omitempty"`    // output обрезан pruning-ом
-	Summary    bool   `json:"summary,omitempty"`      // сообщение-суммаризация компакшена
-	// TailStartID — индекс первого сообщения хвоста (tail), сохранённого при
-	// компактизации. Хранится на summary-сообщении; в агенте индекс сообщения
-	// в slice истории является стабильным ID (сообщения только добавляются).
+	ToolCallID string `json:"tool_call_id,omitempty"` 
+	Name       string `json:"name,omitempty"`         
+	Compacted  bool   `json:"compacted,omitempty"`    
+	Summary    bool   `json:"summary,omitempty"`      
+	
+	
+	
 	TailStartID int `json:"tail_start_id,omitempty"`
 }
 
-// String возвращает строковое представление сообщения
+
 func (m Message) String() string {
 	return fmt.Sprintf("[%s] %s", m.Role, m.Content)
 }

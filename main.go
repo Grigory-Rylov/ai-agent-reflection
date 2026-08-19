@@ -44,13 +44,12 @@ type Config struct {
 	MaxReviewIterations int                             `json:"max_review_iterations"`
 	Agents              map[string]agentpolicy.AgentCfg `json:"agents"`
 	ToolOutput          ToolOutputConfig                `json:"tool_output"`
-	// SkipShellPermissionForPathless — не запрашивать разрешение для shell-команд
-	// без явных файловых операций (нет путей и редиректов).
+	
+	
 	SkipShellPermissionForPathless bool `json:"skip_shell_permission_without_paths"`
 }
 
-// ToolOutputConfig задаёт лимиты вывода инструментов перед отправкой в LLM
-// (стиль opencode). Если поля не заданы — используются дефолты opencode.
+
 type ToolOutputConfig struct {
 	MaxLines int `json:"max_lines"`
 	MaxBytes int `json:"max_bytes"`
@@ -158,7 +157,7 @@ func main() {
 			}
 		}
 
-		// Восстанавливаем workingDir из стора для основного peer
+		
 		if config.PeerID > 0 {
 			sd, err := dbStore.GetSession(config.PeerID)
 			if err != nil {
@@ -199,8 +198,8 @@ func main() {
 		}
 	}
 
-	// Лимит контекста: из models.json, иначе реальный контекст с llama-server.
-	// Кэшируется по алиасу модели; при /r <alias> для новой модели запрашивается заново.
+	
+	
 	ctxResolver := agentloop.NewModelContextResolver(modelHolder, log)
 	maxTokens, err := retryResolveContext(ctxResolver, log)
 	if err != nil {
@@ -211,9 +210,9 @@ func main() {
 
 	tools.SetImage2TextConfig(tools.Image2TextConfig{
 		ModelHolder: modelHolder,
-		// max_tokens — лимит OUTPUT (описания), а не контекста модели.
-		// Передавать maxTokens (весь контекст) нельзя: vLLM отдаст 400
-		// «requested N output tokens». Для описания изображения 4096 достаточно.
+		
+		
+		
 		MaxTokens: 4096,
 	})
 
@@ -256,16 +255,16 @@ func main() {
 
 	if config.PeerID > 0 {
 		if *reset {
-			// Сброс слотов: очищаем серверные слоты и KV-cache файлы от
-			// предыдущего запуска, затем сбрасываем сессию основного пира.
+			
+			
 			clearCtx, clearCancel := context.WithTimeout(context.Background(), 30*time.Second)
 			agentLoop.ClearAllSlots(clearCtx)
 			clearCancel()
 			agentLoop.ResetSession(config.PeerID)
 		} else {
 			agentLoop.EnsureSession(config.PeerID)
-			// Продолжаем незавершённую задачу главного агента после рестарта
-			// (сессия уже восстановлена из БД вместе с resume_prompt).
+			
+			
 			go func() {
 				resumeCtx, resumeCancel := context.WithCancel(context.Background())
 				defer resumeCancel()
@@ -352,7 +351,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Восстанавливаем незавершённые цепочки сабагентов после рестарта
+	
 	if dbStore != nil {
 		go func() {
 			resumeCtx, resumeCancel := context.WithCancel(ctx)
@@ -409,8 +408,8 @@ func main() {
 		agentName, task := vk.ParseAgentHashMention(prompt, knownNames)
 		if agentName != "" && orchestrator != nil && task != "" {
 			if orchestrator.IsPrimary(agentName) {
-				// Primary-агент — на главном персистентном агенте с общим
-				// контекстом и временно заменённым системным промптом агента.
+				
+				
 				log.InfoLogf("Processing initial prompt via main agent (#%s): %s", agentName, stringutil.Truncate(task, 100, "..."))
 				agentPrompt, perr := orchestrator.GetSystemPrompt(agentName)
 				if perr != nil {
@@ -573,8 +572,7 @@ func buildQuestionText(q map[string]interface{}) string {
 	return truncateQuestion(b.String())
 }
 
-// truncateQuestion обрезает текст вопроса до лимита VK (4096 символов),
-// сохраняя при этом заголовок и список опций в конце.
+
 func truncateQuestion(text string) string {
 	const vkMessageLimit = 4096
 	runes := []rune(text)
@@ -582,7 +580,7 @@ func truncateQuestion(text string) string {
 		return text
 	}
 
-	// Находим блок опций в конце сообщения и сохраняем его целиком.
+	
 	marker := "\n\nOptions:"
 	markerIdx := strings.LastIndex(text, marker)
 	if markerIdx == -1 {
@@ -599,9 +597,7 @@ func truncateQuestion(text string) string {
 	return string(head) + "..." + optionsPart
 }
 
-// retryResolveContext пытается получить лимит контекста модели, ретрая
-// бесконечно с паузой 5 секунд при недоступности llama-server.
-// Ретрай прерывается только при отмене контекста (Ctrl+C / SIGTERM).
+
 func retryResolveContext(resolver *agentloop.ModelContextResolver, log *logger.Logger) (int, error) {
 	const retryDelay = 5 * time.Second
 	for attempt := 1; ; attempt++ {

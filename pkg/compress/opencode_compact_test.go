@@ -9,9 +9,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
 )
 
-// ============================================================
-// Overflow Tests
-// ============================================================
 
 func TestUsable(t *testing.T) {
 	t.Run("zero context returns 0", func(t *testing.T) {
@@ -28,8 +25,8 @@ func TestUsable(t *testing.T) {
 	})
 
 	t.Run("large context uses maxOutputTokens (opencode-style)", func(t *testing.T) {
-		// В opencode: context - maxOutputTokens(model, outputTokenMax)
-		// maxOutputTokens = min(context, 32000) = 32000
+		
+		
 		got := Usable(200_000, nil)
 		if got != 168_000 {
 			t.Errorf("Usable(200000) = %d, want 168000 (200000 - OUTPUT_TOKEN_MAX 32000)", got)
@@ -37,17 +34,17 @@ func TestUsable(t *testing.T) {
 	})
 
 	t.Run("custom reserved used for inputLimit branch only (opencode-style)", func(t *testing.T) {
-		// В opencode: reserved используется только с inputLimit.
-		// Для context ветки всегда: context - maxOutputTokens
+		
+		
 		reserved := 50000
 		got := Usable(200_000, &reserved)
-		// Usable() — обёртка над UsableWithLimits(context, 0, reserved)
-		// inputLimit = 0 → context - maxOutputTokens = 200000 - 32000 = 168000
+		
+		
 		if got != 168_000 {
 			t.Errorf("Usable(200000, 50000) = %d, want 168000 (context - maxOutputTokens)", got)
 		}
 
-		// С inputLimit reserved используется:
+		
 		gotWithInput := UsableWithLimits(200_000, 150_000, &reserved)
 		if gotWithInput != 100_000 {
 			t.Errorf("UsableWithLimits(200000, 150000, 50000) = %d, want 100000 (input - reserved)", gotWithInput)
@@ -81,9 +78,6 @@ func TestIsOverflow(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Pruning Tests
-// ============================================================
 
 func TestPruneMessages(t *testing.T) {
 	t.Run("no pruning for small history", func(t *testing.T) {
@@ -161,9 +155,6 @@ func TestPruneMessages(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Select Tests (tail preservation)
-// ============================================================
 
 func TestSelectMessages(t *testing.T) {
 	t.Run("zero tailTurns returns all as head", func(t *testing.T) {
@@ -202,8 +193,8 @@ func TestSelectMessages(t *testing.T) {
 			{Role: "assistant", Content: "world"},
 		}
 		got := SelectMessages(msgs, 2, 8000)
-		// opencode select(): keep.start === 0 → head = все сообщения,
-		// tail_start_id = undefined (-1), компактится всё.
+		
+		
 		if got.TailStartID != -1 {
 			t.Errorf("expected no tail (TailStartID=-1), got %d", got.TailStartID)
 		}
@@ -229,10 +220,10 @@ func TestSelectMessages(t *testing.T) {
 		}
 	})
 
-	// splitTurn может остановиться на не-user сообщении (tool/assistant внутри
-	// оборота). Head не должен заканчиваться до split-точки, иначе остаток
-	// оборота выпадает и из head, и из tail — потеря данных. Регрессия:
-	// раньше Head = messages[:keepStart] терял messages[keepStart:tailStartID].
+	
+	
+	
+	
 	t.Run("split turn keeps no gap between head and tail", func(t *testing.T) {
 		msgs := []tokenizers.Message{
 			{Role: "system", Content: "sys"},
@@ -240,21 +231,21 @@ func TestSelectMessages(t *testing.T) {
 			{Role: "assistant", Content: "resp0"},
 			{Role: "user", Content: "turn1"},
 			{Role: "assistant", Content: "short"},
-			{Role: "tool", Content: createLongOutput(3000)}, // большой tool-вывод
+			{Role: "tool", Content: createLongOutput(3000)}, 
 			{Role: "assistant", Content: "tail-of-split"},
 			{Role: "user", Content: "turn2"},
 			{Role: "assistant", Content: "resp2"},
 		}
 		est := EstimateMessagesTokensSimple
-		// budget = turn2 целиком + одно сообщение из оборота turn1 →
-		// splitTurn остановится на индексе 6 (не-user), tailStartID = 7.
+		
+		
 		budget := est(msgs[7:9]) + est(msgs[6:7])
 		got := SelectMessages(msgs, 2, budget)
 
 		if got.TailStartID != 7 {
 			t.Fatalf("expected split tail to start at user index 7, got TailStartID=%d", got.TailStartID)
 		}
-		// Head должен доходить до границы хвоста, а не заканчиваться на split-точке.
+		
 		if len(got.Head) != got.TailStartID {
 			t.Errorf("gap between head and tail: head ends at %d, tail starts at %d", len(got.Head), got.TailStartID)
 		}
@@ -270,9 +261,6 @@ func TestSelectMessages(t *testing.T) {
 	})
 }
 
-// ============================================================
-// BuildSummaryPrompt Tests
-// ============================================================
 
 func TestBuildSummaryPrompt(t *testing.T) {
 	t.Run("includes context after template", func(t *testing.T) {
@@ -283,7 +271,7 @@ func TestBuildSummaryPrompt(t *testing.T) {
 		if !strings.Contains(prompt, "Goal") {
 			t.Error("prompt should include SUMMARY_TEMPLATE")
 		}
-		// Как opencode buildPrompt: instruction → template → context.
+		
 		tIdx := strings.Index(prompt, "Goal")
 		cIdx := strings.Index(prompt, "hello")
 		if cIdx < tIdx {
@@ -316,9 +304,7 @@ func TestBuildSummaryPrompt(t *testing.T) {
 	})
 }
 
-// TestCompactWithOpenCode_IncludesPreviousRecent проверяет, что при повторной
-// компактизации в промпт суммаризации попадает recent — хвост, сохранённый
-// предыдущей компактизацией (как previousSummary.recent в opencode core).
+
 func TestCompactWithOpenCode_IncludesPreviousRecent(t *testing.T) {
 	var lastReq *CompressionRequest
 	mockLLM := &mockLLMCompressor{
@@ -332,7 +318,7 @@ func TestCompactWithOpenCode_IncludesPreviousRecent(t *testing.T) {
 	}
 	compactor := NewCompactor(mockLLM)
 
-	// Предыдущая компактизация: [tail..., marker, summary(TailStartID=2)].
+	
 	msgs := []tokenizers.Message{
 		{Role: "user", Content: "old head"},
 		{Role: "assistant", Content: "old resp"},
@@ -363,9 +349,6 @@ func TestCompactWithOpenCode_IncludesPreviousRecent(t *testing.T) {
 	}
 }
 
-// ============================================================
-// CompactWithOpenCode Tests (with mock LLM)
-// ============================================================
 
 type mockLLMCompressor struct {
 	compressFunc func(ctx context.Context, req *CompressionRequest) (*CompressionResult, error)
@@ -453,9 +436,6 @@ func TestCompactWithOpenCode(t *testing.T) {
 	})
 }
 
-// ============================================================
-// FilterCompacted Tests
-// ============================================================
 
 func TestFindCompactionMarkers(t *testing.T) {
 	t.Run("no markers in empty history", func(t *testing.T) {
@@ -524,9 +504,6 @@ func TestFilterCompacted(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Integration: Full opencode compaction flow
-// ============================================================
 
 func TestOpenCodeFullFlow(t *testing.T) {
 	mockLLM := &mockLLMCompressor{}
@@ -572,9 +549,6 @@ func TestOpenCodeFullFlow(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Helpers
-// ============================================================
 
 func createLongOutput(chars int) string {
 	b := make([]byte, chars)
@@ -591,9 +565,7 @@ func truncateStr(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
-// TestTruncateToolOutput_PreservesHint проверяет, что при обрезке вывода
-// для компакции сохраняется хвостовая подсказка с путём к полному файлу —
-// чтобы LLM мог перечитать результат порциями после компакции.
+
 func TestTruncateToolOutput_PreservesHint(t *testing.T) {
 	fullOutput := strings.Repeat("output-line\n", 500)
 	filePath := "/home/orangepi/projects/go/agent/tool-output/tool_123"
@@ -614,8 +586,7 @@ func TestTruncateToolOutput_PreservesHint(t *testing.T) {
 	}
 }
 
-// TestTruncateToolOutput_ShortContentPassesThrough проверяет, что короткий
-// вывод не изменяется.
+
 func TestTruncateToolOutput_ShortContentPassesThrough(t *testing.T) {
 	content := `{"success":true}`
 	if got := TruncateToolOutput(content); got != content {

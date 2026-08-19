@@ -1,7 +1,6 @@
-// Package instructions реализует чтение AGENTS.md/CLAUDE.md как в opencode:
-// поиск от рабочей директории вверх до корня git-worktree + глобальный файл
-// из конфиг-директории агента. Содержимое подставляется в системный промпт
-// отдельным system-сообщением в формате "Instructions from: <путь>".
+
+
+
 package instructions
 
 import (
@@ -10,17 +9,13 @@ import (
 	"strings"
 )
 
-// projectFileNames — имена файлов-инструкций в порядке приоритета.
-// Первое имя с хотя бы одним совпадением выигрывает (как в opencode).
+
 var projectFileNames = []string{"AGENTS.md", "CLAUDE.md"}
 
-// configDir — глобальная конфиг-директория агента (переопределяется в тестах).
+
 var configDir = ""
 
-// Build возвращает текст инструкций для рабочей директории dir:
-// глобальный файл из конфиг-директории + все проектные AGENTS.md/CLAUDE.md
-// от dir вверх до git-корня (ближайшие первыми).
-// Пустой результат — если ничего не найдено.
+
 func Build(dir string) string {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -50,8 +45,7 @@ func Build(dir string) string {
 	return sb.String()
 }
 
-// globalFiles возвращает первый существующий файл-инструкцию
-// из глобальной конфиг-директории агента.
+
 func globalFiles() []string {
 	for _, name := range projectFileNames {
 		p := filepath.Join(globalConfigDir(), name)
@@ -62,9 +56,7 @@ func globalFiles() []string {
 	return nil
 }
 
-// projectFiles находит файлы-инструкции от start вверх до git-корня.
-// Ближайший к start файл идёт первым. Не выходит за пределы git-репозитория
-// и домашней директории.
+
 func projectFiles(start string) []string {
 	home, _ := os.UserHomeDir()
 	root := gitRoot(start)
@@ -92,8 +84,7 @@ func projectFiles(start string) []string {
 	return nil
 }
 
-// gitRoot возвращает директорию с .git (корень git-worktree),
-// поднимаясь вверх от start. Пустая строка — если git нет.
+
 func gitRoot(start string) string {
 	dir := filepath.Clean(start)
 	for {
@@ -108,8 +99,7 @@ func gitRoot(start string) string {
 	}
 }
 
-// globalConfigDir возвращает глобальную конфиг-директорию агента
-// (по умолчанию ~/.config/ai-agent).
+
 func globalConfigDir() string {
 	if configDir != "" {
 		return configDir

@@ -87,6 +87,6 @@ func TestSendThinkingTokens(t *testing.T) {
 
 	t.Run("skips when callback is nil", func(t *testing.T) {
 		a := &agentImpl{}
-		a.sendThinkingTokens(1, 43, 20) // must not panic
+		a.sendThinkingTokens(1, 43, 20) 
 	})
 }

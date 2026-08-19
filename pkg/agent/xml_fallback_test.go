@@ -135,7 +135,7 @@ func TestXMLFallback_WithXMLButNoRegistry(t *testing.T) {
 	}
 }
 
-// TestXMLFallback_Integration проверяет полный цикл: XML tool call → выполнение → ответ
+
 func TestXMLFallback_Integration(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -190,7 +190,7 @@ Here is the result.`
 	t.Logf("Response: %s", result.Response)
 }
 
-// TestXMLFallback_MultipleXMLToolCalls проверяет множественные XML tool calls
+
 func TestXMLFallback_MultipleXMLToolCalls(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -242,7 +242,7 @@ func TestXMLFallback_MultipleXMLToolCalls(t *testing.T) {
 	t.Logf("Response: %s", result.Response)
 }
 
-// TestParseXMLToolCalls_FileWriteRead проверяет file_write + file_read через XML
+
 func TestParseXMLToolCalls_FileWriteRead(t *testing.T) {
 	input := `<tool_call>
 <function=file_write>
@@ -266,8 +266,7 @@ func TestParseXMLToolCalls_FileWriteRead(t *testing.T) {
 	}
 }
 
-// TestProcessWithTools_XMLFallback проверяет что processWithTools
-// корректно обрабатывает XML tool calls в ответе модели
+
 func TestProcessWithTools_XMLFallback(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -314,7 +313,7 @@ func TestProcessWithTools_XMLFallback(t *testing.T) {
 	t.Logf("Final response: %s", response)
 }
 
-// TestProcessWithTools_XMLAndTextFallback проверяет что XML fallback не мешает обычному тексту
+
 func TestProcessWithTools_XMLAndTextFallback(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -427,7 +426,7 @@ func TestConvertXMLToolCalls_NilArgs(t *testing.T) {
 	}
 }
 
-// TestXMLInReasoning проверяет что XML в reasoningText распознаётся и выполняется
+
 func TestXMLInReasoning(t *testing.T) {
 	reasoningText := "I need to read a file.\n\n<function=read_file>\n<parameter=path>/tmp/test.txt</parameter>\n</function>"
 
@@ -535,8 +534,7 @@ func TestCleanedReasoningSentToThinking(t *testing.T) {
 	}
 }
 
-// TestProcessXMLToolResults_ChainedToolCalls проверяет что XML tool calls в ответе
-// после выполнения инструментов выполняются рекурсивно
+
 func TestProcessXMLToolResults_ChainedToolCalls(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -604,10 +602,7 @@ func TestProcessXMLToolResults_ChainedToolCalls(t *testing.T) {
 	t.Logf("Final response: %s", response)
 }
 
-// TestProcessMessage_InvalidXMLToolCall_ShouldNotForwardToUser проверяет,
-// что когда модель отвечает с <tool_call> обёрткой вокруг JSON
-// (вместо нативных tool_calls), агент НЕ отправляет сырой XML пользователю,
-// а отправляет ошибку модели.
+
 func TestProcessMessage_InvalidXMLToolCall_ShouldNotForwardToUser(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -657,7 +652,7 @@ func TestProcessMessage_InvalidXMLToolCall_ShouldNotForwardToUser(t *testing.T) 
 		t.Errorf("expected at least 2 LLM calls, got %d", callCount)
 	}
 
-	// Проверяем что через stub executor прошли тулы (handleInvalidXMLToolCall → format_error)
+	
 	if !executor.Contains("[TOOL] Call:") {
 		t.Error("expected at least one tool call via stub executor")
 	}
@@ -665,9 +660,7 @@ func TestProcessMessage_InvalidXMLToolCall_ShouldNotForwardToUser(t *testing.T) 
 	t.Logf("Final response: %s, LLM calls: %d", response, callCount)
 }
 
-// TestProcessToolResults_DeduplicateSameToolAcrossRecursion проверяет,
-// что при рекурсивном вызове processToolResults одинаковые XML-тулы
-// не выполняются повторно (дедупликация через executed map).
+
 func TestProcessToolResults_DeduplicateSameToolAcrossRecursion(t *testing.T) {
 	llmCallCount := 0
 
@@ -676,18 +669,18 @@ func TestProcessToolResults_DeduplicateSameToolAcrossRecursion(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 
 		if llmCallCount == 1 {
-			// Первый LLM-запрос: возвращает XML тул
+			
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"<tool_call>\\n<function=counting>\\n</function>\\n</tool_call>\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 			w.Write([]byte("[DONE]\n"))
 		} else if llmCallCount == 2 {
-			// Второй LLM-запрос: тот же XML тул (должен быть задедуплицирован)
-			// Возвращаем текст с XML и финальный ответ
+			
+			
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Already counted.\\n<tool_call>\\n<function=counting>\\n</function>\\n</tool_call>\\nDone.\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 			w.Write([]byte("[DONE]\n"))
 		} else {
-			// Третий — не должен понадобиться
+			
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Done.\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 			w.Write([]byte("[DONE]\n"))
@@ -717,26 +710,25 @@ func TestProcessToolResults_DeduplicateSameToolAcrossRecursion(t *testing.T) {
 
 	t.Logf("LLM calls: %d, tool log entries: %d", llmCallCount, len(executor.ReadLog()))
 
-	// counting тул должен выполниться РОВНО 1 раз (дедупликация на втором запросе)
+	
 	countingCalls := executor.Count("[TOOL] Call: counting")
 	if countingCalls != 1 {
 		t.Errorf("expected counting tool to execute exactly 1 time (dedup), got %d calls in log", countingCalls)
 		t.Logf("Full log: %v", executor.ReadLog())
 	}
 
-	// Ответ не должен содержать XML
+	
 	if strings.Contains(response, "<tool_call>") || strings.Contains(response, "<function") {
 		t.Errorf("response should not contain XML tool call tags, got: %q", response)
 	}
 
-	// Должен быть минимум 2 вызова LLM (1й — XML тул, 2й — дубль с текстом)
+	
 	if llmCallCount < 2 {
 		t.Errorf("expected at least 2 LLM calls, got %d", llmCallCount)
 	}
 }
 
-// TestProcessToolResults_InvalidXMLToolCall проверяет что processToolResults
-// НЕ выполняет JSON тул внутри <tool_call> обёртки, а отправляет модели ошибку.
+
 func TestProcessToolResults_InvalidXMLToolCall(t *testing.T) {
 	callCount := 0
 
@@ -789,7 +781,7 @@ func TestProcessToolResults_InvalidXMLToolCall(t *testing.T) {
 		t.Fatalf("processToolResults failed: %v", err)
 	}
 
-	// JSON внутри <tool_call> — валидный гибридный формат, должен выполниться через JSON fallback
+	
 	if !executor.Contains("counting") {
 		t.Error("expected counting tool to be called via stub executor")
 	}
@@ -811,10 +803,7 @@ func TestProcessToolResults_InvalidXMLToolCall(t *testing.T) {
 	t.Logf("Response: %s, LLM calls: %d, tool log: %v", response, callCount, executor.ReadLog())
 }
 
-// TestProcessMessage_Integration_NativeToolCallsThenXMLInToolResults проверяет
-// полный сценарий из bug report: модель сначала отвечает НАТИВНЫМИ tool_calls,
-// затем после выполнения инструментов и отправки результатов — отвечает
-// невалидным <tool_call> форматом (с JSON внутри) внутри processToolResults.
+
 func TestProcessMessage_Integration_NativeToolCallsThenXMLInToolResults(t *testing.T) {
 	callCount := 0
 
@@ -857,8 +846,8 @@ func TestProcessMessage_Integration_NativeToolCallsThenXMLInToolResults(t *testi
 		t.Errorf("response should not contain XML tool call tags, got: %q", response)
 	}
 
-	// counting тул должен выполниться РОВНО 1 раз (из нативных tool_calls)
-	// JSON внутри <tool_call> задедуплицирован — не выполняется
+	
+	
 	countingCalls := executor.Count("[TOOL] Call: counting")
 	if countingCalls != 1 {
 		t.Errorf("expected counting tool to execute exactly 1 time (from native tool_calls), got %d times in log", countingCalls)
@@ -879,9 +868,7 @@ func TestProcessMessage_Integration_NativeToolCallsThenXMLInToolResults(t *testi
 	t.Logf("Final response: %s, LLM calls: %d, tool log: %v", response, callCount, executor.ReadLog())
 }
 
-// TestReasoningSentToThinkingInToolCallsFlow проверяет что reasoning
-// отправляется в thinking чат даже когда модель использует нативные
-// tool_calls (finish_reason="tool_calls"). Раньше reasoning терялся.
+
 func TestReasoningSentToThinkingInToolCallsFlow(t *testing.T) {
 	var mu sync.Mutex
 	callCount := 0
@@ -959,15 +946,14 @@ func TestReasoningSentToThinkingInToolCallsFlow(t *testing.T) {
 	}
 }
 
-// TestReasoningNotLeakedToResponse проверяет что reasoning текст не попадает
-// в обычный ответ (peer_id), а остаётся только в thinking_peer_id.
+
 func TestReasoningNotLeakedToResponse(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		w.Header().Set("Content-Type", "text/event-stream")
 
-		// Всегда возвращаем только reasoning, без content
+		
 		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Это reasoning текст который должен остаться только в thinking канале.\"}}]}\n\n"))
 		w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 		w.Write([]byte("[DONE]\n"))
@@ -991,7 +977,7 @@ func TestReasoningNotLeakedToResponse(t *testing.T) {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
 
-	// BUG CHECK: response НЕ должен содержать reasoning текст
+	
 	if strings.Contains(response, "Это reasoning текст") {
 		t.Error("BUG: response contains reasoning text — reasoning leaked into regular chat")
 	}
@@ -999,11 +985,7 @@ func TestReasoningNotLeakedToResponse(t *testing.T) {
 	t.Logf("Final response: %q, LLM calls: %d", response, callCount)
 }
 
-// TestMalformedXMLInReasoning_NotSilentlyReturned проверяет что если модель
-// возвращает сломанный XML внутри <tool_call> в reasoningText (например,
-// <subagent> вместо <function=subagent>) и responseText пустой — то система
-// НЕ должна использовать очищенный reasoning как финальный ответ, а должна
-// вызвать handleInvalidXMLToolCall и дать модели второй шанс.
+
 func TestMalformedXMLInReasoning_NotSilentlyReturned(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1011,8 +993,8 @@ func TestMalformedXMLInReasoning_NotSilentlyReturned(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 
 		if callCount == 1 {
-			// Возвращаем пустой content + reasoning со сломанным XML
-			// <subagent> вместо <function=subagent> — как в реальном баге
+			
+			
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Нужно создать исправленный код и отправить его на QA для проверки\\n\\n<tool_call>\\n<subagent>\\n<name>\\nworker\\n</name>\\n</subagent>\\n</tool_call>\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 		} else {
@@ -1040,12 +1022,12 @@ func TestMalformedXMLInReasoning_NotSilentlyReturned(t *testing.T) {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
 
-	// BUG CHECK: response не должен содержать reasoning текст
+	
 	if strings.Contains(response, "Нужно создать исправленный код") {
 		t.Error("BUG: response contains reasoning text instead of proper response — malformed XML was silently stripped and returned as answer")
 	}
 
-	// BUG CHECK: должно быть минимум 2 вызова LLM (ошибка формата → retry)
+	
 	if callCount < 2 {
 		t.Errorf("BUG: expected at least 2 LLM calls (format error should retry), got %d", callCount)
 	}
@@ -1053,10 +1035,7 @@ func TestMalformedXMLInReasoning_NotSilentlyReturned(t *testing.T) {
 	t.Logf("Final response: %s, LLM calls: %d", response, callCount)
 }
 
-// TestEmptyToolCallInReasoning_SendsCorrectiveFeedback проверяет что пустой
-// <tool_call></tool_call> в reasoning детектируется: система НЕ молча
-// игнорирует его, а логирует ошибку и отправляет модели corrective feedback
-// (второй вызов LLM с сообщением о неверном формате).
+
 func TestEmptyToolCallInReasoning_SendsCorrectiveFeedback(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1102,10 +1081,7 @@ func TestEmptyToolCallInReasoning_SendsCorrectiveFeedback(t *testing.T) {
 	t.Logf("Final response: %s, LLM calls: %d", response, callCount)
 }
 
-// TestProcessWithTools_XMLInResponseText_LongerReasoning проверяет что XML tool calls
-// в responseText выполняются даже если reasoningText длиннее responseText.
-// Баг: processWithTools выбирал для XML-проверки самый длинный текст (reasoning),
-// игнорируя XML в responseText.
+
 func TestProcessWithTools_XMLInResponseText_LongerReasoning(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1175,10 +1151,7 @@ func TestProcessWithTools_XMLInResponseText_LongerReasoning(t *testing.T) {
 	t.Logf("Final response: %s, LLM calls: %d", response, callCount)
 }
 
-// TestTruncatedStream_NoCorrectiveFeedback проверяет что при finish_reason=""
-// (обрыв стрима) с частичным <tool_call> в reasoning corrective feedback НЕ отправляется.
-// Раньше код видел <tool_call> в reasoning и вызывал handleInvalidXMLToolCall,
-// что приводило к бесконечному циклу corrective feedback → обрыв → corrective feedback.
+
 func TestTruncatedStream_NoCorrectiveFeedback(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1217,9 +1190,7 @@ func TestTruncatedStream_NoCorrectiveFeedback(t *testing.T) {
 	}
 }
 
-// TestMalformedXMLInReasoning_WithFinishStop проверяет что при finish_reason="stop"
-// со сломанным XML в reasoning corrective feedback ВСЁ ЕЩЁ отправляется
-// (эта логика не должна сломаться после фикса truncation).
+
 func TestMalformedXMLInReasoning_WithFinishStop(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

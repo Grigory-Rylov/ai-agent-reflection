@@ -13,7 +13,7 @@ func TestStubToolExecutor_RemovesLogOnCreate(t *testing.T) {
 	executor := NewStubToolExecutor(logPath)
 	defer os.Remove(logPath)
 
-	// После создания файл должен быть пустым (удалён)
+	
 	if _, err := os.Stat(logPath); err == nil {
 		data, _ := os.ReadFile(logPath)
 		if len(data) > 0 {
@@ -67,7 +67,7 @@ func TestStubToolExecutor_CanBeInjected(t *testing.T) {
 
 	config := DefaultConfig()
 	config.EnableTools = true
-	config.LlamaServerURL = "http://localhost:99999" // not used when stub is set
+	config.LlamaServerURL = "http://localhost:99999" 
 
 	agent := NewAgent(config)
 	executor := NewStubToolExecutor(logPath)

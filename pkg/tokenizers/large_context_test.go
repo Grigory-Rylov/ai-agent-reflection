@@ -9,24 +9,19 @@ import (
 	"time"
 )
 
-// ============================================================
-// Semi-integration tests for large context handling
-// ============================================================
 
-// TestLargePromptTokenization tests tokenizer behavior with 100K+ token prompts
-// This test requires a running llama-server
 func TestLargePromptTokenization(t *testing.T) {
-	// Skip if no llama-server available
+	
 	serverURL := os.Getenv("LLAMA_SERVER_URL")
 	if serverURL == "" {
 		serverURL = "http://localhost:8081"
 	}
 
-	// Check if server is available
+	
 	tokenizer := NewLlamaServerTokenizer(serverURL, "", 32000)
 	tokenizer.SetDebug(true)
 
-	// Try a simple request first to check connectivity
+	
 	_, err := tokenizer.CountTokens("test")
 	if err != nil {
 		t.Skipf("llama-server not available at %s: %v", serverURL, err)
@@ -42,7 +37,7 @@ func TestLargePromptTokenization(t *testing.T) {
 	})
 
 	t.Run("MediumPrompt_10K", func(t *testing.T) {
-		// ~10K tokens = ~40K chars
+		
 		text := strings.Repeat("This is a test sentence for tokenization. ", 1000)
 
 		start := time.Now()
@@ -56,7 +51,7 @@ func TestLargePromptTokenization(t *testing.T) {
 	})
 
 	t.Run("LargePrompt_100K", func(t *testing.T) {
-		// Read the debug_prompt.txt file
+		
 		data, err := os.ReadFile("debug_prompt.txt")
 		if err != nil {
 			t.Skipf("debug_prompt.txt not found: %v", err)
@@ -70,11 +65,11 @@ func TestLargePromptTokenization(t *testing.T) {
 		elapsed := time.Since(start)
 
 		if err != nil {
-			// THIS IS THE KEY TEST - what error do we get?
+			
 			t.Logf("ERROR tokenizing large prompt: %v", err)
 			t.Logf("Error type: %T", err)
 
-			// Check if error contains info about context limit
+			
 			errStr := err.Error()
 			if strings.Contains(errStr, "context") ||
 				strings.Contains(errStr, "length") ||
@@ -83,13 +78,13 @@ func TestLargePromptTokenization(t *testing.T) {
 				t.Logf("Error appears to be context-related: %s", errStr)
 			}
 
-			// Don't fail - we want to observe the error
+			
 			return
 		}
 
 		t.Logf("Large prompt: %d tokens for %d chars in %v", tokens, len(text), elapsed)
 
-		// Check if tokens exceed max context
+		
 		maxCtx := tokenizer.MaxContextLength()
 		if tokens > maxCtx {
 			t.Logf("WARNING: Tokens (%d) exceed max context (%d)", tokens, maxCtx)
@@ -97,7 +92,7 @@ func TestLargePromptTokenization(t *testing.T) {
 	})
 }
 
-// TestTokenizeWithProgress tests tokenization with progress reporting
+
 func TestTokenizeWithProgress(t *testing.T) {
 	serverURL := os.Getenv("LLAMA_SERVER_URL")
 	if serverURL == "" {
@@ -106,13 +101,13 @@ func TestTokenizeWithProgress(t *testing.T) {
 
 	tokenizer := NewLlamaServerTokenizer(serverURL, "", 32000)
 
-	// Check connectivity
+	
 	_, err := tokenizer.CountTokens("test")
 	if err != nil {
 		t.Skipf("llama-server not available: %v", err)
 	}
 
-	// Load large file
+	
 	data, err := os.ReadFile("debug_prompt.txt")
 	if err != nil {
 		t.Skipf("debug_prompt.txt not found: %v", err)
@@ -121,7 +116,7 @@ func TestTokenizeWithProgress(t *testing.T) {
 	text := string(data)
 	t.Logf("Testing with %d chars", len(text))
 
-	// Test tokenizing in chunks
+	
 	chunkSize := 10000
 	var totalTokens int
 	var chunks []int
@@ -146,14 +141,14 @@ func TestTokenizeWithProgress(t *testing.T) {
 	t.Logf("Chunked tokenization: %d total tokens across %d chunks", totalTokens, len(chunks))
 }
 
-// TestMaxContextExceeded tests what happens when we try to send more tokens than model can handle
+
 func TestMaxContextExceeded(t *testing.T) {
 	serverURL := os.Getenv("LLAMA_SERVER_URL")
 	if serverURL == "" {
 		serverURL = "http://localhost:8081"
 	}
 
-	// Create tokenizer with small max context to force overflow
+	
 	smallMaxCtx := 1000
 	tokenizer := NewLlamaServerTokenizer(serverURL, "", smallMaxCtx)
 
@@ -162,8 +157,8 @@ func TestMaxContextExceeded(t *testing.T) {
 		t.Skipf("llama-server not available: %v", err)
 	}
 
-	// Create text that definitely exceeds 1000 tokens
-	largeText := strings.Repeat("This is a test sentence. ", 1000) // ~5000 tokens
+	
+	largeText := strings.Repeat("This is a test sentence. ", 1000) 
 
 	tokens, err := tokenizer.CountTokens(largeText)
 	if err != nil {
@@ -178,7 +173,7 @@ func TestMaxContextExceeded(t *testing.T) {
 	}
 }
 
-// TestMessagesTokenCount tests counting tokens across multiple messages
+
 func TestMessagesTokenCount(t *testing.T) {
 	serverURL := os.Getenv("LLAMA_SERVER_URL")
 	if serverURL == "" {
@@ -192,7 +187,7 @@ func TestMessagesTokenCount(t *testing.T) {
 		t.Skipf("llama-server not available: %v", err)
 	}
 
-	// Load large file
+	
 	data, err := os.ReadFile("debug_prompt.txt")
 	if err != nil {
 		t.Skipf("debug_prompt.txt not found: %v", err)
@@ -200,14 +195,14 @@ func TestMessagesTokenCount(t *testing.T) {
 
 	largeContent := string(data)
 
-	// Create messages that simulate a long conversation
+	
 	messages := []Message{
 		{Role: "system", Content: "You are a helpful assistant."},
-		{Role: "user", Content: largeContent[:50000]}, // ~12K tokens
+		{Role: "user", Content: largeContent[:50000]}, 
 		{Role: "assistant", Content: "I understand the context."},
-		{Role: "user", Content: largeContent[50000:100000]}, // ~12K tokens
+		{Role: "user", Content: largeContent[50000:100000]}, 
 		{Role: "assistant", Content: "Processing..."},
-		{Role: "user", Content: largeContent[100000:150000]}, // ~12K tokens
+		{Role: "user", Content: largeContent[100000:150000]}, 
 	}
 
 	start := time.Now()
@@ -227,7 +222,7 @@ func TestMessagesTokenCount(t *testing.T) {
 	}
 }
 
-// TestPromptDebug generates debug info about the test file
+
 func TestPromptDebug(t *testing.T) {
 	data, err := os.ReadFile("debug_prompt.txt")
 	if err != nil {
@@ -243,7 +238,7 @@ func TestPromptDebug(t *testing.T) {
 	t.Logf("Lines: %d", strings.Count(text, "\n"))
 	t.Logf("Words: %d", len(strings.Fields(text)))
 
-	// Check for different context limits
+	
 	limits := []int{4096, 8192, 16384, 32768, 65536, 128000}
 	for _, limit := range limits {
 		estTokens := len(text) / 4
@@ -255,7 +250,7 @@ func TestPromptDebug(t *testing.T) {
 	}
 }
 
-// RunDebug is a helper function to run the tests manually
+
 func RunDebug() {
 	serverURL := "http://localhost:8081"
 	tokenizer := NewLlamaServerTokenizer(serverURL, "", 32000)
@@ -273,7 +268,7 @@ func RunDebug() {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	_ = ctx // context is used in real implementation
+	_ = ctx 
 
 	start := time.Now()
 	tokens, err := tokenizer.CountTokens(text)

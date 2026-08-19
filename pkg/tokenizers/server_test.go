@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// ============================================================
-// Тесты LlamaServerTokenizer
-// ============================================================
 
 func TestNewLlamaServerTokenizer(t *testing.T) {
 	tokenizer := NewLlamaServerTokenizer("http://localhost:8081", "test-model", 8192)
@@ -30,7 +27,7 @@ func TestLlamaServerTokenizerName(t *testing.T) {
 }
 
 func TestLlamaServerTokenizerCountTokens(t *testing.T) {
-	// Создаём тестовый сервер
+	
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -83,13 +80,12 @@ func TestLlamaServerTokenizerDecodeNotSupported(t *testing.T) {
 }
 
 
-
 func TestLlamaServerTokenizerCountMessagesTokens(t *testing.T) {
-	// Создаём тестовый сервер
+	
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		// Генерируем массив из 100 токенов
+		
 		tokens := make([]int, 100)
 		for i := 0; i < 100; i++ {
 			tokens[i] = i + 1

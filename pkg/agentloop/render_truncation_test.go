@@ -8,9 +8,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-// TestBuildAPIMessages_TruncatesLargeToolOutput (п.11) проверяет, что
-// buildAPIMessages (основной путь рендера главного агента) обрезает большой
-// tool-вывод при построении сообщений для LLM.
+
 func TestBuildAPIMessages_TruncatesLargeToolOutput(t *testing.T) {
 	large := strings.Repeat("DATA", 5000)
 	short := "ok"

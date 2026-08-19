@@ -1,10 +1,6 @@
 package agent
 
-// ============================================================
-// ToolCallDetector — интерфейс для детекции тулов из ответа LLM
-// ============================================================
 
-// DetectInput содержит все данные ответа LLM для анализа
 type DetectInput struct {
 	ResponseText    string
 	ReasoningText   string
@@ -12,21 +8,18 @@ type DetectInput struct {
 	StreamToolCalls []ToolCall
 }
 
-// DetectOutput содержит результат детекции
+
 type DetectOutput struct {
 	ToolCalls []ToolCall
 	CleanText string
 }
 
-// ToolCallDetector определяет стратегию детекции тулов из ответа LLM
+
 type ToolCallDetector interface {
 	Detect(input *DetectInput) *DetectOutput
 	Name() string
 }
 
-// ============================================================
-// NativeDetector — детекция нативного формата tool_calls
-// ============================================================
 
 type NativeDetector struct{}
 
@@ -42,9 +35,6 @@ func (d *NativeDetector) Detect(input *DetectInput) *DetectOutput {
 	return nil
 }
 
-// ============================================================
-// XMLDetector — детекция XML-формата тулов
-// ============================================================
 
 type XMLDetector struct{}
 
@@ -61,9 +51,6 @@ func (d *XMLDetector) Detect(input *DetectInput) *DetectOutput {
 	return nil
 }
 
-// ============================================================
-// JSONDetector — детекция JSON-формата тулов
-// ============================================================
 
 type JSONDetector struct{}
 
@@ -80,9 +67,6 @@ func (d *JSONDetector) Detect(input *DetectInput) *DetectOutput {
 	return nil
 }
 
-// ============================================================
-// ReasoningXMLDetector — детекция XML-тулов в reasoning
-// ============================================================
 
 type ReasoningXMLDetector struct{}
 

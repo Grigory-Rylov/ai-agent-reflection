@@ -9,15 +9,11 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
 )
 
-// ============================================================
-// Chunked compaction: head больше контекста должен суммироваться
-// по кускам, каждый из которых укладывается в доступный контекст.
-// ============================================================
 
 func TestSummaryChunkBudget(t *testing.T) {
 	t.Run("large context keeps room for summary output", func(t *testing.T) {
 		got := summaryChunkBudget(200_000)
-		usable := Usable(200_000, nil) // 180_000
+		usable := Usable(200_000, nil) 
 		if got >= usable {
 			t.Errorf("budget %d should leave room below usable %d", got, usable)
 		}
@@ -35,10 +31,10 @@ func TestSummaryChunkBudget(t *testing.T) {
 
 func TestTakeOldestFit(t *testing.T) {
 	msgs := []tokenizers.Message{
-		{Role: "user", Content: createLongOutput(100)}, // ~25 tokens
-		{Role: "user", Content: createLongOutput(100)}, // ~25 tokens
-		{Role: "user", Content: createLongOutput(100)}, // ~25 tokens
-		{Role: "user", Content: createLongOutput(100)}, // ~25 tokens
+		{Role: "user", Content: createLongOutput(100)}, 
+		{Role: "user", Content: createLongOutput(100)}, 
+		{Role: "user", Content: createLongOutput(100)}, 
+		{Role: "user", Content: createLongOutput(100)}, 
 	}
 
 	t.Run("fits first messages up to budget", func(t *testing.T) {
@@ -107,7 +103,7 @@ func TestCompactWithOpenCode_ChunksLargeHead(t *testing.T) {
 	}
 	compactor := NewCompactor(mockLLM)
 
-	// Большой head: 60 ходов по ~50K символов (~12.5K токенов) => ~750K токенов.
+	
 	var msgs []tokenizers.Message
 	for i := 0; i < 60; i++ {
 		msgs = append(msgs, tokenizers.Message{Role: "user", Content: createLongOutput(50_000)})
@@ -136,7 +132,7 @@ func TestCompactWithOpenCode_ChunksLargeHead(t *testing.T) {
 		t.Errorf("expected summary from last call, got %q", result.Summary)
 	}
 
-	// Накопление: следующий вызов должен содержать summary предыдущего.
+	
 	for i := 1; i < len(calls); i++ {
 		cur := calls[i].Messages[len(calls[i].Messages)-1].Content
 		if !strings.Contains(cur, fmt.Sprintf("SUMMARY-v%d", i)) {

@@ -5,9 +5,7 @@ import (
 	"strings"
 )
 
-// ScanCommand splits a shell command into subcommands and produces the
-// permission patterns and always-allow prefixes for each. Subcommands that
-// only change directories (cd, pushd, ...) produce no pattern.
+
 func ScanCommand(command string) Scan {
 	scan := Scan{}
 	for _, source := range SplitCommands(command) {
@@ -26,14 +24,12 @@ func ScanCommand(command string) Scan {
 	return scan
 }
 
-// cwdCommands are commands that only change the working directory and never
-// need permission.
+
 var cwdCommands = map[string]bool{
 	"cd": true, "chdir": true, "popd": true, "pushd": true,
 }
 
-// SplitCommands splits a shell command into subcommands on separators
-// (&&, ||, ;, |, newline) while respecting quotes and command substitution.
+
 func SplitCommands(command string) []string {
 	var commands []string
 	var current strings.Builder
@@ -124,11 +120,10 @@ func SplitCommands(command string) []string {
 	return commands
 }
 
-// nestedCommandRe matches command substitution contents.
+
 var nestedCommandRe = regexp.MustCompile(`\$\(([^)]+)\)`)
 
-// nested recursively scans command substitutions inside a command source and
-// appends their patterns and always prefixes to the scan.
+
 func (s *Scan) nested(source string) {
 	for _, match := range nestedCommandRe.FindAllStringSubmatch(source, -1) {
 		inner := ScanCommand(match[1])
@@ -149,7 +144,7 @@ func (s *Scan) addUniqueAlways(always string) {
 	addUnique(&s.Always, always)
 }
 
-// tokenize splits a command source into shell words, dropping empty quotes.
+
 func tokenize(source string) []string {
 	var tokens []string
 	var current strings.Builder
@@ -218,13 +213,13 @@ func tokenize(source string) []string {
 	return tokens
 }
 
-// Scan holds the permission-relevant parts of a shell command.
+
 type Scan struct {
 	Patterns []string
 	Always   []string
 }
 
-// addUnique appends value to the slice if it is not already present.
+
 func addUnique(slice *[]string, value string) {
 	for _, item := range *slice {
 		if item == value {

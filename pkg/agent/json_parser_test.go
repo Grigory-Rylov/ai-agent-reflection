@@ -81,7 +81,7 @@ func TestParseJSONToolCalls_MultipleJSON(t *testing.T) {
 }
 
 func TestParseJSONToolCalls_NotAToolCall(t *testing.T) {
-	// Plain JSON object that doesn't have name+arguments
+	
 	input := `Some text {"foo": "bar"} more text`
 	expected := XMLParseResult{
 		Content: `Some text {"foo": "bar"} more text`,
@@ -178,7 +178,7 @@ func TestParseJSONToolCalls_NoToolCallsPartialJSON(t *testing.T) {
 
 func TestParseJSONToolCalls_JsonInCodeBlock(t *testing.T) {
 	input := "```json\n{\"name\": \"shell_execute\", \"arguments\": {\"command\": \"ls\"}}\n```"
-	// JSON inside code block should be ignored
+	
 	expected := XMLParseResult{
 		Content: input,
 	}
@@ -208,7 +208,7 @@ func TestParseJSONToolCalls_CodeBlockNoLanguage(t *testing.T) {
 }
 
 func TestParseJSONToolCalls_InlineTripleBacktick(t *testing.T) {
-	// Triple backtick inline (not at line start) does NOT start a code block
+	
 	input := "a```\n{\"name\": \"time_get\", \"arguments\": {}}\n```b"
 	result := ParseJSONToolCalls(input)
 	if len(result.ToolCalls) != 1 {

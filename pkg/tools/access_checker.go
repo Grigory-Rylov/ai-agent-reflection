@@ -9,22 +9,20 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/permission"
 )
 
-// Global access controller, shared across all tool instances.
-// Set at startup from main.go, checked by resolvePath.
+
 var globalAccessController *access.Controller
 
-// SetAccessController устанавливает глобальный контроллер доступа.
+
 func SetAccessController(ctrl *access.Controller) {
 	globalAccessController = ctrl
 }
 
-// GetAccessController возвращает текущий контроллер доступа.
+
 func GetAccessController() *access.Controller {
 	return globalAccessController
 }
 
-// CheckPathAllowed проверяет, разрешён ли доступ к указанному пути.
-// Возвращает nil если доступ разрешён, или ошибку с описанием причины отказа.
+
 func CheckPathAllowed(resolvedPath string) error {
 	if globalAccessController == nil {
 		return nil
@@ -43,7 +41,7 @@ func CheckPathAllowed(resolvedPath string) error {
 	return nil
 }
 
-// formatDirs форматирует список директорий для сообщения об ошибке.
+
 func formatDirs(dirs []string) string {
 	if len(dirs) == 0 {
 		return "none"
@@ -55,16 +53,15 @@ func formatDirs(dirs []string) string {
 	return strings.Join(quoted, ", ")
 }
 
-// FileToolKind определяет тип файлового инструмента
+
 type FileToolKind int
 
 const (
-	ToolRead  FileToolKind = iota // только чтение (file_read, file_list)
-	ToolWrite                     // запись (file_write, edit)
+	ToolRead  FileToolKind = iota 
+	ToolWrite                     
 )
 
-// fileToolPaths возвращает список имён параметров, содержащих пути,
-// для указанного инструмента.
+
 func FileToolPaths(toolName string, args map[string]string) []string {
 	switch toolName {
 	case "file_read", "read_file":
@@ -99,13 +96,12 @@ func FileToolPaths(toolName string, args map[string]string) []string {
 		}
 		return []string{"."}
 	case "shell_execute", "shell":
-		return nil // командная строка — проверяем отдельно
+		return nil 
 	}
 	return nil
 }
 
-// fileCommands содержит команды, оперирующие файлами/директориями.
-// Для этих команд ExtractShellPaths извлекает пути из аргументов.
+
 var fileCommands = map[string]bool{
 	"cat": true, "less": true, "more": true, "head": true, "tail": true,
 	"ls": true, "find": true,
@@ -116,14 +112,12 @@ var fileCommands = map[string]bool{
 	"git": true,
 }
 
-// isAbsolutePath возвращает true, если строка выглядит как абсолютный Unix-путь.
+
 func isAbsolutePath(s string) bool {
 	return len(s) > 0 && s[0] == '/'
 }
 
-// looksLikePath проверяет, похож ли токен на путь к файлу.
-// Исключает флаги, IP-адреса, URL, хосты, цитируемые строки, опции
-// и токены с glob-символами (?, *, [, ]).
+
 func looksLikePath(token string) bool {
 	if strings.HasPrefix(token, "-") {
 		return false
@@ -131,7 +125,7 @@ func looksLikePath(token string) bool {
 	if len(token) > 0 && (token[0] == '\'' || token[0] == '"' || token[0] == '`') {
 		return false
 	}
-	// Glob-символы → не путь
+	
 	if strings.ContainsAny(token, "?*[]!") {
 		return false
 	}
@@ -174,8 +168,7 @@ func looksLikePath(token string) bool {
 	return false
 }
 
-// ExtractShellPaths извлекает пути к файлам из shell-команды.
-// Возвращает пустой слайс, если команда не оперирует файлами.
+
 func ExtractShellPaths(command string) []string {
 	if command == "" {
 		return nil
@@ -203,9 +196,7 @@ func ExtractShellPaths(command string) []string {
 	return paths
 }
 
-// PathsAllAllowed проверяет, что все указанные пути находятся
-// в разрешённых директориях access controller'а.
-// Возвращает true если контроллера нет, путей нет, или все пути разрешены.
+
 func PathsAllAllowed(paths []string) bool {
 	ctrl := GetAccessController()
 	if ctrl == nil {
@@ -223,23 +214,17 @@ func PathsAllAllowed(paths []string) bool {
 	return true
 }
 
-// ShellPathsAllAllowed проверяет, что все указанные пути находятся
-// в разрешённых директориях access controller'а.
-// Возвращает true если контроллера нет, путей нет, или все пути разрешены.
+
 func ShellPathsAllAllowed(paths []string) bool {
 	return PathsAllAllowed(paths)
 }
 
-// cwdShellCommands меняют рабочую директорию и не требуют отдельной проверки.
+
 var cwdShellCommands = map[string]bool{
 	"cd": true, "chdir": true, "popd": true, "pushd": true,
 }
 
-// ShellCommandPathsAllowed проверяет, что каждая подкоманда shell-команды
-// работает только внутри разрешённых директорий (рабочая папка и allowed_dirs).
-// Возвращает false, если какая-то подкоманда не оперирует файлами или
-// трогает путь вне разрешённых директорий — такую команду нужно
-// проверять паттернами и, возможно, спрашивать пользователя.
+
 func ShellCommandPathsAllowed(command string) bool {
 	if command == "" {
 		return true
@@ -254,7 +239,7 @@ func ShellCommandPathsAllowed(command string) bool {
 	return true
 }
 
-// shellSubcommandPathsAllowed проверяет одну подкоманду.
+
 func shellSubcommandPathsAllowed(sub string, devPaths map[string]bool) bool {
 	parts := strings.Fields(sub)
 	if len(parts) == 0 {
@@ -271,9 +256,7 @@ func shellSubcommandPathsAllowed(sub string, devPaths map[string]bool) bool {
 	return fileCommands[cmd]
 }
 
-// commandParts пропускает ведущие env-присваивания вида VAR=... и возвращает
-// оставшиеся токены и имя команды (basename). Если команда состоит только
-// из env-присваиваний — возвращает исходные токены и пустое имя.
+
 func commandParts(parts []string) ([]string, string) {
 	i := 0
 	for i < len(parts) && isEnvAssignment(parts[i]) {
@@ -290,8 +273,7 @@ func commandParts(parts []string) ([]string, string) {
 	return rest, cmd
 }
 
-// isEnvAssignment возвращает true для токена вида VAR=value (имя без '/',
-// чтобы не спутать с путём, содержащим '=').
+
 func isEnvAssignment(token string) bool {
 	eq := strings.IndexByte(token, '=')
 	if eq <= 0 || strings.HasPrefix(token, "-") {
@@ -300,19 +282,14 @@ func isEnvAssignment(token string) bool {
 	return !strings.Contains(token[:eq], "/")
 }
 
-// wrapperCommands — команды, которые запускают другую программу/интерпретатор
-// первым аргументом (nohup bash script, time cmd, env cmd). Путь такой
-// программы-интерпретатора файловой операцией не считается.
+
 var wrapperCommands = map[string]bool{
 	"nohup": true, "time": true, "env": true, "sudo": true,
 	"xargs": true, "nice": true, "ionice": true, "stdbuf": true,
 	"setsid": true, "timeout": true, "command": true, "exec": true,
 }
 
-// wrapperInterpreterToken возвращает токен программы, которую wrapper-команда
-// запускает первым аргументом (nohup /bin/bash script), пропуская env-префиксы
-// (VAR=x) и флаги. Возвращает "" если команда не wrapper или программа
-// интерпретатором не является.
+
 func wrapperInterpreterToken(rest []string, cmd string) string {
 	if !wrapperCommands[cmd] {
 		return ""
@@ -331,16 +308,14 @@ func wrapperInterpreterToken(rest []string, cmd string) string {
 	return ""
 }
 
-// knownInterpreterBasenames — общеизвестные интерпретаторы, запускаемые через
-// wrapper-команды (nohup bash ..., env python3 ..., time node ...).
+
 var knownInterpreterBasenames = map[string]bool{
 	"bash": true, "sh": true, "dash": true, "zsh": true, "ksh": true,
 	"python": true, "python2": true, "python3": true, "perl": true,
 	"ruby": true, "node": true, "php": true, "lua": true, "pwsh": true,
 }
 
-// isKnownInterpreter возвращает true, если токен — путь или имя известного
-// интерпретатора (bash, python3, node и т.п.).
+
 func isKnownInterpreter(token string) bool {
 	name := token
 	if idx := strings.LastIndex(name, "/"); idx >= 0 {
@@ -349,9 +324,7 @@ func isKnownInterpreter(token string) bool {
 	return knownInterpreterBasenames[name]
 }
 
-// isExplicitPathToken возвращает true для токена, который однозначно
-// ссылается на файловую систему: абсолютный путь, ~ или ...
-// Точковые токены вроде com.avito.android или 1.2.3 путями не считаются.
+
 func isExplicitPathToken(token string) bool {
 	if strings.HasPrefix(token, "-") {
 		return false
@@ -359,18 +332,12 @@ func isExplicitPathToken(token string) bool {
 	return isAbsolutePath(token) || strings.HasPrefix(token, "~") || token == ".."
 }
 
-// isDiscardPath возвращает true для псевдо-устройств, запись в которые
-// ничего не сохраняет (например, /dev/null). Такие пути не считаются
-// файловыми операциями и не проверяются против allowed_dirs.
+
 func isDiscardPath(p string) bool {
 	return p == "/dev/null"
 }
 
-// collectFilePaths собирает локальные (host) файловые пути подкоманды:
-// пути из аргументов файловых команд, цели редиректов и явные пути
-// (абсолютные, ~, ..) в любом месте подкоманды. Пути удалённого устройства
-// из devPaths (см. collectDevicePaths) и discard-пути (/dev/null) не считаются
-// хостовыми файловыми операциями.
+
 func collectFilePaths(sub string, devPaths map[string]bool) []string {
 	parts := strings.Fields(sub)
 	if len(parts) == 0 {
@@ -408,10 +375,7 @@ func collectFilePaths(sub string, devPaths map[string]bool) []string {
 	return paths
 }
 
-// remoteHostPaths возвращает локальные пути для команд, работающих с удалённым
-// устройством/хостом (adb, ssh, scp). Второе значение — true, если команда
-// удалённая. Пути внутри adb shell, ssh host или scp host:... относятся к
-// чужой файловой системе и против allowed_dirs хоста не проверяются.
+
 func remoteHostPaths(sub string) ([]string, bool) {
 	parts := strings.Fields(sub)
 	if len(parts) == 0 {
@@ -432,8 +396,7 @@ func remoteHostPaths(sub string) ([]string, bool) {
 	return nil, false
 }
 
-// adbVerbIndex возвращает индекс глагола adb и аргументы после него,
-// пропуская опции устройства (-s serial, -H host, -P port, -t transport...).
+
 func adbVerbIndex(parts []string) (int, []string) {
 	for i := 1; i < len(parts); i++ {
 		switch parts[i] {
@@ -449,9 +412,7 @@ func adbVerbIndex(parts []string) (int, []string) {
 	return -1, nil
 }
 
-// adbHostPaths возвращает хостовые файлы adb-команды: источник push,
-// приёмник pull, пакет install/sideload. Прочие adb-команды (shell и др.)
-// работают с устройством и хостовых путей не имеют.
+
 func adbHostPaths(parts []string) []string {
 	verbIdx, rest := adbVerbIndex(parts)
 	if verbIdx < 0 || len(rest) == 0 {
@@ -471,8 +432,7 @@ func adbHostPaths(parts []string) []string {
 	return []string{}
 }
 
-// isPathArgToken возвращает true для токена-аргумента, похожего на путь,
-// исключая операторы оболочки и fd-редиректы (2>&1, 1> и т.п.).
+
 func isPathArgToken(tok string) bool {
 	if isShellOperatorToken(tok) {
 		return false
@@ -483,8 +443,7 @@ func isPathArgToken(tok string) bool {
 	return looksLikePath(tok) || isExplicitPathToken(tok)
 }
 
-// sshHostPaths возвращает хостовые файлы ssh-команды (-i key). Всё после
-// host — удалённая команда и хостовых путей не содержит.
+
 func sshHostPaths(parts []string) []string {
 	var host []string
 	for i := 1; i < len(parts); i++ {
@@ -503,7 +462,7 @@ func sshHostPaths(parts []string) []string {
 	return host
 }
 
-// scpHostPaths возвращает локальные пути scp: токены без префикса host:.
+
 func scpHostPaths(parts []string) []string {
 	var local []string
 	for _, tok := range parts[1:] {
@@ -517,7 +476,7 @@ func scpHostPaths(parts []string) []string {
 	return local
 }
 
-// isRemoteSCPToken возвращает true для токена вида [user@]host:path.
+
 func isRemoteSCPToken(tok string) bool {
 	idx := strings.IndexByte(tok, ':')
 	if idx <= 0 {
@@ -527,10 +486,7 @@ func isRemoteSCPToken(tok string) bool {
 	return slash < 0 || idx < slash
 }
 
-// collectDevicePaths собирает пути, принадлежащие файловой системе удалённого
-// устройства/хоста, из всех подкоманд. Такие пути, упомянутые в хостовых
-// подкомандах цепочки (например cat /data/local/tmp/ui.xml после adb shell
-// uiautomator dump ...), не проверяются против allowed_dirs.
+
 func collectDevicePaths(subs []string) map[string]bool {
 	dev := make(map[string]bool)
 	for _, sub := range subs {
@@ -541,7 +497,7 @@ func collectDevicePaths(subs []string) map[string]bool {
 	return dev
 }
 
-// devicePathsIn возвращает пути устройства/удалённого хоста в одной подкоманде.
+
 func devicePathsIn(sub string) []string {
 	parts := strings.Fields(sub)
 	if len(parts) == 0 {
@@ -562,8 +518,7 @@ func devicePathsIn(sub string) []string {
 	return nil
 }
 
-// adbDevicePaths возвращает пути устройства для adb shell/exec-out/exec-in
-// (всё после глагола), push (цель) и pull (источник).
+
 func adbDevicePaths(parts []string) []string {
 	verbIdx, rest := adbVerbIndex(parts)
 	if verbIdx < 0 {
@@ -584,7 +539,7 @@ func adbDevicePaths(parts []string) []string {
 	return nil
 }
 
-// sshRemotePaths возвращает пути удалённой команды ssh (всё после host).
+
 func sshRemotePaths(parts []string) []string {
 	var out []string
 	for i := 1; i < len(parts); i++ {
@@ -602,7 +557,7 @@ func sshRemotePaths(parts []string) []string {
 	return out
 }
 
-// scpRemotePaths возвращает пути вида host:path в scp-команде.
+
 func scpRemotePaths(parts []string) []string {
 	var out []string
 	for _, tok := range parts[1:] {
@@ -618,9 +573,7 @@ func scpRemotePaths(parts []string) []string {
 	return out
 }
 
-// pathLikeTokens возвращает токены, похожие на пути (абсолютные, ~, ..,
-// точковые), отбрасывая флаги. Сбор останавливается на операторах оболочки
-// (> < | && ;), после которых идёт хостовый контекст, а не устройство.
+
 func pathLikeTokens(tokens []string) []string {
 	var out []string
 	for _, tok := range tokens {
@@ -637,7 +590,7 @@ func pathLikeTokens(tokens []string) []string {
 	return out
 }
 
-// isShellOperatorToken возвращает true для токена-оператора оболочки.
+
 func isShellOperatorToken(tok string) bool {
 	if strings.HasPrefix(tok, ">") || strings.HasPrefix(tok, "<") {
 		return true
@@ -649,8 +602,7 @@ func isShellOperatorToken(tok string) bool {
 	return false
 }
 
-// cwdTargetAllowed проверяет, что цель cd/pushd находится внутри
-// разрешённых директорий. popd и cd без аргумента считаем непроверяемыми.
+
 func cwdTargetAllowed(parts []string) bool {
 	if parts[0] == "popd" {
 		return false
@@ -661,9 +613,7 @@ func cwdTargetAllowed(parts []string) bool {
 	return PathsAllAllowed(parts[1:2])
 }
 
-// redirectionTargets извлекает цели редиректов (> >> < 2> 2>> ...) из подкоманды.
-// Обрабатывает как отдельные токены оператора (> file), так и слитные (>/file).
-// fd-редиректы вида 2>&1 пропускаются.
+
 func redirectionTargets(sub string) []string {
 	var targets []string
 	tokens := strings.Fields(sub)
@@ -685,10 +635,7 @@ func redirectionTargets(sub string) []string {
 	return targets
 }
 
-// ShellCommandHasFilePaths возвращает true, если shell-команда содержит явные
-// хостовые файловые операции: пути в аргументах файловых команд, цели
-// редиректов или абсолютные пути/.. /~ в любом месте команды. Пути удалённого
-// устройства (adb shell, ssh, scp) не считаются хостовыми.
+
 func ShellCommandHasFilePaths(command string) bool {
 	if command == "" {
 		return false
@@ -703,16 +650,12 @@ func ShellCommandHasFilePaths(command string) bool {
 	return false
 }
 
-// shellSubcommandHasFilePaths проверяет одну подкоманду.
+
 func shellSubcommandHasFilePaths(sub string, devPaths map[string]bool) bool {
 	return len(collectFilePaths(sub, devPaths)) > 0
 }
 
-// ShellCommandFilesystemSafe возвращает true, если команда не трогает файлы
-// вне разрешённых директорий: каждая подкоманда либо не имеет хостовых путей
-// (устройство adb/ssh/scp, файловая команда в рабочей папке, команда без
-// файловых операций), либо все её хостовые пути находятся в allowed_dirs.
-// Используется флагом пропуска запроса для безопасных команд.
+
 func ShellCommandFilesystemSafe(command string) bool {
 	if command == "" {
 		return true
@@ -728,7 +671,7 @@ func ShellCommandFilesystemSafe(command string) bool {
 	return true
 }
 
-// CheckToolArgs проверяет все пути в аргументах инструмента на доступ.
+
 func CheckToolArgs(toolName string, args map[string]string) error {
 	paths := FileToolPaths(toolName, args)
 	for _, p := range paths {
@@ -739,7 +682,7 @@ func CheckToolArgs(toolName string, args map[string]string) error {
 		if err := CheckPathAllowed(resolved); err != nil {
 			return err
 		}
-		// Для glob с паттерном — проверяем что результат останется внутри разрешённых
+		
 		if toolName == "glob" || toolName == "find_files" {
 			if pattern, ok := args["pattern"]; ok && pattern != "" {
 				matchPath := filepath.Join(resolved, pattern)

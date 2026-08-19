@@ -13,11 +13,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
 )
 
-// ============================================================
-// LLMCompressor — компрессор через llama-server API
-// ============================================================
 
-// LLMCompressor использует модель для сжатия контекста
 type LLMCompressor struct {
 	serverURL   string
 	model       string
@@ -25,17 +21,17 @@ type LLMCompressor struct {
 	temperature float64
 }
 
-// Model возвращает имя модели, с которой работает компрессор.
+
 func (c *LLMCompressor) Model() string {
 	return c.model
 }
 
-// ServerURL возвращает адрес llama-server, на который настроен компрессор.
+
 func (c *LLMCompressor) ServerURL() string {
 	return c.serverURL
 }
 
-// NewLLMCompressor создаёт новый компрессор через llama-server
+
 func NewLLMCompressor(serverURL, model string, temperature float64) *LLMCompressor {
 	return &LLMCompressor{
 		serverURL:   serverURL,
@@ -47,29 +43,29 @@ func NewLLMCompressor(serverURL, model string, temperature float64) *LLMCompress
 	}
 }
 
-// Compress сжимает контекст путём отправки запроса модели
+
 func (c *LLMCompressor) Compress(ctx context.Context, req *CompressionRequest) (*CompressionResult, error) {
 	if req.TargetTokens <= 0 {
 		req.TargetTokens = 2000
 	}
 
-	// Считаем токены до сжатия
+	
 	originalTokens := c.simpleCountTokens(req.Messages)
 
-	// Формируем промпт для сжатия
+	
 	systemPrompt := c.buildCompressionSystemPrompt(req)
 	userPrompt := c.buildCompressionUserPrompt(req.Messages, req.TargetTokens)
 
-	// Отправляем запрос на сжатие (streaming для быстрой обработки)
+	
 	compressedText, summary, err := c.sendCompressionRequestStreaming(ctx, systemPrompt, userPrompt, req.TargetTokens)
 	if err != nil {
 		return nil, fmt.Errorf("compression request failed: %w", err)
 	}
 
-	// Считаем токены после сжатия
+	
 	compressedTokens, _ := c.countTextTokens(compressedText)
 
-	// Суммаризация — добавляем резюме и сжатый текст
+	
 	compressedMessages := []tokenizers.Message{
 		{
 			Role:    "system",
@@ -93,7 +89,7 @@ func (c *LLMCompressor) Compress(ctx context.Context, req *CompressionRequest) (
 	}, nil
 }
 
-// buildCompressionSystemPrompt формирует системный промпт для сжатия
+
 func (c *LLMCompressor) buildCompressionSystemPrompt(req *CompressionRequest) string {
 	return fmt.Sprintf(`You are a context compression assistant. Your task is to compress conversation history while preserving essential information.
 
@@ -106,7 +102,7 @@ Important:
 - Keep the response concise and focused`)
 }
 
-// buildCompressionUserPrompt формирует пользовательский промпт для сжатия
+
 func (c *LLMCompressor) buildCompressionUserPrompt(messages []tokenizers.Message, targetTokens int) string {
 	var sb strings.Builder
 	sb.WriteString("Please compress the following conversation:\n\n")
@@ -121,7 +117,7 @@ func (c *LLMCompressor) buildCompressionUserPrompt(messages []tokenizers.Message
 	return sb.String()
 }
 
-// sendCompressionRequest отправляет запрос на сжатие к модели
+
 func (c *LLMCompressor) sendCompressionRequest(ctx context.Context, systemPrompt, userPrompt string, targetTokens int) (string, string, error) {
 	reqBody := map[string]interface{}{
 		"model": c.model,
@@ -156,7 +152,7 @@ func (c *LLMCompressor) sendCompressionRequest(ctx context.Context, systemPrompt
 		return "", "", fmt.Errorf("API error: status %d", resp.StatusCode)
 	}
 
-	// Парсим ответ
+	
 	var apiResponse struct {
 		Choices []struct {
 			Message struct {
@@ -182,8 +178,7 @@ func (c *LLMCompressor) sendCompressionRequest(ctx context.Context, systemPrompt
 	return compressedText, summary, nil
 }
 
-// sendCompressionRequestStreaming отправляет запрос на сжатие с streaming-ответом.
-// Позволяет быстрее начать обработку и не блокировать контекст полным ответом.
+
 func (c *LLMCompressor) sendCompressionRequestStreaming(ctx context.Context, systemPrompt, userPrompt string, targetTokens int) (string, string, error) {
 	reqBody := map[string]interface{}{
 		"model": c.model,
@@ -218,7 +213,7 @@ func (c *LLMCompressor) sendCompressionRequestStreaming(ctx context.Context, sys
 		return "", "", fmt.Errorf("API error: status %d", resp.StatusCode)
 	}
 
-	// Парсим SSE поток
+	
 	var (
 		contentBuilder strings.Builder
 		completionN    int
@@ -270,17 +265,17 @@ func (c *LLMCompressor) sendCompressionRequestStreaming(ctx context.Context, sys
 	return compressedText, summary, nil
 }
 
-// simpleCountTokens — простой подсчёт без API
+
 func (c *LLMCompressor) simpleCountTokens(messages []tokenizers.Message) int {
 	total := 0
 	for _, msg := range messages {
 		tokens := len(strings.Fields(msg.Content))
-		total += tokens + 2 // +2 для роли
+		total += tokens + 2 
 	}
 	return total
 }
 
-// countTextTokens подсчитывает токены в тексте
+
 func (c *LLMCompressor) countTextTokens(text string) (int, error) {
 	tokenizer := tokenizers.NewLlamaServerTokenizer(c.serverURL, c.model, 8192)
 	return tokenizer.CountTokens(text)

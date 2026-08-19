@@ -8,42 +8,42 @@ import (
 	"strings"
 )
 
-// EventType определяет тип SSE-события
+
 type EventType string
 
 const (
-	EventDelta     EventType = "delta"     // Новый токен ответа
-	EventReasoning EventType = "reasoning" // Токен размышления
-	EventStop      EventType = "stop"      // Завершение генерации
-	EventDone      EventType = "done"      // Маркер окончания потока [DONE]
+	EventDelta     EventType = "delta"     
+	EventReasoning EventType = "reasoning" 
+	EventStop      EventType = "stop"      
+	EventDone      EventType = "done"      
 )
 
-// DeltaChunk — вложенная структура delta из ответа
+
 type DeltaChunk struct {
 	Role           string `json:"role"`
 	Content        string `json:"content"`
 	ReasoningContent string `json:"reasoning_content"`
 }
 
-// SSEChunk — распарсенный чанк из SSE-потока
+
 type SSEChunk struct {
 	ID      string `json:"id"`
 	Object  string `json:"object"`
 	Created int64  `json:"created"`
 	Model   string `json:"model"`
 
-	// Выбор из ответа
+	
 	ChoiceIndex    int         `json:"choice_index"`
 	FinishReason   *string     `json:"finish_reason"`
 	Delta          DeltaChunk  `json:"delta"`
 	Content        string      `json:"-"`
 	ReasoningContent string   `json:"-"`
 
-	// Тайминги (из финального события)
+	
 	Timings *Timings `json:"timings"`
 }
 
-// Timings содержит статистику генерации
+
 type Timings struct {
 	PromptN            int64   `json:"prompt_n"`
 	PromptMS           float64 `json:"prompt_ms"`
@@ -55,9 +55,9 @@ type Timings struct {
 	PredictedPerSecond float64 `json:"predicted_per_second"`
 }
 
-// UnmarshalJSON кастомный парсинг для извлечения content из delta
+
 func (c *SSEChunk) UnmarshalJSON(data []byte) error {
-	// Парсим в промежуточную структуру
+	
 	var raw struct {
 		ID           string     `json:"id"`
 		Object       string     `json:"object"`
@@ -75,7 +75,7 @@ func (c *SSEChunk) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	// Копируем поля
+	
 	c.ID = raw.ID
 	c.Object = raw.Object
 	c.Created = raw.Created
@@ -94,7 +94,7 @@ func (c *SSEChunk) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// EventType возвращает тип события на основе содержимого чанка
+
 func (c SSEChunk) EventType() EventType {
 	if c.FinishReason != nil {
 		return EventStop
@@ -108,12 +108,12 @@ func (c SSEChunk) EventType() EventType {
 	return ""
 }
 
-// IsCompletion возвращает true если генерация завершена
+
 func (c SSEChunk) IsCompletion() bool {
 	return c.FinishReason != nil
 }
 
-// IsStopReason возвращает true если есть причина остановки
+
 func (c SSEChunk) IsStopReason() bool {
 	if c.FinishReason == nil {
 		return false
@@ -121,23 +121,19 @@ func (c SSEChunk) IsStopReason() bool {
 	return *c.FinishReason == "stop" || *c.FinishReason == "length" || *c.FinishReason == "eoi" || *c.FinishReason == "eos"
 }
 
-// ============================================================
-// SSE-парсер
-// ============================================================
 
-// Parser парсит SSE-поток из llama-server
 type Parser struct {
 	reader *bufio.Reader
 }
 
-// NewParser создаёт новый парсер
+
 func NewParser(r io.Reader) *Parser {
 	return &Parser{
 		reader: bufio.NewReader(r),
 	}
 }
 
-// ParseChunk читает одну строку и возвращает тип события + данные
+
 func (p *Parser) ParseChunk() (EventType, string, error) {
 	line, err := p.reader.ReadSlice('\n')
 	if err != nil {
@@ -147,30 +143,30 @@ func (p *Parser) ParseChunk() (EventType, string, error) {
 		return "", "", fmt.Errorf("failed to read line: %w", err)
 	}
 
-	// Убираем перевод строки
+	
 	lineStr := strings.TrimSpace(string(line))
 
-	// Пустая строка — пропуск
+	
 	if lineStr == "" {
-		return p.ParseChunk() // Рекурсивно читаем следующую строку
+		return p.ParseChunk() 
 	}
 
-	// Маркер [DONE]
+	
 	if strings.Contains(lineStr, "[DONE]") {
 		return EventDone, "", nil
 	}
 
-	// Проверяем формат "data: {json}"
+	
 	if !strings.HasPrefix(lineStr, "data: ") {
 		return "", "", fmt.Errorf("invalid SSE format: %s", lineStr)
 	}
 
-	// Извлекаем JSON
+	
 	jsonData := strings.TrimPrefix(lineStr, "data: ")
 	return "", jsonData, nil
 }
 
-// ParseStream читает весь SSE-поток и возвращает чанки
+
 func (p *Parser) ParseStream() ([]SSEChunk, EventType, error) {
 	var chunks []SSEChunk
 	var lastEventType EventType
@@ -181,15 +177,15 @@ func (p *Parser) ParseStream() ([]SSEChunk, EventType, error) {
 			return chunks, lastEventType, err
 		}
 
-		// Обработка [DONE]
+		
 		if eventType == EventDone {
 			return chunks, EventDone, nil
 		}
 
-		// Парсим JSON
+		
 		var chunk SSEChunk
 		if err := json.Unmarshal([]byte(jsonData), &chunk); err != nil {
-			continue // Пропускаем невалидные JSON
+			continue 
 		}
 
 		chunks = append(chunks, chunk)
@@ -197,11 +193,7 @@ func (p *Parser) ParseStream() ([]SSEChunk, EventType, error) {
 	}
 }
 
-// ============================================================
-// Утилиты для тестов
-// ============================================================
 
-// ParseSSELine парсит одну строку SSE в SSEChunk (для тестов)
 func ParseSSELine(line string) (SSEChunk, error) {
 	if !strings.HasPrefix(line, "data: ") {
 		return SSEChunk{}, fmt.Errorf("invalid SSE format: %s", line)
@@ -216,7 +208,7 @@ func ParseSSELine(line string) (SSEChunk, error) {
 	return chunk, nil
 }
 
-// CountChunksByType считает количество чанков по типам
+
 func CountChunksByType(chunks []SSEChunk) (delta, reasoning, stop int) {
 	for _, c := range chunks {
 		switch c.EventType() {
@@ -231,7 +223,7 @@ func CountChunksByType(chunks []SSEChunk) (delta, reasoning, stop int) {
 	return
 }
 
-// ExtractContent собирает полный контент ответа
+
 func ExtractContent(chunks []SSEChunk) string {
 	var result strings.Builder
 	for _, c := range chunks {
@@ -242,7 +234,7 @@ func ExtractContent(chunks []SSEChunk) string {
 	return result.String()
 }
 
-// ExtractReasoning собирает полное содержимое размышлений
+
 func ExtractReasoning(chunks []SSEChunk) string {
 	var result strings.Builder
 	for _, c := range chunks {

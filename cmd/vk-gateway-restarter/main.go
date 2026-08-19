@@ -126,7 +126,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	vkClient := vk.NewBotClient(config.TokenVK) // для отправки статусов о рестарте/обновлении
+	vkClient := vk.NewBotClient(config.TokenVK) 
 	var agent agentProc
 	agentPath := filepath.Join(agentDir, "agent")
 
@@ -164,7 +164,7 @@ func main() {
 	fmt.Println("[restarter] Shutdown complete")
 }
 
-// sendWelcome отправляет приветственный статус, если агент ещё не запущен.
+
 func sendWelcome(vkClient *vk.BotClient, peerID int64) {
 	if peerID <= 0 {
 		return
@@ -173,13 +173,12 @@ func sendWelcome(vkClient *vk.BotClient, peerID int64) {
 	vkClient.SendMessage(peerID, msg)
 }
 
-// monitorAgent — НИКОГДА не рестартит агента автоматически.
-// Рестарт ТОЛЬКО по файлу-сигналу .agent-restart (когда агент получает /restart через VK).
+
 func monitorAgent(ctx context.Context, ap *agentProc, agentPath string, agentArgs []string, vkClient *vk.BotClient, peerID int64) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	// Используем тот же working directory, что и агент.
+	
 	wd, _ := os.Getwd()
 	restartSignal := filepath.Join(wd, ".agent-restart")
 	updateSignal := filepath.Join(wd, ".agent-update")
@@ -196,7 +195,7 @@ func monitorAgent(ctx context.Context, ap *agentProc, agentPath string, agentArg
 				fmt.Println("[restarter] Agent not running — waiting for /restart command")
 			}
 
-			// Проверяем файл-сигнал рестарта (создаётся агентом при получении /restart).
+			
 			if _, err := os.Stat(restartSignal); err == nil {
 				os.Remove(restartSignal)
 				fmt.Println("[restarter] Restart requested via signal file")
@@ -204,7 +203,7 @@ func monitorAgent(ctx context.Context, ap *agentProc, agentPath string, agentArg
 				continue
 			}
 
-			// Проверяем сигнал обновления: git pull + build + restart.
+			
 			if _, err := os.Stat(updateSignal); err == nil {
 				os.Remove(updateSignal)
 				fmt.Println("[restarter] Update requested via signal file")
@@ -212,7 +211,7 @@ func monitorAgent(ctx context.Context, ap *agentProc, agentPath string, agentArg
 				continue
 			}
 
-			// Проверяем сигнал переключения ветки: git checkout + build + restart.
+			
 			if branchData, err := os.ReadFile(branchSignal); err == nil {
 				os.Remove(branchSignal)
 				branch := strings.TrimSpace(string(branchData))
@@ -344,12 +343,12 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 					replyPeerID = config.PeerID
 				}
 
-				// Если агент ЗАПУЩЕН, он сам обрабатывает /restart, /update, /b
-				// (пишет файлы-сигналы .agent-restart/.agent-update/.agent-branch),
-				// а monitorAgent по ним единолично рестартит. Здесь дублировать
-				// рестарт НЕЛЬЗЯ: два обработчика (listener + monitor) на один
-				// agentProc → гонка, двойной ap.start() и два «✅ Агент перезапущен».
-				// Listener нужен ТОЛЬКО чтобы запустить агента, когда он остановлен.
+				
+				
+				
+				
+				
+				
 				if ap.isRunning() {
 					switch {
 					case cmd == "/status":
@@ -455,7 +454,7 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 	}
 }
 
-// sendRestarterStatus отправляет статус рестартера и агента.
+
 func sendRestarterStatus(vkClient *vk.BotClient, peerID int64, ap *agentProc) {
 	status := fmt.Sprintf("Restarter v%s (build %s)\n", Version, buildinfo.HumanReadable())
 	if ap.isRunning() {

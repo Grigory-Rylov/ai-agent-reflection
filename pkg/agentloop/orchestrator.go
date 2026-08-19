@@ -41,7 +41,7 @@ type OrchestratorConfig struct {
 	Slots                *SlotClient
 }
 
-// agentCtxEntry — записан контекст активного агента для принудительной отмены.
+
 type agentCtxEntry struct {
 	cancel    context.CancelFunc
 	sessionID string
@@ -53,8 +53,8 @@ type Orchestrator struct {
 	thoughtPeer int64
 	activeAgent string
 	activeMu    sync.RWMutex
-	// activeAgents — трекер активных агентов для принудительной отмены при /clear.
-	activeAgents   map[string]*agentCtxEntry // sessionID → entry
+	
+	activeAgents   map[string]*agentCtxEntry 
 	activeAgentsMu sync.Mutex
 }
 
@@ -66,7 +66,7 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 	}
 }
 
-// registerAgentContext регистрирует контекст агента для принудительной отмены.
+
 func (o *Orchestrator) registerAgentContext(sessionID string, peerID int64, cancel context.CancelFunc) {
 	o.activeAgentsMu.Lock()
 	defer o.activeAgentsMu.Unlock()
@@ -76,14 +76,14 @@ func (o *Orchestrator) registerAgentContext(sessionID string, peerID int64, canc
 	}
 }
 
-// unregisterAgentContext удаляет регистрацию контекста агента после завершения.
+
 func (o *Orchestrator) unregisterAgentContext(sessionID string) {
 	o.activeAgentsMu.Lock()
 	defer o.activeAgentsMu.Unlock()
 	delete(o.activeAgents, sessionID)
 }
 
-// unregisterAndReleaseOnCancel — deferred-хелпер: deregистрирует контекст и освобождает слот.
+
 func (o *Orchestrator) unregisterAndReleaseOnCancel(sessionID string) {
 	o.unregisterAgentContext(sessionID)
 }
@@ -128,7 +128,7 @@ func (o *Orchestrator) ExecuteTask(ctx context.Context, task string, peerID int6
 	return qaResult, nil
 }
 
-// prepareAgentPrompt loads system prompt and appends max-review constraint if configured.
+
 func (o *Orchestrator) prepareAgentPrompt(agentName string) (string, error) {
 	prompt, err := o.loadSystemPrompt(agentName)
 	if err != nil {
@@ -140,29 +140,27 @@ func (o *Orchestrator) prepareAgentPrompt(agentName string) (string, error) {
 	return prompt, nil
 }
 
-// handleAgentFailure cleans up after ProcessMessage error: cancels context,
-// saves history for recovery, and releases slot.
+
 func (o *Orchestrator) handleAgentFailure(cancel context.CancelFunc, a agent.Agent, rootID, sessionID string, peerID int64, task string) {
 	cancel()
-	// Слот освобождаем (KV-cache после падения всё равно устарел), но
-	// цепочку/БД не чистим — незавершённую работу восстановит ResumeActiveChains.
-	// Сохраняем историю, чтобы восстановленная сессия не была пустой.
+	
+	
+	
 	if rootID != "" {
 		o.saveAgentHistory(a, rootID, peerID, task)
 	}
 	o.releaseAgentSlot(sessionID)
 }
 
-// finishAgentSession cleans up after successful agent execution: cancels context
-// and either ends the root session or releases the slot.
+
 func (o *Orchestrator) finishAgentSession(cancel context.CancelFunc, rootID, sessionID string, peerID int64) {
 	cancel()
-	// KV-cache сохраняется per-response внутри agent_impl (через SlotSaver),
-	// поэтому здесь только освобождаем слот.
+	
+	
 	if rootID != "" {
 		o.endRootSession(peerID, rootID)
 	} else {
-		// Стора нет, но слот мог быть выделен — освободим.
+		
 		o.releaseAgentSlot(sessionID)
 	}
 }
@@ -208,9 +206,7 @@ func (o *Orchestrator) RunAgent(ctx context.Context, agentName, task string, pee
 	return response, nil
 }
 
-// beginRootSession сохраняет корневую сессию агента и цепочку [rootID] в БД.
-// sessionID — тот же ID, что привязан к слоту и к session.SessionID агента.
-// Возвращает пустую строку, если стор не настроен.
+
 func (o *Orchestrator) beginRootSession(agentName, systemPrompt, task string, peerID int64, sessionID string) string {
 	if o.config.Store == nil || sessionID == "" {
 		return ""
@@ -227,9 +223,7 @@ func (o *Orchestrator) beginRootSession(agentName, systemPrompt, task string, pe
 	return sessionID
 }
 
-// saveAgentHistory сохраняет историю сообщений сессии агента в БД
-// (agent_sessions.messages). Нужно, чтобы ResumeActiveChains восстановил
-// непустой контекст, а не пустую сессию.
+
 func (o *Orchestrator) saveAgentHistory(a agent.Agent, sessionID string, peerID int64, lastPrompt string) {
 	if o.config.Store == nil || sessionID == "" || a == nil {
 		return
@@ -244,16 +238,12 @@ func (o *Orchestrator) saveAgentHistory(a agent.Agent, sessionID string, peerID 
 	}
 }
 
-// releaseAgentSlot освобождает слот агента (удаляет файл, очищает серверный
-// слот, возвращает в пул). No-op без SlotManager. Вызывается при завершении
-// агента — успехе, ошибке или сбросе, — чтобы слот не утёк и следующий агент
-// стартовал со свободного слота.
+
 func (o *Orchestrator) releaseAgentSlot(sessionID string) {
 	ReleaseSessionSlot(o.config.SlotManager, o.config.Slots, o.config.ModelHolder, sessionID, o.config.Logger)
 }
 
-// endRootSession освобождает слот корневой сессии, удаляет её строку в БД и
-// очищает цепочку после успешного завершения агента.
+
 func (o *Orchestrator) endRootSession(peerID int64, rootID string) {
 	o.releaseAgentSlot(rootID)
 	if o.config.Store == nil || rootID == "" {
@@ -263,9 +253,7 @@ func (o *Orchestrator) endRootSession(peerID int64, rootID string) {
 	o.config.Store.SaveAgentChain(peerID, nil)
 }
 
-// setupAgentTools регистрирует инструменты агента в зависимости от его типа.
-// sessionID — UUID текущей сессии агента, chain — цепочка от корня до неё
-// (нужны SubAgentTool для персистентности вложенных вызовов).
+
 func (o *Orchestrator) setupAgentTools(name string, a agent.Agent, peerID int64, sessionID string, chain []string) error {
 	switch {
 	case o.isCoordinator(name):
@@ -336,11 +324,11 @@ func (o *Orchestrator) GetActiveAgentSessions(peerID int64) (string, error) {
 }
 
 func (o *Orchestrator) ClearActiveSessions(peerID int64) {
-	// Отменяем все зарегистрированные контексты агентов для этого peer,
-	// чтобы работающие сабагенты получили context.Canceled и остановились.
+	
+	
 	cancelled := o.ClearRegisteredAgents(peerID)
 
-	// Освобождаем слоты отменённых агентов (KV-cache stale после cancel).
+	
 	for _, id := range cancelled {
 		o.releaseAgentSlot(id)
 		if o.config.Logger != nil {
@@ -354,10 +342,7 @@ func (o *Orchestrator) ClearActiveSessions(peerID int64) {
 	o.config.Store.ClearAgentChain(peerID)
 }
 
-// ClearRegisteredAgents отменяет ВСЕ зарегистрированные контексты агентов для
-// пира (включая сабагентов, запущенных через task-инструмент главного агента —
-// их ctx не наследуется от ctx запроса и не отменяется cancelActiveRequest).
-// Возвращает список отменённых sessionID для освобождения слотов.
+
 func (o *Orchestrator) ClearRegisteredAgents(peerID int64) []string {
 	var cancelled []string
 	o.activeAgentsMu.Lock()
@@ -372,8 +357,7 @@ func (o *Orchestrator) ClearRegisteredAgents(peerID int64) []string {
 	return cancelled
 }
 
-// ResumeActiveChains восстанавливает незавершённые цепочки сабагентов после рестарта.
-// Проходит цепочки от самой глубокой сессии к корневой, «всплывая» результат наверх.
+
 func (o *Orchestrator) ResumeActiveChains(ctx context.Context) error {
 	if o.config.Store == nil {
 		return nil
@@ -390,7 +374,7 @@ func (o *Orchestrator) ResumeActiveChains(ctx context.Context) error {
 	return nil
 }
 
-// resumeChain восстанавливает одну цепочку: от самой глубокой сессии к корневой.
+
 func (o *Orchestrator) resumeChain(ctx context.Context, chain store.AgentChainData) error {
 	if len(chain.Chain) == 0 {
 		return nil
@@ -422,15 +406,14 @@ func (o *Orchestrator) resumeChain(ctx context.Context, chain store.AgentChainDa
 	return nil
 }
 
-// runResumedAgent пересоздаёт агента из сохранённой сессии и запускает его.
-// chain — цепочка сессий от корня до восстанавливаемого агента (включая его).
+
 func (o *Orchestrator) runResumedAgent(ctx context.Context, sd *store.AgentSessionData, childResult string, chain []string) (string, error) {
 	a, sessionID, err := o.makeSubAgent(sd.AgentName, sd.SystemPrompt, sd.PeerID)
 	if err != nil {
 		return "", err
 	}
-	// Привязываем инструменты к исходной сессии (sd.ID), чтобы цепочка
-	// продолжалась от того же корня; слот же — у свежей сессии sessionID.
+	
+	
 	if err := o.setupAgentTools(sd.AgentName, a, sd.PeerID, sd.ID, chain); err != nil {
 		o.releaseAgentSlot(sessionID)
 		return "", fmt.Errorf("setup tools for resumed agent %q: %w", sd.AgentName, err)
@@ -452,8 +435,7 @@ func (o *Orchestrator) runResumedAgent(ctx context.Context, sd *store.AgentSessi
 	return result, nil
 }
 
-// restoreSessionMessages восстанавливает историю сообщений в сессии агента
-// из сохранённого JSON (формат []session.Message).
+
 func (o *Orchestrator) restoreSessionMessages(s *session.Session, messagesJSON string) {
 	if s == nil || messagesJSON == "" {
 		return
@@ -463,8 +445,8 @@ func (o *Orchestrator) restoreSessionMessages(s *session.Session, messagesJSON s
 		o.debugLog("Resume: failed to parse saved messages: %v", err)
 		return
 	}
-	// Восстанавливаем историю целиком, сохраняя метаданные компактизации
-	// (Summary/Compacted/TailStartID) — маркеры переживают резюм после рестарта.
+	
+	
 	s.RestoreMessages(msgs)
 }
 
@@ -500,9 +482,7 @@ func (o *Orchestrator) isCoordinator(name string) bool {
 	return false
 }
 
-// IsPrimary сообщает, помечен ли агент как primary (mode: primary|all в
-// config.json). Primary-агенты выполняются на главном персистентном агенте и
-// разделяют его зарезервированный контекст с обычным чатом.
+
 func (o *Orchestrator) IsPrimary(name string) bool {
 	if o.config.AgentManager != nil {
 		info, err := o.config.AgentManager.GetAgent(name)
@@ -515,8 +495,7 @@ func (o *Orchestrator) IsPrimary(name string) bool {
 	return false
 }
 
-// GetSystemPrompt возвращает системный промпт агента (из AgentManager или
-// файла {name}.md в SystemPromptDir).
+
 func (o *Orchestrator) GetSystemPrompt(name string) (string, error) {
 	return o.loadSystemPrompt(name)
 }
@@ -531,8 +510,8 @@ func (o *Orchestrator) runWorker(ctx context.Context, task string, peerID int64)
 		return "", err
 	}
 	o.addMainTools(a)
-	// Воркер получает собственный task-инструмент (с ограничением только на
-	// reviewer/explore), а не общий — иначе сможет спавнить других воркеров.
+	
+	
 	if err := o.registerSubAgentTool("worker", a, peerID, sessionID, []string{sessionID}); err != nil {
 		o.releaseAgentSlot(sessionID)
 		return "", err
@@ -544,7 +523,7 @@ func (o *Orchestrator) runWorker(ctx context.Context, task string, peerID int64)
 		o.releaseAgentSlot(sessionID)
 		return "", err
 	}
-	// KV-cache сохраняется per-response внутри agent_impl (SlotSaver).
+	
 	o.endLeafSession(peerID, sessionID)
 	o.releaseAgentSlot(sessionID)
 	return result, err
@@ -571,14 +550,13 @@ func (o *Orchestrator) runQA(ctx context.Context, task string, peerID int64) (st
 		o.releaseAgentSlot(sessionID)
 		return "", err
 	}
-	// KV-cache сохраняется per-response внутри agent_impl (SlotSaver).
+	
 	o.endLeafSession(peerID, sessionID)
 	o.releaseAgentSlot(sessionID)
 	return result, err
 }
 
-// beginLeafSession персистит сессию worker/qa и цепочку [sessionID] в БД,
-// чтобы прерванную задачу восстановил ResumeActiveChains.
+
 func (o *Orchestrator) beginLeafSession(agentName, systemPrompt, task string, peerID int64, sessionID string) {
 	if o.config.Store == nil || sessionID == "" {
 		return
@@ -594,7 +572,7 @@ func (o *Orchestrator) beginLeafSession(agentName, systemPrompt, task string, pe
 	o.config.Store.SaveAgentChain(peerID, []string{sessionID})
 }
 
-// endLeafSession удаляет сессию worker/qa и цепочку после успешного завершения.
+
 func (o *Orchestrator) endLeafSession(peerID int64, sessionID string) {
 	if o.config.Store == nil || sessionID == "" {
 		return
@@ -620,11 +598,11 @@ func (o *Orchestrator) makeSubAgent(name, systemPrompt string, peerID int64) (ag
 	return a, sessionID, nil
 }
 
-// configureAgentBase sets base config fields: session settings and operational flags.
+
 func (o *Orchestrator) configureAgentBase(cfg *agent.Config, name string, sessionID string) {
 	cfg.SystemPromptFile = ""
-	// Предгенерируем sessionID и прокидываем в сессию: a.GetSession().GetSessionID()
-	// совпадёт с DB/slot ID — единый идентификатор сессии (как в главном цикле).
+	
+	
 	cfg.SessionConfig = session.Config{
 		AutoSave:    false,
 		SessionFile: "",
@@ -637,17 +615,17 @@ func (o *Orchestrator) configureAgentBase(cfg *agent.Config, name string, sessio
 	cfg.SlotSave = false
 }
 
-// assignAgentSlot assigns a model slot to the agent if slot saving is enabled.
+
 func (o *Orchestrator) assignAgentSlot(cfg *agent.Config, name string, sessionID string) {
 	if o.config.ModelHolder == nil || !o.config.ModelHolder.GetCurrentSlotSave() {
 		return
 	}
 	cfg.SlotSave = true
-	// Назначаем слот агенту (lead/worker/qa). cfg.SlotID пинит каждый LLM-запрос
-	// к слоту этой сессии, пока агент жив — KV-cache переиспользуется между
-	// вызовами инструментов и не конфликтует с другими активными агентами.
-	// SlotSaver вызывается из agent_impl после каждого ответа LLM (только при
-	// slot-save: true в models.json), сохраняя актуальный кэш в {model}_slot{N}.bin.
+	
+	
+	
+	
+	
 	slotID := AssignSessionSlot(o.config.SlotManager, o.config.Slots, o.config.ModelHolder, sessionID, o.config.Logger)
 	if slotID >= 0 {
 		cfg.SlotID = slotID
@@ -658,7 +636,7 @@ func (o *Orchestrator) assignAgentSlot(cfg *agent.Config, name string, sessionID
 	}
 }
 
-// setupAgentPermissions configures permission checker for the agent.
+
 func (o *Orchestrator) setupAgentPermissions(a agent.Agent, name string) {
 	if o.config.AgentManager == nil {
 		return
@@ -705,7 +683,7 @@ func (o *Orchestrator) makeAgentConfig() (agent.Config, error) {
 		}
 		maxTokens = ctx
 	} else if ctx := o.config.ModelHolder.GetModelContext(alias); ctx > 0 {
-		// Контекст для текущей модели: из models.json (если указан), иначе общий.
+		
 		maxTokens = ctx
 	}
 	return agent.Config{
@@ -770,8 +748,7 @@ type toolInserter interface {
 	ReplaceTools(registry *tools.Registry)
 }
 
-// makeSubAgentTool создаёт SubAgentTool для текущего агента с привязкой к его
-// сессии (sessionID/chain) — так вложенные вызовы продолжают цепочку от корня.
+
 func (o *Orchestrator) makeSubAgentTool(name string, a agent.Agent, peerID int64, sessionID string, chain []string) (*SubAgentTool, error) {
 	cfg, err := o.makeAgentConfig()
 	if err != nil {
@@ -794,7 +771,7 @@ func (o *Orchestrator) makeSubAgentTool(name string, a agent.Agent, peerID int64
 		SetActiveAgent:  func(n string) { o.setActiveAgent(n) },
 		Store:           o.config.Store,
 		ParentSessionID: sessionID,
-		AgentSessionID:  sessionID, // placeholder; createAgent перегенерирует в собственный UUID
+		AgentSessionID:  sessionID, 
 		ParentAgent:     a,
 		Chain:           chain,
 		ParentAgentName: name,

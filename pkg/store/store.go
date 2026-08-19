@@ -17,8 +17,8 @@ type SessionData struct {
 	IsLooped   bool      `json:"is_looped"`
 	LastLooped string    `json:"last_looped,omitempty"`
 	Pinned     []string  `json:"pinned,omitempty"`
-	// ResumePrompt — последний user-промпт незавершённой обработки.
-	// Непустое значение после рестарта означает, что задачу надо продолжить.
+	
+	
 	ResumePrompt string `json:"resume_prompt,omitempty"`
 }
 
@@ -31,8 +31,8 @@ type MessageData struct {
 	ToolName   string `json:"tool_name,omitempty"`
 	ToolCalls  string `json:"tool_calls,omitempty"`
 	Timestamp  string `json:"timestamp,omitempty"`
-	// Summary/Compacted/TailStartID — метаданные компактизации, чтобы маркеры
-	// переживали перезагрузку сессии (резюм после рестарта).
+	
+	
 	Summary     bool `json:"summary,omitempty"`
 	Compacted   bool `json:"compacted,omitempty"`
 	TailStartID int  `json:"tail_start_id,omitempty"`
@@ -66,12 +66,12 @@ type AgentSessionData struct {
 	Status       string    `json:"status"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
-	Messages     string    `json:"messages,omitempty"` // JSON array of messages
+	Messages     string    `json:"messages,omitempty"` 
 }
 
 type AgentChainData struct {
 	PeerID    int64     `json:"peer_id"`
-	Chain     []string  `json:"chain"` // ordered list of session IDs from root to current
+	Chain     []string  `json:"chain"` 
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -95,7 +95,7 @@ type Store interface {
 	SavePermission(sessionID, toolName, resource, decision string) error
 	ClearPermissions(sessionID string) error
 
-	// Agent sessions
+	
 	SaveAgentSession(s *AgentSessionData) error
 	GetAgentSession(id string) (*AgentSessionData, error)
 	GetActiveAgentSessions(peerID int64) ([]AgentSessionData, error)
@@ -107,9 +107,9 @@ type Store interface {
 	SaveAgentChain(peerID int64, chain []string) error
 	ClearAgentChain(peerID int64) error
 	GetAllActiveChains() ([]AgentChainData, error)
-	// ClearPeerData полностью удаляет все данные пира: сессии сабагентов,
-	// активную цепочку и todos. Вызывается /clear, чтобы в БД не осталось
-	// ничего, что могло бы возродить задачу после рестарта.
+	
+	
+	
 	ClearPeerData(peerID int64) error
 }
 

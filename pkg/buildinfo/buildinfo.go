@@ -4,13 +4,10 @@ import (
 	"time"
 )
 
-// BuildTime заполняется на этапе сборки через
-// -ldflags "-X github.com/Grigory-Rylov/ai-agent-reflection/pkg/buildinfo.BuildTime=...".
-// Хранится в RFC3339 (UTC).
+
 var BuildTime = "unknown"
 
-// HumanReadable возвращает время сборки в локальном времени для вывода
-// в логах и служебных сообщениях.
+
 func HumanReadable() string {
 	t, err := time.Parse(time.RFC3339, BuildTime)
 	if err != nil {

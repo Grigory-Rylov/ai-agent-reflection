@@ -11,8 +11,7 @@ const (
 	PRUNED_OUTPUT_PLACEHOLDER = "[Old tool result content cleared]"
 )
 
-// PRUNE_PROTECTED_TOOLS — имена инструментов, чьи выводы не обрезаются
-// (как opencode PRUNE_PROTECTED_TOOLS = ["skill"]).
+
 var PRUNE_PROTECTED_TOOLS = []string{"skill"}
 
 type PruneConfig struct {
@@ -45,7 +44,7 @@ func PruneMessages(messages []tokenizers.Message, protectedTools ...string) []to
 		if msg.Role != "tool" {
 			continue
 		}
-		// Защищённые инструменты пропускаются ДО проверки compacted (как opencode).
+		
 		protected := false
 		for _, name := range protectedTools {
 			if msg.Name == name {

@@ -10,11 +10,7 @@ import (
 	"time"
 )
 
-// ============================================================
-// Уровни логирования
-// ============================================================
 
-// Level определяет уровень логирования
 type Level int
 
 const (
@@ -25,7 +21,7 @@ const (
 	LevelFatal
 )
 
-// String преобразует уровень в строковое представление
+
 func (l Level) String() string {
 	switch l {
 	case LevelDebug:
@@ -43,25 +39,21 @@ func (l Level) String() string {
 	}
 }
 
-// ============================================================
-// Logger — кастомный логгер
-// ============================================================
 
-// Config содержит настройки логгера
 type Config struct {
-	// Level — минимальный уровень логирования
+	
 	Level Level
-	// File — путь к файлу логов (пусто для логирования только в консоль)
+	
 	File string
-	// MaxSizeMB — максимальный размер лог-файла в МБ перед ротацией
+	
 	MaxSizeMB int
-	// MaxAgeDays — максимальный возраст лог-файла в днях
+	
 	MaxAgeDays int
-	// Compress — сжимать старые логи (gzip)
+	
 	Compress bool
 }
 
-// DefaultConfig возвращает конфигурацию по умолчанию
+
 func DefaultConfig() Config {
 	return Config{
 		Level:      LevelInfo,
@@ -72,7 +64,7 @@ func DefaultConfig() Config {
 	}
 }
 
-// Logger — основной логгер приложения
+
 type Logger struct {
 	config  Config
 	mu      sync.Mutex
@@ -81,41 +73,37 @@ type Logger struct {
 	started time.Time
 }
 
-// ============================================================
-// Инициализация
-// ============================================================
 
-// New создаёт новый логгер
 func New(config Config) (*Logger, error) {
 	l := &Logger{
 		config:  config,
 		started: time.Now(),
 	}
 
-	// Настраиваем форматирование
+	
 	handlerOptions := &slog.HandlerOptions{
 		Level:     slog.LevelInfo,
 		AddSource: false,
 	}
 
-	// Консольный логгер (всегда активен)
+	
 	consoleHandler := slog.NewTextHandler(os.Stderr, handlerOptions)
 	l.slog = slog.New(consoleHandler)
 
-	// Если указан файл — открываем и настраиваем файловый логгер
+	
 	if config.File != "" {
-		// Создаём директорию если не существует
+		
 		dir := filepath.Dir(config.File)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return nil, fmt.Errorf("failed to create log directory: %w", err)
 		}
 
-		// Если существующий лог превысил лимит — ротируем вместо очистки
+		
 		if err := RotateLogFile(config.File, config.MaxSizeMB, config.MaxAgeDays); err != nil {
 			return nil, fmt.Errorf("failed to rotate log file: %w", err)
 		}
 
-		// Открываем файл в режиме добавления (не удаляем историю)
+		
 		logFile, err := os.OpenFile(config.File, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
 			return nil, fmt.Errorf("failed to open log file: %w", err)
@@ -126,38 +114,32 @@ func New(config Config) (*Logger, error) {
 	return l, nil
 }
 
-// ============================================================
-// Публичные методы логирования
-// ============================================================
 
-// DebugLog записывает дебаг-сообщение
 func (l *Logger) DebugLog(msg string, args ...interface{}) {
 	l.log(LevelDebug, msg, args...)
 }
 
-// InfoLog записывает информационное сообщение
+
 func (l *Logger) InfoLog(msg string, args ...interface{}) {
 	l.log(LevelInfo, msg, args...)
 }
 
-// WarnLog записывает предупреждение
+
 func (l *Logger) WarnLog(msg string, args ...interface{}) {
 	l.log(LevelWarn, msg, args...)
 }
 
-// ErrorLog записывает ошибку
+
 func (l *Logger) ErrorLog(msg string, args ...interface{}) {
 	l.log(LevelError, msg, args...)
 }
 
-// FatalLog записывает фатальную ошибку и завершает программу
+
 func (l *Logger) FatalLog(msg string, args ...interface{}) {
 	l.log(LevelFatal, msg, args...)
 }
 
-// FatalLogExit is a standalone function that logs and exits.
-// Prefer calling this from the main goroutine only.
-// For use in goroutines, call FatalLog and signal shutdown via context/cancel instead.
+
 func FatalLogExit(msg string, args ...interface{}) {
 	if globalLogger != nil {
 		globalLogger.FatalLog(msg, args...)
@@ -167,22 +149,22 @@ func FatalLogExit(msg string, args ...interface{}) {
 	os.Exit(1)
 }
 
-// log записывает сообщение со всеми уровнями
+
 func (l *Logger) log(level Level, msg string, args ...interface{}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	// Форматируем сообщение
+	
 	formattedMsg := fmt.Sprintf(msg, args...)
 
-	// Добавляем метаданные
+	
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	levelStr := level.String()
 
-	// Формируем полное сообщение
+	
 	fullMsg := fmt.Sprintf("[%s] [%s] %s", timestamp, levelStr, formattedMsg)
 
-	// Пишем в консоль и/или файл
+	
 	if level >= l.config.Level {
 		if l.file != nil {
 			fmt.Fprintln(os.Stderr, fullMsg)
@@ -193,31 +175,27 @@ func (l *Logger) log(level Level, msg string, args ...interface{}) {
 	}
 }
 
-// ============================================================
-// Методы для структурированного логирования
-// ============================================================
 
-// DebugLogf записывает дебаг-сообщение с форматированием
 func (l *Logger) DebugLogf(format string, args ...interface{}) {
 	l.DebugLog(format, args...)
 }
 
-// InfoLogf записывает информационное сообщение с форматированием
+
 func (l *Logger) InfoLogf(format string, args ...interface{}) {
 	l.InfoLog(format, args...)
 }
 
-// WarnLogf записывает предупреждение с форматированием
+
 func (l *Logger) WarnLogf(format string, args ...interface{}) {
 	l.WarnLog(format, args...)
 }
 
-// ErrorLogf записывает ошибку с форматированием
+
 func (l *Logger) ErrorLogf(format string, args ...interface{}) {
 	l.ErrorLog(format, args...)
 }
 
-// LogWithFields записывает сообщение с дополнительными полями
+
 func (l *Logger) LogWithFields(level Level, msg string, fields map[string]interface{}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -225,7 +203,7 @@ func (l *Logger) LogWithFields(level Level, msg string, fields map[string]interf
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	levelStr := level.String()
 
-	// Формируем сообщение с полями
+	
 	fieldStr := ""
 	for k, v := range fields {
 		fieldStr += fmt.Sprintf(" %s=%v", k, v)
@@ -243,18 +221,14 @@ func (l *Logger) LogWithFields(level Level, msg string, fields map[string]interf
 	}
 }
 
-// ============================================================
-// Управление
-// ============================================================
 
-// SetLevel меняет минимальный уровень логирования
 func (l *Logger) SetLevel(level Level) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.config.Level = level
 }
 
-// Close закрывает все ресурсы
+
 func (l *Logger) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -265,21 +239,17 @@ func (l *Logger) Close() error {
 	return nil
 }
 
-// IsFileLogging возвращает true если логирование в файл активно
+
 func (l *Logger) IsFileLogging() bool {
 	return l.file != nil
 }
 
-// GetStartTime возвращает время запуска логгера
+
 func (l *Logger) GetStartTime() time.Time {
 	return l.started
 }
 
-// ============================================================
-// Утилиты
-// ============================================================
 
-// ParseLogLevel парсит уровень из строки
 func ParseLogLevel(level string) Level {
 	switch strings.ToLower(level) {
 	case "debug", "dbg":
@@ -297,13 +267,13 @@ func ParseLogLevel(level string) Level {
 	}
 }
 
-// RotateLogFile выполняет ротацию лог-файла
+
 func RotateLogFile(path string, maxSizeMB int, maxAgeDays int) error {
 	if maxSizeMB <= 0 {
 		maxSizeMB = 10
 	}
 
-	// Проверяем размер файла
+	
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -317,7 +287,7 @@ func RotateLogFile(path string, maxSizeMB int, maxAgeDays int) error {
 		return nil
 	}
 
-	// Ротируем файл
+	
 	timestamp := time.Now().Format("20060102-150405")
 	archivePath := fmt.Sprintf("%s.%s", path, timestamp)
 
@@ -325,7 +295,7 @@ func RotateLogFile(path string, maxSizeMB int, maxAgeDays int) error {
 		return fmt.Errorf("failed to rename log file: %w", err)
 	}
 
-	// Удаляем старые логи
+	
 	cleanOldLogs(path, maxAgeDays)
 
 	return nil
@@ -362,56 +332,51 @@ func cleanOldLogs(basePath string, maxAgeDays int) {
 	}
 }
 
-// ============================================================
-// Глобальный логгер (singleton)
-// ============================================================
 
 var globalLogger *Logger
 var globalOnce sync.Once
 
-// InitGlobalLogger инициализирует глобальный логгер
+
 func InitGlobalLogger(config Config) {
 	globalOnce.Do(func() {
 		globalLogger, _ = New(config)
 	})
 }
 
-// GetGlobalLogger возвращает глобальный логгер
+
 func GetGlobalLogger() *Logger {
 	return globalLogger
 }
 
-// DebugLogfGlobal — глобальная функция для дебаг-логирования
+
 func DebugLogfGlobal(format string, args ...interface{}) {
 	if globalLogger != nil {
 		globalLogger.DebugLogf(format, args...)
 	}
 }
 
-// InfoLogfGlobal — глобальная функция для информационного логирования
+
 func InfoLogfGlobal(format string, args ...interface{}) {
 	if globalLogger != nil {
 		globalLogger.InfoLogf(format, args...)
 	}
 }
 
-// WarnLogfGlobal — глобальная функция для предупреждений
+
 func WarnLogfGlobal(format string, args ...interface{}) {
 	if globalLogger != nil {
 		globalLogger.WarnLogf(format, args...)
 	}
 }
 
-// ErrorLogfGlobal — глобальная функция для ошибок
+
 func ErrorLogfGlobal(format string, args ...interface{}) {
 	if globalLogger != nil {
 		globalLogger.ErrorLogf(format, args...)
 	}
 }
 
-// DebugToFile пишет дебаг-сообщение в файл и консоль.
-// Используется для детального логирования в debug режиме.
-// Пишет в консоль только если включено файловое логирование (debug.log).
+
 func DebugToFile(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	if globalLogger != nil && globalLogger.IsFileLogging() {
@@ -422,7 +387,7 @@ func DebugToFile(format string, args ...interface{}) {
 	}
 }
 
-// WriteToFile пишет сообщение в лог-файл
+
 func (l *Logger) WriteToFile(msg string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

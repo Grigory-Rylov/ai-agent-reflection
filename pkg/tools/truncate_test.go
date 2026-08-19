@@ -8,8 +8,7 @@ import (
 	"time"
 )
 
-// TestTruncateToolResult_PassesThroughSmallOutput проверяет, что вывод,
-// помещающийся в лимиты, возвращается без изменений и без файла на диске.
+
 func TestTruncateToolResult_PassesThroughSmallOutput(t *testing.T) {
 	dir := t.TempDir()
 	content := `{"success":true,"data":{"output":"short"}}`
@@ -29,8 +28,7 @@ func TestTruncateToolResult_PassesThroughSmallOutput(t *testing.T) {
 	}
 }
 
-// TestTruncateToolResult_TruncatesLargeOutput проверяет, что большой вывод
-// помечается как truncated, содержит маркер и подсказку про файл.
+
 func TestTruncateToolResult_TruncatesLargeOutput(t *testing.T) {
 	dir := t.TempDir()
 	content := `{"success":true,"data":{"output":"` + strings.Repeat("a", 4096) + `"}}`
@@ -53,8 +51,7 @@ func TestTruncateToolResult_TruncatesLargeOutput(t *testing.T) {
 	}
 }
 
-// TestTruncateToolResult_WritesFullOutputToFile проверяет, что полный вывод
-// сохраняется на диск, а превью в ответе меньше оригинала.
+
 func TestTruncateToolResult_WritesFullOutputToFile(t *testing.T) {
 	dir := t.TempDir()
 	content := strings.Repeat("line-of-output\n", 5000)
@@ -78,8 +75,7 @@ func TestTruncateToolResult_WritesFullOutputToFile(t *testing.T) {
 	}
 }
 
-// TestTruncateToolResult_RespectsMaxBytes проверяет, что превью не превышает
-// лимит байт.
+
 func TestTruncateToolResult_RespectsMaxBytes(t *testing.T) {
 	dir := t.TempDir()
 	content := strings.Repeat("x", 10000)
@@ -96,8 +92,7 @@ func TestTruncateToolResult_RespectsMaxBytes(t *testing.T) {
 	}
 }
 
-// TestTruncateToolResult_HeadDirection проверяет, что при обрезке сохраняется
-// начало вывода (как в opencode — direction=head).
+
 func TestTruncateToolResult_HeadDirection(t *testing.T) {
 	dir := t.TempDir()
 	content := "HEAD-KEEP\n" + strings.Repeat("tail-line\n", 500)
@@ -114,7 +109,7 @@ func TestTruncateToolResult_HeadDirection(t *testing.T) {
 	}
 }
 
-// TestTruncateToolResult_Defaults применяются, когда лимиты не заданы.
+
 func TestTruncateToolResult_Defaults(t *testing.T) {
 	dir := t.TempDir()
 	res, err := TruncateToolResult("small", TruncateOptions{Dir: dir})
@@ -135,8 +130,7 @@ func TestTruncateToolResult_Defaults(t *testing.T) {
 	}
 }
 
-// TestTruncateToolResult_HasTaskTool проверяет разные подсказки в зависимости
-// от наличия task-инструмента.
+
 func TestTruncateToolResult_HasTaskTool(t *testing.T) {
 	dir := t.TempDir()
 	content := strings.Repeat("z", 8192)
@@ -158,8 +152,7 @@ func TestTruncateToolResult_HasTaskTool(t *testing.T) {
 	}
 }
 
-// TestTruncateToolResult_DefaultDir проверяет, что при пустом Dir файл
-// создаётся в дефолтной директории tool-output.
+
 func TestTruncateToolResult_DefaultDir(t *testing.T) {
 	oldWD := WorkingDir
 	defer func() { WorkingDir = oldWD }()
@@ -182,8 +175,7 @@ func TestTruncateToolResult_DefaultDir(t *testing.T) {
 	}
 }
 
-// TestTruncateToolResult_Cleanup проверяет, что устаревшие файлы
-// (старше retention) удаляются при следующем truncate.
+
 func TestTruncateToolResult_Cleanup(t *testing.T) {
 	dir := t.TempDir()
 	stale := filepath.Join(dir, "tool_stale")

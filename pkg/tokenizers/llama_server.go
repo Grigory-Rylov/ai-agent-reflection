@@ -12,11 +12,7 @@ import (
 	"time"
 )
 
-// ============================================================
-// LlamaServerTokenizer — токенайзер через llama-server API
-// ============================================================
 
-// LlamaServerTokenizer использует llama-server для подсчёта токенов
 type LlamaServerTokenizer struct {
 	serverURL      string
 	model          string
@@ -24,10 +20,10 @@ type LlamaServerTokenizer struct {
 	client         *http.Client
 	debug          bool
 	infoClient     *ServerInfoClient
-	actualCtxLimit int // Реальный контекст от сервера
+	actualCtxLimit int 
 }
 
-// NewLlamaServerTokenizer создаёт новый токенайзер через llama-server
+
 func NewLlamaServerTokenizer(serverURL, model string, maxTokens int) *LlamaServerTokenizer {
 	infoClient := NewServerInfoClient(serverURL)
 	return &LlamaServerTokenizer{
@@ -36,21 +32,20 @@ func NewLlamaServerTokenizer(serverURL, model string, maxTokens int) *LlamaServe
 		maxTokens:      maxTokens,
 		debug:          false,
 		infoClient:     infoClient,
-		actualCtxLimit: -1, // Ещё не запрашивали
+		actualCtxLimit: -1, 
 		client: &http.Client{
-			Timeout: 60 * time.Second, // Увеличен таймаут для больших контекстов
+			Timeout: 60 * time.Second, 
 		},
 	}
 }
 
-// SetDebug включает/выключает отладочное логирование
+
 func (t *LlamaServerTokenizer) SetDebug(debug bool) {
 	t.debug = debug
 	t.infoClient.SetDebug(debug)
 }
 
-// GetActualContextLimit возвращает реальный лимит контекста от llama-server
-// Если не удалось получить - возвращает -1
+
 func (t *LlamaServerTokenizer) GetActualContextLimit() int {
 	if t.actualCtxLimit > 0 {
 		return t.actualCtxLimit
@@ -59,7 +54,7 @@ func (t *LlamaServerTokenizer) GetActualContextLimit() int {
 	return t.actualCtxLimit
 }
 
-// InitializeContextLimit запрашивает реальный контекст у llama-server
+
 func (t *LlamaServerTokenizer) InitializeContextLimit() error {
 	ctxLen := t.infoClient.GetModelContextLength(t.model)
 	if ctxLen > 0 {
@@ -72,9 +67,7 @@ func (t *LlamaServerTokenizer) InitializeContextLimit() error {
 	return fmt.Errorf("failed to get actual context limit from server")
 }
 
-// ResolveMaxTokens возвращает фактический лимит токенов:
-// 1. Если удалось получить реальный контекст от сервера - использует его
-// 2. Иначе использует переданный maxTokens из конфига
+
 func (t *LlamaServerTokenizer) ResolveMaxTokens() int {
 	if actual := t.GetActualContextLimit(); actual > 0 {
 		return actual
@@ -88,7 +81,7 @@ func (t *LlamaServerTokenizer) logf(format string, args ...interface{}) {
 	}
 }
 
-// CountTokens отправляет запрос к llama-server для подсчёта токенов
+
 func (t *LlamaServerTokenizer) CountTokens(text string) (int, error) {
 	if text == "" {
 		return 0, nil
@@ -98,13 +91,13 @@ func (t *LlamaServerTokenizer) CountTokens(text string) (int, error) {
 	return t.CountMessagesTokens(messages)
 }
 
-// CountMessagesTokens отправляет массив сообщений к llama-server для подсчёта токенов
+
 func (t *LlamaServerTokenizer) CountMessagesTokens(messages []Message) (int, error) {
 	if len(messages) == 0 {
 		return 0, nil
 	}
 
-	// Используем endpoint /tokenize для быстрой токенизации
+	
 	var sb strings.Builder
 	for _, msg := range messages {
 		sb.WriteString(msg.Role)
@@ -159,18 +152,17 @@ func (t *LlamaServerTokenizer) CountMessagesTokens(messages []Message) (int, err
 	return len(apiResponse.Tokens), nil
 }
 
-// Encode — не поддерживается через llama-server
+
 func (t *LlamaServerTokenizer) Encode(text string) ([]int, error) {
 	return nil, fmt.Errorf("encode not supported by llama-server tokenizer")
 }
 
-// Decode — не поддерживается через llama-server
+
 func (t *LlamaServerTokenizer) Decode(tokens []int) (string, error) {
 	return "", fmt.Errorf("decode not supported by llama-server tokenizer")
 }
 
-// MaxContextLength возвращает максимальную длину контекста.
-// Сначала пытается использовать реальный контекст от сервера, иначе - конфигурационный.
+
 func (t *LlamaServerTokenizer) MaxContextLength() int {
 	if actual := t.GetActualContextLimit(); actual > 0 {
 		return actual
@@ -178,7 +170,7 @@ func (t *LlamaServerTokenizer) MaxContextLength() int {
 	return t.maxTokens
 }
 
-// Name возвращает имя токенайзера
+
 func (t *LlamaServerTokenizer) Name() string {
 	return "llama-server-" + t.model
 }

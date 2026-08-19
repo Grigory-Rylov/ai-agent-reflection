@@ -31,11 +31,7 @@ func FindCompactionMarkers(messages []tokenizers.Message) []CompactionMarker {
 	return markers
 }
 
-// FilterCompacted переупорядочивает сообщения после компактизации в порядок
-// opencode filterCompacted(): [compaction-user, summary, ...tail...].
-// tail_start_id берётся из summary-сообщения (сохранён при компактизации);
-// для старых сессий без tail_start_id используется fallback — tail начинается
-// сразу после compaction-user (layout [head, compaction-user, summary, tail]).
+
 func FilterCompacted(messages []tokenizers.Message) []tokenizers.Message {
 	markers := FindCompactionMarkers(messages)
 	if len(markers) == 0 {
@@ -65,7 +61,7 @@ func FilterCompacted(messages []tokenizers.Message) []tokenizers.Message {
 	result = append(result, messages[latest.Index])
 
 	for i := tailStartID; i < len(messages); i++ {
-		// Пропускаем сам маркер компактизации и summary — они уже добавлены.
+		
 		if i == compactionUserIdx || i == latest.Index {
 			continue
 		}

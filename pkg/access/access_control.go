@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-// AccessLevel определяет уровень доступа
+
 type AccessLevel int
 
 const (
@@ -18,23 +18,20 @@ const (
 	AccessAll
 )
 
-// AccessResult результат проверки доступа
+
 type AccessResult struct {
 	Allowed bool
 	Reason  string
 }
 
-// Controller управляет правилами доступа к файловой системе.
-// Поддерживает два уровня разрешённых путей:
-//   - Global: из конфига, постоянные
-//   - Session: временные, выдаются через grant_access на сессию
+
 type Controller struct {
 	mu          sync.RWMutex
-	allowedDirs []string // глобальные разрешённые директории (из конфига)
-	sessionDirs []string // временные разрешения для сессии (через grant_access)
+	allowedDirs []string 
+	sessionDirs []string 
 }
 
-// NewController создаёт новый контроллер доступа
+
 func NewController(allowedDirs []string) *Controller {
 	c := &Controller{
 		allowedDirs: make([]string, 0),
@@ -46,7 +43,7 @@ func NewController(allowedDirs []string) *Controller {
 	return c
 }
 
-// addAllowedDir добавляет глобальную разрешённую директорию
+
 func (c *Controller) addAllowedDir(dir string) {
 	dir = os.ExpandEnv(dir)
 	absPath, err := filepath.Abs(dir)
@@ -60,14 +57,14 @@ func (c *Controller) addAllowedDir(dir string) {
 	c.allowedDirs = append(c.allowedDirs, canonical)
 }
 
-// AddAllowedDir добавляет глобальную разрешённую директорию (публичный метод)
+
 func (c *Controller) AddAllowedDir(dir string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.addAllowedDir(dir)
 }
 
-// GrantPath добавляет временное разрешение для сессии
+
 func (c *Controller) GrantPath(path string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -84,7 +81,7 @@ func (c *Controller) GrantPath(path string) {
 	c.sessionDirs = append(c.sessionDirs, canonical)
 }
 
-// RevokePath удаляет временное разрешение для сессии
+
 func (c *Controller) RevokePath(path string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -105,7 +102,7 @@ func (c *Controller) RevokePath(path string) {
 	}
 }
 
-// AllowedDirs возвращает все разрешённые директории (глобальные + сессионные)
+
 func (c *Controller) AllowedDirs() []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -115,7 +112,7 @@ func (c *Controller) AllowedDirs() []string {
 	return result
 }
 
-// isPathInAllowed проверяет, находится ли путь в одном из списков
+
 func isPathInAllowed(canonical string, dirs []string) bool {
 	for _, allowedDir := range dirs {
 		if strings.HasPrefix(canonical, allowedDir) {
@@ -128,8 +125,7 @@ func isPathInAllowed(canonical string, dirs []string) bool {
 	return false
 }
 
-// resolveCanonical приводит путь к каноническому виду для проверки.
-// Обходит каждый компонент пути, разрешая симлинки по мере возможности.
+
 func resolveCanonical(path string) (string, error) {
 	path = os.ExpandEnv(path)
 	absPath, err := filepath.Abs(path)
@@ -163,7 +159,7 @@ func resolveCanonical(path string) (string, error) {
 	return filepath.Clean(resolved), nil
 }
 
-// CheckAccess проверяет, находится ли путь в разрешённых директориях
+
 func (c *Controller) CheckAccess(path string) AccessResult {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -199,12 +195,12 @@ func (c *Controller) CheckAccess(path string) AccessResult {
 	}
 }
 
-// CheckReadAccess проверяет доступ на чтение (аналогично CheckAccess)
+
 func (c *Controller) CheckReadAccess(path string) AccessResult {
 	return c.CheckAccess(path)
 }
 
-// CheckWriteAccess проверяет доступ на запись
+
 func (c *Controller) CheckWriteAccess(path string) AccessResult {
 	result := c.CheckAccess(path)
 	if !result.Allowed {
@@ -239,7 +235,7 @@ func (c *Controller) CheckWriteAccess(path string) AccessResult {
 	}
 }
 
-// SafeReadFile читает файл с проверкой доступа
+
 func (c *Controller) SafeReadFile(path string) ([]byte, AccessResult) {
 	result := c.CheckAccess(path)
 	if !result.Allowed {
@@ -260,7 +256,7 @@ func (c *Controller) SafeReadFile(path string) ([]byte, AccessResult) {
 	}
 }
 
-// SafeWriteFile записывает файл с проверкой доступа
+
 func (c *Controller) SafeWriteFile(path string, data []byte) AccessResult {
 	result := c.CheckWriteAccess(path)
 	if !result.Allowed {
@@ -308,7 +304,7 @@ func (c *Controller) SafeWriteFile(path string, data []byte) AccessResult {
 	}
 }
 
-// SanitizePath удаляет потенциально опасные последовательности из пути
+
 func SanitizePath(path string) string {
 	path = os.ExpandEnv(path)
 	cleaned := filepath.Clean(path)
@@ -324,7 +320,7 @@ func SanitizePath(path string) string {
 	return cleaned
 }
 
-// IsPathSafe проверяет, что путь не содержит опасных паттернов
+
 func IsPathSafe(path string) bool {
 	dangerousChars := []string{";", "|", "&", "`", "$", "(", ")", "{", "}", "<", ">", "\\", "\n", "\r"}
 	for _, ch := range dangerousChars {

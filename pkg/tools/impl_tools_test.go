@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// ============================================================
-// Вспомогательные функции
-// ============================================================
 
 func setupTempDir(t *testing.T) string {
 	dir, err := os.MkdirTemp("", "tools_test_*")
@@ -24,9 +21,6 @@ func cleanupTempDir(t *testing.T, dir string) {
 	os.RemoveAll(dir)
 }
 
-// ============================================================
-// Тесты FileReadTool
-// ============================================================
 
 func TestFileReadTool(t *testing.T) {
 	t.Run("reads file successfully", func(t *testing.T) {
@@ -35,7 +29,7 @@ func TestFileReadTool(t *testing.T) {
 
 		tool := &FileReadTool{}
 
-		// Создаём тестовый файл
+		
 		testFile := filepath.Join(dir, "test.txt")
 		os.WriteFile(testFile, []byte("Hello, World!"), 0644)
 
@@ -83,9 +77,6 @@ func TestFileReadTool(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Тесты FileWriteTool
-// ============================================================
 
 func TestFileWriteTool(t *testing.T) {
 	t.Run("writes file successfully", func(t *testing.T) {
@@ -107,7 +98,7 @@ func TestFileWriteTool(t *testing.T) {
 			t.Fatalf("Expected success, got error: %s", result.Error)
 		}
 
-		// Проверяем что файл создан
+		
 		data, err := os.ReadFile(testFile)
 		if err != nil {
 			t.Fatalf("Failed to read written file: %v", err)
@@ -131,9 +122,6 @@ func TestFileWriteTool(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Тесты TimeGetTool
-// ============================================================
 
 func TestTimeGetTool(t *testing.T) {
 	t.Run("returns current time", func(t *testing.T) {
@@ -154,16 +142,13 @@ func TestTimeGetTool(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Тесты DirListTool
-// ============================================================
 
 func TestDirListTool(t *testing.T) {
 	t.Run("lists directory contents", func(t *testing.T) {
 		dir := setupTempDir(t)
 		defer cleanupTempDir(t, dir)
 
-		// Создаём тестовые файлы
+		
 		os.WriteFile(filepath.Join(dir, "file1.txt"), []byte("content1"), 0644)
 		os.Mkdir(filepath.Join(dir, "subdir"), 0755)
 
@@ -198,9 +183,6 @@ func TestDirListTool(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Тесты ShellExecuteTool
-// ============================================================
 
 func TestShellExecuteTool(t *testing.T) {
 	t.Run("executes command successfully", func(t *testing.T) {
@@ -232,9 +214,6 @@ func TestShellExecuteTool(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Тесты GlobTool
-// ============================================================
 
 func TestGlobTool(t *testing.T) {
 	t.Run("finds files by pattern", func(t *testing.T) {
@@ -273,9 +252,6 @@ func TestGlobTool(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Тесты GrepTool
-// ============================================================
 
 func TestGrepTool(t *testing.T) {
 	t.Run("finds pattern in files", func(t *testing.T) {
@@ -314,9 +290,6 @@ func TestGrepTool(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Тесты CalcTool
-// ============================================================
 
 func TestCalcTool(t *testing.T) {
 	t.Run("evaluates simple expression", func(t *testing.T) {
@@ -348,9 +321,6 @@ func TestCalcTool(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Тесты EditTool
-// ============================================================
 
 func TestEditTool(t *testing.T) {
 	t.Run("edits file successfully", func(t *testing.T) {
@@ -393,9 +363,6 @@ func TestEditTool(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Дополнительные тесты ShellExecuteTool
-// ============================================================
 
 func TestShellExecuteToolExitCode(t *testing.T) {
 	t.Run("returns exit code on failure", func(t *testing.T) {
@@ -422,9 +389,6 @@ func TestShellExecuteToolExitCode(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Тест ShellExecuteTool — рабочая директория
-// ============================================================
 
 func TestShellExecuteWorkingDir(t *testing.T) {
 	t.Run("creates file in WorkingDir", func(t *testing.T) {
@@ -449,7 +413,7 @@ func TestShellExecuteWorkingDir(t *testing.T) {
 			t.Fatalf("Expected success, got: %s", result.Error)
 		}
 
-		// Файл должен быть создан в WorkingDir
+		
 		createdFile := filepath.Join(dir, "test_working_dir.txt")
 		if _, err := os.Stat(createdFile); os.IsNotExist(err) {
 			t.Errorf("File should have been created in WorkingDir %s, but it doesn't exist", dir)
@@ -481,7 +445,7 @@ func TestShellExecuteWorkingDir(t *testing.T) {
 
 		data := result.Data.(map[string]interface{})
 		output := data["output"].(string)
-		// pwd возвращает путь с переносом строки
+		
 		pwdOutput := strings.TrimSpace(output)
 		if pwdOutput != dir {
 			t.Errorf("Expected pwd to return %q, got %q", dir, pwdOutput)
@@ -523,9 +487,6 @@ func TestShellExecuteWorkingDir(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Дополнительные тесты GrepTool с фильтром include
-// ============================================================
 
 func TestGrepToolWithInclude(t *testing.T) {
 	t.Run("filters by include pattern", func(t *testing.T) {
@@ -558,9 +519,6 @@ func TestGrepToolWithInclude(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Тест Registry — все инструменты регистрируются и выполняются
-// ============================================================
 
 func TestRegistryAllToolsExecute(t *testing.T) {
 	registry := NewRegistry()
@@ -637,9 +595,6 @@ func TestRegistryAllToolsExecute(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Тест resolvePath
-// ============================================================
 
 func TestResolvePath(t *testing.T) {
 	t.Run("resolves absolute path", func(t *testing.T) {
@@ -670,9 +625,6 @@ func TestResolvePath(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Тесты WebFetchTool (без сети — проверка параметров)
-// ============================================================
 
 func TestWebFetchTool(t *testing.T) {
 	t.Run("returns error for missing url", func(t *testing.T) {
@@ -687,9 +639,6 @@ func TestWebFetchTool(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Тесты WebSearchTool (без сети — проверка параметров)
-// ============================================================
 
 func TestWebSearchTool(t *testing.T) {
 	t.Run("returns error for missing query", func(t *testing.T) {
@@ -704,9 +653,6 @@ func TestWebSearchTool(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Тесты EvaluateExpression
-// ============================================================
 
 func TestEvaluateExpression(t *testing.T) {
 	tests := []struct {
@@ -748,9 +694,6 @@ func TestEvaluateExpression(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Тесты Tool Metadata
-// ============================================================
 
 func TestToolMetadata(t *testing.T) {
 	tools := []struct {
@@ -785,9 +728,6 @@ func TestToolMetadata(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Тесты утилит
-// ============================================================
 
 func TestUnmarshalToolResult(t *testing.T) {
 	t.Run("unmarshals valid JSON", func(t *testing.T) {

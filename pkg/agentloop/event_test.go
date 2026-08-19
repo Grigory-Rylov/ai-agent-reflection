@@ -5,9 +5,6 @@ import (
 	"time"
 )
 
-// ============================================================
-// Тесты событий
-// ============================================================
 
 func TestNewEventDispatcher(t *testing.T) {
 	dispatcher := NewEventDispatcher()
@@ -26,7 +23,7 @@ func TestEventDispatcherRegister(t *testing.T) {
 	dispatcher := NewEventDispatcher()
 
 	dispatcher.Register(EventPromptReceived, func(event Event) {
-		// Handler registered
+		
 	})
 
 	if len(dispatcher.handlers[EventPromptReceived]) != 1 {
@@ -55,7 +52,7 @@ func TestEventDispatcherEmit(t *testing.T) {
 
 func TestEventDispatcherEmitNoHandler(t *testing.T) {
 	dispatcher := NewEventDispatcher()
-	// Не должно паниковать если нет обработчика
+	
 	dispatcher.Emit(NewEvent(EventError, 123))
 }
 

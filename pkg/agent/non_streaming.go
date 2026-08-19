@@ -92,9 +92,9 @@ func buildToolCallForRequest(tc ToolCall) ToolCall {
 	if argsStr == "" {
 		return tc
 	}
-	// vLLM требует arguments как JSON-строку, llama.cpp — как объект.
-	// Проверяем текущий формат: если уже строка (с кавычками) — оставляем,
-	// если объект — конвертируем в строку для совместимости с vLLM.
+	
+	
+	
 	raw := string(tc.Function.Arguments)
 	if len(raw) > 0 && raw[0] == '"' {
 		return tc

@@ -19,20 +19,17 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 )
 
-// slotActionRecord — запись о вызове slot-эндпоинта (save/restore/clear/delete)
-// для конкретного слота.
+
 type slotActionRecord struct {
 	slot   int
 	action string
 }
 
-// multiAgentSlotServer поднимает llama-server с 4 слотами и скриптовым LLM,
-// реализующим цепочку lead → worker → qa. Фиксирует slot_id из тел запросов
-// /v1/chat/completions и все обращения к /slots/{id}?action=...
+
 func multiAgentSlotServer(t *testing.T) (srv *httptest.Server, slotIDs func() map[string]int, actions func() []slotActionRecord) {
 	t.Helper()
 	var mu sync.Mutex
-	agentSlots := map[string]int{}      // agentName → slot_id из первого запроса
+	agentSlots := map[string]int{}      
 	actionLog := []slotActionRecord{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -100,8 +97,7 @@ func multiAgentSlotServer(t *testing.T) (srv *httptest.Server, slotIDs func() ma
 		func() []slotActionRecord { mu.Lock(); defer mu.Unlock(); out := make([]slotActionRecord, len(actionLog)); copy(out, actionLog); return out }
 }
 
-// pickMultiAgentReply строит ответ LLM в зависимости от агента и того, пришёл ли
-// уже результат сабагента (tool-сообщение). Цепочка: lead → worker → qa.
+
 func pickMultiAgentReply(agent string, msgs []struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
@@ -129,11 +125,7 @@ func pickMultiAgentReply(agent string, msgs []struct {
 	return "OK"
 }
 
-// TestRunAgent_MultiAgentDistinctSlots проверяет сценарий lead → worker → qa:
-//   - каждый агент пинится к своему слоту (slot_id в теле запроса);
-//   - слоты у lead/worker/qa — различные;
-//   - все LLM-запросы одного агента идут в один и тот же слот (переиспользование);
-//   - после завершения RunAgent все слоты освобождены (SlotManager пуст, файлы удалены).
+
 func TestRunAgent_MultiAgentDistinctSlots(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"lead.txt", "worker.txt", "qa.txt"} {
@@ -182,7 +174,7 @@ func TestRunAgent_MultiAgentDistinctSlots(t *testing.T) {
 	if len(slots) != 3 {
 		t.Fatalf("expected 3 agents with slots, got %d: %v", len(slots), slots)
 	}
-	// Все три слота различны.
+	
 	seen := map[int]string{}
 	for agent, sid := range slots {
 		if other, ok := seen[sid]; ok {
@@ -194,13 +186,13 @@ func TestRunAgent_MultiAgentDistinctSlots(t *testing.T) {
 		}
 	}
 
-	// После завершения все слоты освобождены — SlotManager пуст.
+	
 	if got := orch.config.SlotManager.GetAssignedSessions(); len(got) != 0 {
 		t.Errorf("expected no assigned slots after completion, got %v", got)
 	}
 
-	// После завершения: каждый агент сохранил свой KV-cache (save) и освободил
-	// слот (erase). 3 агента → ≥3 save и ≥3 erase.
+	
+	
 	actLog := actions()
 	saveCount, eraseCount := 0, 0
 	for _, a := range actLog {
@@ -219,8 +211,7 @@ func TestRunAgent_MultiAgentDistinctSlots(t *testing.T) {
 	}
 }
 
-// TestMakeSubAgent_UnifiedSessionID проверяет, что sessionID, использованный
-// для слота и БД, совпадает с a.GetSession().GetSessionID() — единый идентификатор.
+
 func TestMakeSubAgent_UnifiedSessionID(t *testing.T) {
 	server, _, _ := multiAgentSlotServer(t)
 	defer server.Close()
@@ -246,28 +237,25 @@ func TestMakeSubAgent_UnifiedSessionID(t *testing.T) {
 		t.Fatalf("makeSubAgent: %v", err)
 	}
 
-	// sessionID (slot/DB key) == session.SessionID
+	
 	if got := a.GetSession(1).GetSessionID(); got != sessionID {
 		t.Errorf("session.SessionID %q != returned sessionID %q", got, sessionID)
 	}
 
-	// Слот выделен и привязан к этому sessionID.
+	
 	slot := orch.config.SlotManager.GetSlotID(sessionID)
 	if slot < 0 {
 		t.Fatal("expected slot assigned to sessionID")
 	}
 
-	// Освобождение убирает привязку.
+	
 	orch.releaseAgentSlot(sessionID)
 	if orch.config.SlotManager.GetSlotID(sessionID) != -1 {
 		t.Error("expected slot released after releaseAgentSlot")
 	}
 }
 
-// TestAssignSessionSlot_LRUEvictionSavesAndClears проверяет: при вытеснении
-// кэш вытесненной сессии сохраняется в файл, серверный слот очищается, и новая
-// сессия НЕ восстанавливает чужой кэш (стартует cold — restore не вызывается
-// для вытесняющего слота).
+
 func TestAssignSessionSlot_LRUEvictionSavesAndClears(t *testing.T) {
 	var mu sync.Mutex
 	actions := []slotActionRecord{}
@@ -275,7 +263,7 @@ func TestAssignSessionSlot_LRUEvictionSavesAndClears(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/slots":
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`[{"id":0},{"id":1}]`)) // 2 слота
+			w.Write([]byte(`[{"id":0},{"id":1}]`)) 
 			return
 		case strings.HasPrefix(r.URL.Path, "/slots/") && r.Method == http.MethodPost:
 			var slotID int
@@ -285,7 +273,7 @@ func TestAssignSessionSlot_LRUEvictionSavesAndClears(t *testing.T) {
 			actions = append(actions, slotActionRecord{slot: slotID, action: action})
 			mu.Unlock()
 			if action == "restore" {
-				// Имитируем отсутствие файла (первый запуск).
+				
 				w.WriteHeader(http.StatusBadRequest)
 				w.Write([]byte(`{"error":{"message":"file not found"}}`))
 				return
@@ -304,14 +292,14 @@ func TestAssignSessionSlot_LRUEvictionSavesAndClears(t *testing.T) {
 	mgr := NewSlotManager(newSlotClient())
 	client := newSlotClient()
 
-	// Заполняем 2 слота.
+	
 	s0 := AssignSessionSlot(mgr, client, holder, "session-A", nil)
 	s1 := AssignSessionSlot(mgr, client, holder, "session-B", nil)
 	if s0 == s1 {
 		t.Fatalf("expected distinct slots, got %d/%d", s0, s1)
 	}
 
-	// Помечаем session-A как более свежую (LRU — session-B).
+	
 	mgr.Touch("session-A")
 	time.Sleep(1 * time.Millisecond)
 
@@ -321,8 +309,8 @@ func TestAssignSessionSlot_LRUEvictionSavesAndClears(t *testing.T) {
 		t.Errorf("expected session-C to take session-B's slot %d, got %d", s1, s2)
 	}
 
-	// На вытеснение: save (вытесненной session-B) + erase. restore НЕ должен
-	// вызываться для session-C (cold start после eviction).
+	
+	
 	mu.Lock()
 	defer mu.Unlock()
 	var saved, erased, restored bool
@@ -346,7 +334,7 @@ func TestAssignSessionSlot_LRUEvictionSavesAndClears(t *testing.T) {
 		t.Error("restore must NOT be called for the new session after eviction (cold start)")
 	}
 
-	// session-B вытеснена, session-A и session-C остаются.
+	
 	if mgr.GetSlotID("session-B") != -1 {
 		t.Error("session-B should be evicted")
 	}

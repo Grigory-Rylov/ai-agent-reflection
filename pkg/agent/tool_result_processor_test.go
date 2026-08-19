@@ -15,9 +15,6 @@ import (
 	sess "github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-// ============================================================
-// Mock compressor for auto-continue tests
-// ============================================================
 
 type mockAutoContinueCompressor struct {
 	compressFunc func(ctx context.Context, req *compress.CompressionRequest) (*compress.CompressionResult, error)
@@ -39,24 +36,19 @@ func (m *mockAutoContinueCompressor) Compress(ctx context.Context, req *compress
 	}, nil
 }
 
-// newAutoContinueTestAgent создаёт агента с маленьким MaxTokens и моковым компактором.
+
 func newAutoContinueTestAgent(t *testing.T) *agentImpl {
 	t.Helper()
 	config := DefaultConfig()
 	config.LlamaServerURL = "127.0.0.1:8080"
 	config.Model = "test-model"
-	config.MaxTokens = 50 // маленький лимит — компактизация сработает сразу
+	config.MaxTokens = 50 
 
 	agent := NewAgent(config)
 	agent.compactor = compress.NewCompactor(&mockAutoContinueCompressor{})
 	return agent
 }
 
-// ============================================================
-// Test 1: compactIfNeededBeforeLLM (proactive path) — NO auto-continue
-// Proactive compaction doesn't add "Continue..." because tool results
-// are still in context and the model continues naturally.
-// ============================================================
 
 func TestCompactIfNeededBeforeLLM_NoAutoContinue(t *testing.T) {
 	agent := newAutoContinueTestAgent(t)
@@ -64,13 +56,13 @@ func TestCompactIfNeededBeforeLLM_NoAutoContinue(t *testing.T) {
 	s := sess.NewSession(sess.DefaultConfig())
 	s.UpdateSystemPrompt("test system prompt")
 
-	// Наполняем сессию сообщениями, чтобы был контекст для компактизации.
+	
 	for i := 0; i < 10; i++ {
 		s.AddUserMessage(strings.Repeat(fmt.Sprintf("user message %d: ", i), 20))
 		s.AddAssistantMessage(strings.Repeat(fmt.Sprintf("assistant reply %d: ", i), 20))
 	}
 
-	// Создаём tool calls/results (как в processToolResults)
+	
 	longArgs := `{"path":"src/main.go","content":"package main\nfunc main() { fmt.Println(\"hello\") }"}`
 	toolCalls := []ToolCall{
 		{ID: "call_1", Type: "function", Function: ToolCallFunction{Name: "file_read", Arguments: []byte(longArgs)}},
@@ -79,7 +71,7 @@ func TestCompactIfNeededBeforeLLM_NoAutoContinue(t *testing.T) {
 		{ToolCallID: "call_1", ToolName: "file_read", Content: strings.Repeat("result data ", 20)},
 	}
 
-	// Добавляем assistant+tool в сессию (как делает processToolResults до compactIfNeededBeforeLLM)
+	
 	sessionToolCalls := []sess.MsgToolCall{
 		{ID: "call_1", Type: "function", Function: sess.MsgToolCallFunc{Name: "file_read", Arguments: longArgs}},
 	}
@@ -88,7 +80,7 @@ func TestCompactIfNeededBeforeLLM_NoAutoContinue(t *testing.T) {
 		s.AddToolMessage(tr.ToolCallID, tr.ToolName, tr.Content)
 	}
 
-	// Формируем messages (как buildToolResultMessages)
+	
 	messages := agent.buildToolResultMessages(
 		[]Message{{Role: "user", Content: "read the file"}},
 		"executing tool", toolCalls, toolResults,
@@ -96,15 +88,15 @@ func TestCompactIfNeededBeforeLLM_NoAutoContinue(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Вызываем compactIfNeededBeforeLLM (проактивный путь)
+	
 	resultMessages := agent.compactIfNeededBeforeLLM(ctx, s, messages, "executing tool", toolCalls, toolResults)
 
-	// Проверяем, что результат не пустой
+	
 	if len(resultMessages) == 0 {
 		t.Fatal("expected non-empty result messages after compaction")
 	}
 
-	// Проверяем, что в сессии НЕ появилось CompactionAutoContinueText (проактивный путь его не добавляет).
+	
 	history := s.GetHistory()
 	for _, msg := range history {
 		if msg.Role == sess.UserRole && msg.Content == tokenizers.CompactionAutoContinueText {
@@ -113,7 +105,7 @@ func TestCompactIfNeededBeforeLLM_NoAutoContinue(t *testing.T) {
 	}
 }
 
-// findLastUserRoleMessage возвращает контент последнего user-сообщения.
+
 func findLastUserRoleMessage(msgs []sess.Message) string {
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Role == sess.UserRole {
@@ -123,9 +115,6 @@ func findLastUserRoleMessage(msgs []sess.Message) string {
 	return ""
 }
 
-// ============================================================
-// Test 2: processToolResults reactive overflow → CompactionOverflowContinueText
-// ============================================================
 
 func TestProcessToolResults_OverflowRecovery_AutoContinueText(t *testing.T) {
 	var callCount int32
@@ -133,14 +122,14 @@ func TestProcessToolResults_OverflowRecovery_AutoContinueText(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt32(&callCount, 1)
 		if n == 1 {
-			// Первый вызов — симулируем context overflow (SSE error)
+			
 			w.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprint(w, `data: {"error":{"message":"prompt exceeds context length","code":"context_length_exceeded"}}
 
 `)
 			return
 		}
-		// Второй вызов — успешный ответ после компактизации.
+		
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"Done with the task."}}]}
 
@@ -154,7 +143,7 @@ data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
 	config := DefaultConfig()
 	config.LlamaServerURL = server.URL
 	config.Model = "test-model"
-	config.MaxTokens = 50 // маленький лимит для компактизации
+	config.MaxTokens = 50 
 	config.RetryDelay = 5 * time.Millisecond
 
 	agent := NewAgent(config)
@@ -163,18 +152,18 @@ data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
 	s := sess.NewSession(sess.DefaultConfig())
 	s.UpdateSystemPrompt("test system prompt")
 	a := agent
-	// Заменяем сессию в мапе (для agentPrefix и т.д.)
+	
 	a.mu.Lock()
 	a.sessions[1] = s
 	a.mu.Unlock()
 
-	// Наполняем сессию сообщениями для компактизации.
+	
 	for i := 0; i < 10; i++ {
 		s.AddUserMessage(strings.Repeat(fmt.Sprintf("message %d: ", i), 30))
 		s.AddAssistantMessage(strings.Repeat(fmt.Sprintf("reply %d: ", i), 30))
 	}
 
-	// Создаём tool calls/results (уже добавлены в сессию выше, здесь — для processToolResults)
+	
 	toolCalls := []ToolCall{
 		{ID: "call_1", Type: "function", Function: ToolCallFunction{Name: "shell_execute", Arguments: []byte(`{"command":"ls"}`)}},
 	}
@@ -185,8 +174,8 @@ data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
 	ctx := context.Background()
 	executed := make(map[string]bool)
 
-	// Вызываем processToolResults. Он добавит assistant+tool в сессию, вызовет compactIfNeededBeforeLLM,
-	// затем streamAndCollect → ошибка overflow → реактивная компактизация → авто-продолжение.
+	
+	
 	result, err := a.processToolResults(ctx, []Message{{Role: "user", Content: "do something"}}, "", toolCalls, toolResults, s, executed)
 
 	if err != nil {
@@ -194,7 +183,7 @@ data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
 	}
 	t.Logf("processToolResults result: %q", result)
 
-	// Проверяем, что в сессии появилось сообщение CompactionOverflowContinueText.
+	
 	history := s.GetHistory()
 	foundOverflowContinue := false
 	for _, msg := range history {
@@ -210,15 +199,12 @@ data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
 		}
 	}
 
-	// Проверяем, что сервер был вызван дважды: первый раз — overflow, второй — успех.
+	
 	if got := atomic.LoadInt32(&callCount); got != 2 {
 		t.Errorf("expected 2 LLM calls (overflow + retry), got %d", got)
 	}
 }
 
-// ============================================================
-// Test 3: compactIfNeededBeforeLLM no overflow — messages unchanged
-// ============================================================
 
 func TestCompactIfNeededBeforeLLM_NoOverflow(t *testing.T) {
 	agent := newAutoContinueTestAgent(t)
@@ -226,7 +212,7 @@ func TestCompactIfNeededBeforeLLM_NoOverflow(t *testing.T) {
 	s := sess.NewSession(sess.DefaultConfig())
 	s.UpdateSystemPrompt("test")
 
-	// Маленький контекст — не переполнит.
+	
 	s.AddUserMessage("hello")
 
 	messages := []Message{
@@ -236,7 +222,7 @@ func TestCompactIfNeededBeforeLLM_NoOverflow(t *testing.T) {
 	ctx := context.Background()
 	result := agent.compactIfNeededBeforeLLM(ctx, s, messages, "", nil, nil)
 
-	// Результат должен быть идентичен исходным сообщениям.
+	
 	if len(result) != len(messages) {
 		t.Fatalf("expected %d messages, got %d", len(messages), len(result))
 	}
@@ -244,7 +230,7 @@ func TestCompactIfNeededBeforeLLM_NoOverflow(t *testing.T) {
 		t.Errorf("expected content 'hello', got %q", result[0].Content)
 	}
 
-	// В сессии НЕ должно быть CompactionAutoContinueText.
+	
 	history := s.GetHistory()
 	for _, msg := range history {
 		if msg.Role == sess.UserRole && msg.Content == tokenizers.CompactionAutoContinueText {
@@ -253,9 +239,6 @@ func TestCompactIfNeededBeforeLLM_NoOverflow(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Test 4: processToolResults without overflow — no auto-continue text
-// ============================================================
 
 func TestProcessToolResults_NoOverflow_NoAutoContinue(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -272,11 +255,11 @@ data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
 	config := DefaultConfig()
 	config.LlamaServerURL = server.URL
 	config.Model = "test-model"
-	config.MaxTokens = 10000 // большой лимит — нет переполнения
+	config.MaxTokens = 10000 
 	config.RetryDelay = 5 * time.Millisecond
 
 	agent := NewAgent(config)
-	// compactor nil → компактизация выключена.
+	
 
 	s := sess.NewSession(sess.DefaultConfig())
 	s.UpdateSystemPrompt("test")
@@ -303,7 +286,7 @@ data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
 	}
 	t.Logf("result: %q", result)
 
-	// Без компактизации не должно быть авто-продолжения.
+	
 	history := s.GetHistory()
 	for _, msg := range history {
 		if msg.Role == sess.UserRole && (msg.Content == tokenizers.CompactionAutoContinueText || msg.Content == tokenizers.CompactionOverflowContinueText) {
@@ -312,9 +295,6 @@ data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
 	}
 }
 
-// ============================================================
-// Test 5: shouldAddAutoContinue — защита от дублирования при повторной компактизации
-// ============================================================
 
 func TestShouldAddAutoContinue_NoDuplication(t *testing.T) {
 	t.Run("empty session returns true", func(t *testing.T) {
@@ -377,31 +357,28 @@ func TestShouldAddAutoContinue_NoDuplication(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Test 6: shouldAddAutoContinue guard prevents duplicates (reactive path only)
-// ============================================================
 
 func TestShouldAddAutoContinue_GuardWorks(t *testing.T) {
-	// Симулируем reactive overflow recovery: auto-continue добавлен, потом снова compact + reactive.
+	
 	s := sess.NewSession(sess.DefaultConfig())
 	s.AddUserMessage("original prompt")
 	s.AddAssistantMessage("doing work...")
 
-	// Первая реактивная компактизация добавила CompactionOverflowContinueText.
+	
 	s.AddUserMessage(tokenizers.CompactionOverflowContinueText)
 
 	if shouldAddAutoContinue(s) {
 		t.Error("expected false: auto-continue already present with no model response after it")
 	}
 
-	// Модель ответила на auto-continue — теперь можно добавить ещё раз.
+	
 	s.AddAssistantMessage("continuing...")
 	if !shouldAddAutoContinue(s) {
 		t.Error("expected true: model responded to previous auto-continue")
 	}
 }
 
-// countUserMessages возвращает количество user-сообщений с указанным контентом.
+
 func countUserMessages(msgs []sess.Message, content string) int {
 	count := 0
 	for _, msg := range msgs {

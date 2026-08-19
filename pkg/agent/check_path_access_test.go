@@ -148,16 +148,16 @@ func TestCheckPathAccessGrantsAccess(t *testing.T) {
 	tools.WorkingDir = allowedDir
 	defer func() { tools.WorkingDir = oldWD }()
 
-	// Ensure outside dir is blocked initially
+	
 	err = tools.CheckPathAllowed(outsideDir)
 	if err == nil {
 		t.Fatal("expected outside dir to be blocked initially")
 	}
 
-	// Grant access via the controller
+	
 	ctrl.GrantPath(outsideDir)
 
-	// Now it should be allowed
+	
 	err = tools.CheckPathAllowed(outsideDir)
 	if err != nil {
 		t.Errorf("expected outside dir to be allowed after grant, got: %v", err)

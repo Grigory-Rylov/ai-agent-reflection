@@ -51,9 +51,9 @@ func ResolvePendingQuestion(peerID int64, text string) bool {
 
 	select {
 	case ch <- answer:
-		// Вопрос снят с регистрации сразу при доставке ответа: пока он
-		// остаётся в карте, быстро пришедшее второе сообщение тоже могло бы
-		// быть поглощено как «ответ» на тот же вопрос.
+		
+		
+		
 		delete(pendingQuestions, peerID)
 		return true
 	default:
@@ -76,10 +76,10 @@ func UnregisterPendingQuestion(peerID int64) {
 	ch, ok := pendingQuestions[peerID]
 	delete(pendingQuestions, peerID)
 	if ok {
-		// Закрываем канал, чтобы ожидающий ответ goroutine (handleQuestion →
-		// waitForAnswer) разблокировался и отпустил peer mutex. Это нужно,
-		// например, при /clear: без закрытия канала goroutine висела бы вечно
-		// и заблокировала все последующие сообщения от этого пира.
+		
+		
+		
+		
 		close(ch)
 	}
 }
@@ -135,7 +135,7 @@ func ApplyPathGrant(peerID int64, path string) {
 }
 
 func addPathPrefix(prefixes []string, newPath string) []string {
-	// Normalize: ensure trailing /
+	
 	if !strings.HasSuffix(newPath, "/") {
 		newPath += "/"
 	}
@@ -144,7 +144,7 @@ func addPathPrefix(prefixes []string, newPath string) []string {
 			return prefixes
 		}
 	}
-	// Filter out child paths that are covered by the new one
+	
 	var filtered []string
 	for _, p := range prefixes {
 		if strings.HasPrefix(p, newPath) {

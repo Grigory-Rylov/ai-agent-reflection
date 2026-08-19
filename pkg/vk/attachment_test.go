@@ -162,7 +162,7 @@ func TestVKAttachmentToRaw(t *testing.T) {
 				}
 			}
 
-			// Roundtrip: marshal then unmarshal
+			
 			data, err := json.Marshal(raw)
 			if err != nil {
 				t.Fatalf("marshal error: %v", err)
@@ -230,10 +230,7 @@ func TestDownloadAttachmentsAbsolutePath(t *testing.T) {
 	}
 }
 
-// TestBuildFullTextLongPollFallback проверяет, что когда getById не принёс
-// сообщение (id=0 / fullMsgMap пуст), buildFullText всё равно скачивает аттачи
-// из самого long-poll события и дописывает путь к файлу в промпт. Без этого
-// фикса агент не видел путь к картинке/файлу и не понимал, о чём его просят.
+
 func TestBuildFullTextLongPollFallback(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("photo-bytes"))
@@ -259,8 +256,8 @@ func TestBuildFullTextLongPollFallback(t *testing.T) {
 	h := NewBotHandler(nil, newMockAgentLoop(), mustLogger(t))
 	h.attachmentsDir = dir
 
-	// id=0 и fullMsgMap пуст — ровно тот сценарий из лога:
-	// "long poll carried 1 attachment(s) but full message not fetched".
+	
+	
 	msg := &VKMessage{ID: 0, PeerID: 2000000001, Text: "что на фото", Attachments: []VKAttachment{att}}
 	out := h.buildFullText(msg, nil)
 
@@ -270,14 +267,13 @@ func TestBuildFullTextLongPollFallback(t *testing.T) {
 	if !strings.Contains(out, "saved to:") {
 		t.Fatalf("prompt should contain downloaded file path, got: %s", out)
 	}
-	// Путь должен указывать на реально скачанный файл в attachmentsDir.
+	
 	if !strings.Contains(out, dir) {
 		t.Errorf("prompt should contain path under %s, got: %s", dir, out)
 	}
 }
 
-// TestBuildFullTextNoAttachmentsWithoutFullMsg — без аттачей и без getById
-// возвращается только текст (без падений).
+
 func TestBuildFullTextNoAttachmentsWithoutFullMsg(t *testing.T) {
 	h := NewBotHandler(nil, newMockAgentLoop(), mustLogger(t))
 	h.attachmentsDir = t.TempDir()

@@ -12,9 +12,9 @@ import (
 type ModelEntry struct {
 	Name     string `json:"name"`
 	Host     string `json:"host"`
-	Context  int    `json:"context,omitempty"`   // Лимит контекста модели в токенах (0 = не указан)
-	Vision   bool   `json:"vision,omitempty"`    // Модель поддерживает изображения (мультимодальная)
-	SlotSave bool   `json:"slot-save,omitempty"` // Сохранять/восстанавливать KV-cache слота llama-server для сессии
+	Context  int    `json:"context,omitempty"`   
+	Vision   bool   `json:"vision,omitempty"`    
+	SlotSave bool   `json:"slot-save,omitempty"` 
 }
 
 type ModelsConfig struct {
@@ -142,48 +142,42 @@ func (h *Holder) GetDefaultAlias() string {
 	return h.config.Default
 }
 
-// GetCurrentContext возвращает лимит контекста текущей модели из models.json
-// (0, если не указан).
+
 func (h *Holder) GetCurrentContext() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.config.Models[h.config.Default].Context
 }
 
-// GetModelContext возвращает лимит контекста модели по алиасу из models.json
-// (0, если не указан).
+
 func (h *Holder) GetModelContext(alias string) int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.config.Models[alias].Context
 }
 
-// GetCurrentVision возвращает true, если текущая модель поддерживает
-// изображения (мультимодальная).
+
 func (h *Holder) GetCurrentVision() bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.config.Models[h.config.Default].Vision
 }
 
-// GetModelVision возвращает true, если модель по алиасу поддерживает
-// изображения (мультимодальная).
+
 func (h *Holder) GetModelVision(alias string) bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.config.Models[alias].Vision
 }
 
-// GetCurrentSlotSave возвращает true, если для текущей модели включено
-// сохранение/восстановление KV-cache слота llama-server (slot-save).
+
 func (h *Holder) GetCurrentSlotSave() bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.config.Models[h.config.Default].SlotSave
 }
 
-// GetModelSlotSave возвращает true, если для модели по алиасу включено
-// сохранение/восстановление KV-cache слота llama-server (slot-save).
+
 func (h *Holder) GetModelSlotSave(alias string) bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()

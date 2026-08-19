@@ -23,29 +23,25 @@ const (
 	stateToolCall
 	stateFunction
 	stateParam
-	stateFunctionNoWrapper  // для формата без обёртки
-	stateSimplifiedParam    // для упрощённого формата <path>value</path>
+	stateFunctionNoWrapper  
+	stateSimplifiedParam    
 )
 
-// ParseXMLToolCalls парсит XML tool calls в двух форматах:
-// 1. С обёрткой: <tool_call><function=name><parameter=key>value</parameter></function></tool_call>
-// 2. Без обёртки: <function=name><parameter=key>value</parameter></function>
-// Пропускает XML внутри code blocks (``` ... ```)
-// Если ни один формат не распознан, делает общий стриппинг <tool_call>...</tool_call> блоков.
+
 func ParseXMLToolCalls(input string) XMLParseResult {
-	// Сначала пробуем парсить с обёрткой
+	
 	result := parseWithWrapper(input)
 	if len(result.ToolCalls) > 0 {
 		logger.DebugToFile("ParseXMLToolCalls: found %d tool calls with wrapper", len(result.ToolCalls))
 		return result
 	}
-	// Если не нашли — пробуем парсить без обёртки
+	
 	result = parseWithoutWrapper(input)
 	if len(result.ToolCalls) > 0 {
 		logger.DebugToFile("ParseXMLToolCalls: found %d tool calls without wrapper", len(result.ToolCalls))
 		return result
 	}
-	// Fallback: общий стриппинг <tool_call>...</tool_call> блоков любых форматов
+	
 	stripped := stripToolCallBlocks(result.Content)
 	if stripped != result.Content {
 		logger.DebugToFile("ParseXMLToolCalls: stripped tool_call blocks via fallback")
@@ -54,9 +50,7 @@ func ParseXMLToolCalls(input string) XMLParseResult {
 	return result
 }
 
-// stripToolCallBlocks удаляет все <tool_call>...</tool_call> блоки из текста,
-// включая их содержимое, независимо от внутреннего формата.
-// Используется как fallback, когда основной парсер не распознал формат.
+
 func stripToolCallBlocks(input string) string {
 	var result strings.Builder
 	for {
@@ -71,23 +65,23 @@ func stripToolCallBlocks(input string) string {
 			result.WriteString(input)
 			break
 		}
-		// Пишем текст до <tool_call
+		
 		result.WriteString(input[:start])
-		// Ищем закрывающий тег
+		
 		rest := input[start:]
 		end := strings.Index(rest, "</tool_call>")
 		if end < 0 {
-			// Нет закрывающего тега — оставляем как есть
+			
 			result.WriteString(rest)
 			break
 		}
-		// Пропускаем весь блок <tool_call>...</tool_call>
+		
 		input = rest[end+len("</tool_call>"):]
 	}
 	return result.String()
 }
 
-// isInCodeBlock проверяет, находится ли позиция внутри code block
+
 func isInCodeBlock(input string, pos int) bool {
 	count := 0
 	for i := 0; i < pos && i+2 < len(input); i++ {
@@ -95,11 +89,11 @@ func isInCodeBlock(input string, pos int) bool {
 			count++
 		}
 	}
-	// Нечётное количество означает, что мы внутри code block
+	
 	return count%2 == 1
 }
 
-// parseWithWrapper парсит формат с ิ обёрткой
+
 func parseWithWrapper(input string) XMLParseResult {
 	var result XMLParseResult
 	var content strings.Builder
@@ -113,9 +107,9 @@ func parseWithWrapper(input string) XMLParseResult {
 
 	i := 0
 	for i < len(input) {
-		// Пропускаем парсинг если внутри code block на верхнем уровне
-		// Внутри <tool_call> не применяем — иначе backtick-и внутри параметров
-		// меняют счётчик и блокируют matchCloseTag для </function>/</tool_call>.
+		
+		
+		
 		if state == stateText && isInCodeBlock(input, i) {
 			content.WriteByte(input[i])
 			i++
@@ -227,7 +221,7 @@ func parseWithWrapper(input string) XMLParseResult {
 				i = n
 				continue
 			}
-			// Стандартный XML: <parameter name="key">value</parameter>
+			
 			if attrName, content, n := parseAttrTag(input, i); n > 0 {
 				pendingContent.WriteString(input[i:n])
 				if args == nil {
@@ -265,7 +259,7 @@ func parseWithWrapper(input string) XMLParseResult {
 		}
 	}
 
-	// Flush pending content if tool call was malformed
+	
 	if state != stateText {
 		content.WriteString(pendingContent.String())
 		if paramName != "" {
@@ -277,8 +271,7 @@ func parseWithWrapper(input string) XMLParseResult {
 	return result
 }
 
-// parseWithoutWrapper парсит формат БЕЗ ิ обёртки
-// Формат: <function=name><parameter=key>value</parameter></function>
+
 func parseWithoutWrapper(input string) XMLParseResult {
 	var result XMLParseResult
 	var content strings.Builder
@@ -288,13 +281,13 @@ func parseWithoutWrapper(input string) XMLParseResult {
 	var paramName string
 	var paramValue strings.Builder
 	var args map[string]string
-	var depth int // глубина вложенности тегов в content
+	var depth int 
 
 	i := 0
 	for i < len(input) {
-		// Пропускаем парсинг если внутри code block на верхнем уровне
-		// Внутри <function> не применяем — иначе backtick-и внутри параметров
-		// меняют счётчик и блокируют matchCloseTag для </function>.
+		
+		
+		
 		if state == stateText && isInCodeBlock(input, i) {
 			content.WriteByte(input[i])
 			i++
@@ -303,7 +296,7 @@ func parseWithoutWrapper(input string) XMLParseResult {
 
 		switch state {
 		case stateText:
-			// Ищем <function=name>
+			
 			if name, n := parseTagWithValue(input, i, "function"); n > 0 {
 				logger.DebugToFile("parseWithoutWrapper: found <function=%s> at pos %d", name, i)
 				funcName = name
@@ -324,9 +317,9 @@ func parseWithoutWrapper(input string) XMLParseResult {
 			i++
 
 		case stateFunctionNoWrapper:
-			// Ищем </function> или <parameter=name> или упрощённый <param>value</param>
+			
 			if n := matchCloseTag(input, i, "function"); n > 0 {
-				// Сохраняем tool call
+				
 				if funcName != "" {
 					logger.DebugToFile("parseWithoutWrapper: completed tool call %s with %d args", funcName, len(args))
 					result.ToolCalls = append(result.ToolCalls, XMLToolCall{
@@ -349,7 +342,7 @@ func parseWithoutWrapper(input string) XMLParseResult {
 				i = n
 				continue
 			}
-			// Стандартный XML: <parameter name="key">value</parameter>
+			
 			if attrName, content, n := parseAttrTag(input, i); n > 0 {
 				logger.DebugToFile("parseWithoutWrapper: found <parameter name=%q>%s</parameter>", attrName, content)
 				if args == nil {
@@ -359,7 +352,7 @@ func parseWithoutWrapper(input string) XMLParseResult {
 				i = n
 				continue
 			}
-			// Пробуем упрощённый формат <param>value</param>
+			
 			if tagName, value, n := parseSimpleTag(input, i); n > 0 {
 				logger.DebugToFile("parseWithoutWrapper: found simplified param <%s>%s</%s>", tagName, value, tagName)
 				if args == nil {
@@ -372,7 +365,7 @@ func parseWithoutWrapper(input string) XMLParseResult {
 			i++
 
 		case stateParam:
-			// Ищем </parameter>, учитывая возможные вложенные теги в значении
+			
 			if n := matchCloseTag(input, i, "parameter"); n > 0 && depth == 0 {
 				if paramName != "" {
 					args[paramName] = strings.TrimSpace(paramValue.String())
@@ -382,7 +375,7 @@ func parseWithoutWrapper(input string) XMLParseResult {
 				i = n
 				continue
 			}
-			// Отслеживаем вложенные теги в значении параметра
+			
 			if i < len(input) && input[i] == '<' {
 				if i+1 < len(input) && input[i+1] == '/' {
 					depth--
@@ -447,10 +440,7 @@ func matchCloseTag(input string, i int, tagName string) int {
 	return -1
 }
 
-// parseFunctionTagAsContent парсит <function>name</function>, <function>name>
-// или <function>name<parameter...>
-// Возвращает (name, newPos) где newPos — позиция для продолжения парсинга,
-// после которой state machine обработает </function> сама.
+
 func parseFunctionTagAsContent(input string, i int) (string, int) {
 	if !hasPrefixAt(input, i, "<function>") {
 		return "", -1
@@ -465,15 +455,15 @@ func parseFunctionTagAsContent(input string, i int) (string, int) {
 	var nextPos int
 
 	if endBracket >= 0 && (firstLT < 0 || endBracket < firstLT) {
-		// Случай 1: <function>name> — malformed, > после имени без вложенных тегов
+		
 		name = strings.TrimSpace(input[contentStart:endBracket])
 		nextPos = endBracket + 1
 	} else if closeFunc >= 0 && (firstLT < 0 || firstLT == contentStart+closeFunc) {
-		// Случай 2: <function>name</function> — без вложенных тегов
+		
 		name = strings.TrimSpace(input[contentStart : contentStart+closeFunc])
 		nextPos = contentStart + closeFunc
 	} else if firstLT >= 0 {
-		// Случай 3: <function>name<...> — имя до первого вложенного тега
+		
 		name = strings.TrimSpace(input[contentStart:firstLT])
 		nextPos = firstLT
 	} else {
@@ -543,9 +533,7 @@ func findChar(s string, start int, ch byte) int {
 	return -1
 }
 
-// parseAttrTag парсит формат: <tag attr="value">content</tag> или <tag attr='value'>content</tag>
-// Возвращает (attrValue, content, endPosition) или ("", "", -1).
-// Парсит ТОЛЬКО для тега "parameter" — извлекает name-атрибут и содержимое.
+
 func parseAttrTag(input string, i int) (string, string, int) {
 	if i >= len(input) || input[i] != '<' {
 		return "", "", -1
@@ -555,7 +543,7 @@ func parseAttrTag(input string, i int) (string, string, int) {
 		return "", "", -1
 	}
 	openTag := input[i+1 : close]
-	// Должно быть: parameter name="..." или parameter name='...'
+	
 	if !strings.HasPrefix(openTag, "parameter ") {
 		return "", "", -1
 	}
@@ -589,36 +577,35 @@ func parseAttrTag(input string, i int) (string, string, int) {
 	return attrVal, content, contentStart + closePos + len(closeTag)
 }
 
-// parseSimpleTag парсит упрощённый формат тега: <tagname>value</tagname>
-// Возвращает (tagname, value, endPosition) или ("", "", -1) если не удалось распарсить
+
 func parseSimpleTag(input string, i int) (string, string, int) {
 	if i >= len(input) || input[i] != '<' {
 		return "", "", -1
 	}
 
-	// Ищем конец открывающего тега
+	
 	tagEnd := findChar(input, i+1, '>')
 	if tagEnd < 0 {
 		return "", "", -1
 	}
 
-	// Извлекаем имя тега
+	
 	tagName := strings.TrimSpace(input[i+1 : tagEnd])
 	if tagName == "" || strings.Contains(tagName, " ") || strings.Contains(tagName, "=") {
-		// Пустой тег, тег с пробелами или с = (это не упрощённый формат)
+		
 		return "", "", -1
 	}
 
-	// Проверяем, что это не закрывающий тег
+	
 	if strings.HasPrefix(tagName, "/") {
 		return "", "", -1
 	}
 
-	// Ищем закрывающий тег </tagname>
+	
 	closeTag := "</" + tagName + ">"
 	closePos := strings.Index(input[tagEnd+1:], closeTag)
 	if closePos < 0 {
-		// Пробуем с пробелами
+		
 		closeTag = "</ " + tagName + ">"
 		closePos = strings.Index(input[tagEnd+1:], closeTag)
 		if closePos < 0 {

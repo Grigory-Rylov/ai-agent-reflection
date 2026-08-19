@@ -299,7 +299,7 @@ func TestGlobWithAccessControl(t *testing.T) {
 		dir, _ := setupAccessTest(t)
 		defer cleanupAccessTest(t, dir)
 
-		// Create a test file
+		
 		if err := os.WriteFile(filepath.Join(dir, "test.go"), []byte("package main"), 0644); err != nil {
 			t.Fatalf("failed to create test file: %v", err)
 		}
@@ -401,7 +401,7 @@ func TestSessionGrantIntegration(t *testing.T) {
 		}
 		defer os.RemoveAll(outsideDir)
 
-		// Без grant доступ запрещён
+		
 		tool := &FileReadTool{}
 		result, err := tool.Execute(context.Background(), map[string]string{
 			"path": filepath.Join(outsideDir, "test.txt"),
@@ -413,17 +413,17 @@ func TestSessionGrantIntegration(t *testing.T) {
 			t.Error("expected failure before grant")
 		}
 
-		// Grant доступа
+		
 		ctrl := GetAccessController()
 		ctrl.GrantPath(outsideDir)
 
-		// Создаём файл в granted директории
+		
 		testFile := filepath.Join(outsideDir, "granted.txt")
 		if err := os.WriteFile(testFile, []byte("granted"), 0644); err != nil {
 			t.Fatalf("failed to create test file: %v", err)
 		}
 
-		// После grant доступ разрешён
+		
 		result, err = tool.Execute(context.Background(), map[string]string{
 			"path": testFile,
 		})
@@ -491,7 +491,7 @@ func TestMultipleAllowedDirs(t *testing.T) {
 		SetAccessController(ctrl)
 		defer SetAccessController(nil)
 
-		// Write to dir1
+		
 		tool := &FileWriteTool{}
 		result, err := tool.Execute(context.Background(), map[string]string{
 			"path":    filepath.Join(dir1, "f1.txt"),
@@ -504,7 +504,7 @@ func TestMultipleAllowedDirs(t *testing.T) {
 			t.Errorf("write to dir1 should succeed, got: %s", result.Error)
 		}
 
-		// Write to dir2
+		
 		result, err = tool.Execute(context.Background(), map[string]string{
 			"path":    filepath.Join(dir2, "f2.txt"),
 			"content": "file2",
@@ -516,7 +516,7 @@ func TestMultipleAllowedDirs(t *testing.T) {
 			t.Errorf("write to dir2 should succeed, got: %s", result.Error)
 		}
 
-		// Write to third dir should fail
+		
 		dir3, err := os.MkdirTemp("", "multi_allowed_3_*")
 		if err != nil {
 			t.Fatalf("failed to create temp dir: %v", err)
@@ -536,10 +536,7 @@ func TestMultipleAllowedDirs(t *testing.T) {
 	})
 }
 
-// TestFileToolPaths_NoPathFallsBackToWorkingDir проверяет, что при вызове
-// файловых инструментов без path аргумента FileToolPaths возвращает ["."],
-// что позволяет PathsAllAllowed проверить рабочую директорию вместо того
-// чтобы запрашивать пермишен у пользователя.
+
 func TestFileToolPaths_NoPathFallsBackToWorkingDir(t *testing.T) {
 	tests := []struct {
 		tool     string
@@ -553,9 +550,9 @@ func TestFileToolPaths_NoPathFallsBackToWorkingDir(t *testing.T) {
 		{"file_read", map[string]string{"path": "/etc/hosts"}, []string{"/etc/hosts"}},
 		{"edit", map[string]string{}, []string{"."}},
 		{"edit", map[string]string{"path": "main.go"}, []string{"main.go"}},
-		{"file_list", map[string]string{}, []string{"."}},           // already defaulted
-		{"search_code", map[string]string{}, []string{"."}},         // already defaulted
-		{"shell_execute", map[string]string{"command": "ls"}, nil}, // shell проверяется отдельно
+		{"file_list", map[string]string{}, []string{"."}},           
+		{"search_code", map[string]string{}, []string{"."}},         
+		{"shell_execute", map[string]string{"command": "ls"}, nil}, 
 	}
 
 	for _, tt := range tests {

@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// ============================================================
-// Mock Tool для тестов
-// ============================================================
 
 type MockTool struct {
 	name        string
@@ -35,9 +32,6 @@ func (m *MockTool) Execute(ctx context.Context, inputs map[string]string) (ToolR
 	return ToolResult{Success: true, Data: "executed"}, nil
 }
 
-// ============================================================
-// Тесты Registry
-// ============================================================
 
 func TestNewRegistry(t *testing.T) {
 	t.Run("creates empty registry", func(t *testing.T) {
@@ -260,9 +254,6 @@ func TestRegistryToOpenAISchema(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Тесты Parameter Utilities
-// ============================================================
 
 func TestCreateStringParameter(t *testing.T) {
 	t.Run("creates string parameter", func(t *testing.T) {
@@ -324,9 +315,6 @@ func TestCreateEnumParameter(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Тесты ToolResult Utilities
-// ============================================================
 
 func TestMarshalToolResult(t *testing.T) {
 	t.Run("marshals successful result", func(t *testing.T) {
@@ -341,7 +329,7 @@ func TestMarshalToolResult(t *testing.T) {
 			t.Error("expected non-empty JSON string")
 		}
 
-		// Проверяем что можно распарсить обратно
+		
 		parsed, err := UnmarshalToolResult(jsonStr)
 		if err != nil {
 			t.Fatalf("failed to unmarshal: %v", err)

@@ -9,11 +9,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
 )
 
-// ModelContextResolver определяет лимит контекста модели и кэширует его
-// по алиасу модели. Приоритет: поле context в models.json (override),
-// иначе реальный контекст с llama-server. Сервер опрашивается один раз
-// на модель; при смене модели (команда /r) для нового алиаса выполняется
-// новый запрос. Фоллбеков нет — при неудаче возвращается ошибка.
+
 type ModelContextResolver struct {
 	mu     sync.Mutex
 	holder *modelsconfig.Holder
@@ -29,9 +25,7 @@ func NewModelContextResolver(holder *modelsconfig.Holder, log Logger) *ModelCont
 	}
 }
 
-// Resolve возвращает лимит контекста текущей модели, кэшируя результат
-// по алиасу. Возвращает ошибку, если лимит не удалось получить ни из
-// models.json, ни с llama-server.
+
 func (r *ModelContextResolver) Resolve() (int, error) {
 	if r.holder == nil {
 		return 0, fmt.Errorf("models.json not loaded")
@@ -53,7 +47,7 @@ func (r *ModelContextResolver) Resolve() (int, error) {
 	return ctx, nil
 }
 
-// resolveOnce запрашивает лимит контекста для конкретного алиаса модели.
+
 func (r *ModelContextResolver) resolveOnce(alias string) (int, error) {
 	if ctx := r.holder.GetModelContext(alias); ctx > 0 {
 		if r.log != nil {

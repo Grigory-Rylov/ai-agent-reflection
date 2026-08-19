@@ -10,11 +10,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/workflow"
 )
 
-// ============================================================
-// Agent state management — injected dependencies for agent_result tool
-// ============================================================
 
-// agentStateManager предоставляет доступ к состоянию agent mode
 type agentStateManager interface {
 	GetWorkflowID(peerID int64) string
 	ExitMode(peerID int64)
@@ -26,7 +22,7 @@ var (
 	agentStMgr agentStateManager
 )
 
-// SetAgentDependencies устанавливает зависимости для agent_result инструмента
+
 func SetAgentDependencies(wfMgr *workflow.WorkflowManager, stMgr agentStateManager) {
 	agentMu.Lock()
 	defer agentMu.Unlock()
@@ -46,26 +42,22 @@ func getAgentStMgr() agentStateManager {
 	return agentStMgr
 }
 
-// ============================================================
-// agent_result — завершает workflow и возвращает результат пользователю
-// ============================================================
 
-// AgentResultTool вызывает координатор когда задача решена
 type AgentResultTool struct{}
 
-// Name возвращает имя инструмента
+
 func (t *AgentResultTool) Name() string {
 	return "agent_result"
 }
 
-// Description возвращает описание инструмента
+
 func (t *AgentResultTool) Description() string {
 	return "Вызываете этот инструмент когда задача полностью решена. " +
 		"Это завершает workflow и отправляет пользователю итоговый результат. " +
 		"Используйте только если уверены что вся задача выполнена."
 }
 
-// Schema возвращает схему инструмента
+
 func (t *AgentResultTool) Schema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
@@ -77,7 +69,7 @@ func (t *AgentResultTool) Schema() map[string]interface{} {
 	}
 }
 
-// Execute выполняет инструмент
+
 func (t *AgentResultTool) Execute(ctx context.Context, inputs map[string]string) (ToolResult, error) {
 	peerIDStr, ok := inputs["peer_id"]
 	if !ok || peerIDStr == "" {
@@ -91,13 +83,13 @@ func (t *AgentResultTool) Execute(ctx context.Context, inputs map[string]string)
 		return ToolResult{Success: false, Error: "summary required"}, fmt.Errorf("summary required")
 	}
 
-	// Находим workflow manager для этого пользователя
+	
 	wfMgr := getWorkflowMgr()
 	if wfMgr == nil {
 		return ToolResult{Success: false}, fmt.Errorf("workflow manager not initialized")
 	}
 
-	// Получаем active workflow пользователя
+	
 	agentStMgr := getAgentStMgr()
 	if agentStMgr == nil {
 		return ToolResult{Success: false}, fmt.Errorf("agent state not found")
@@ -113,15 +105,15 @@ func (t *AgentResultTool) Execute(ctx context.Context, inputs map[string]string)
 		return ToolResult{Success: false}, fmt.Errorf("workflow %s not found", wfID)
 	}
 
-	// Архивируем артефакты в рабочую директорию пользователя
+	
 	artifactsPath := filepath.Join(WorkingDir, ".workflow_artifacts", wfID)
 	os.MkdirAll(artifactsPath, 0755)
 
-	// Копируем артефакты из workflow dir
+	
 	artifactsPath = filepath.Join(artifactsPath, "artifacts")
 	os.MkdirAll(artifactsPath, 0755)
 
-	// Копируем файлы артефактов
+	
 	files, err := wfMgr.ListWorkflowArtifacts(wfID, "")
 	if err == nil && len(files) > 0 {
 		srcDir := wfMgr.GetWorkflowDir(wfID)
@@ -136,11 +128,11 @@ func (t *AgentResultTool) Execute(ctx context.Context, inputs map[string]string)
 		}
 	}
 
-	// Формируем финальный отчёт
+	
 	report := fmt.Sprintf("✅ Workflow %s завершён.\n\n", wfID)
 	report += fmt.Sprintf("**Результат:**\n%s\n\n", summary)
 
-	// Список одобренных этапов
+	
 	approved := wfMgr.GetAllApprovedTasks(wfID)
 	report += fmt.Sprintf("**Этапы (%d):**\n", len(approved))
 	for _, task := range approved {
@@ -148,10 +140,10 @@ func (t *AgentResultTool) Execute(ctx context.Context, inputs map[string]string)
 	}
 	report += fmt.Sprintf("\n**Всего задач:** %d\n", len(wf.Tasks))
 
-	// Сохраняем результат
+	
 	wfMgr.CompleteWorkflow(wfID, summary)
 
-	// Уведомляем пользователя (записываем в файл — получит agent loop)
+	
 	notifDir := filepath.Join(WorkingDir, ".agent_notifications")
 	os.MkdirAll(notifDir, 0755)
 	os.WriteFile(
@@ -160,7 +152,7 @@ func (t *AgentResultTool) Execute(ctx context.Context, inputs map[string]string)
 		0644,
 	)
 
-	// Отключаем агентный режим
+	
 	agentStMgr.ExitMode(peerID)
 
 	return ToolResult{

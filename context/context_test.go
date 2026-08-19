@@ -76,7 +76,7 @@ func TestGetMessages(t *testing.T) {
 		t.Errorf("expected 3 messages, got %d", len(messages))
 	}
 
-	// Verify returned slice is a copy
+	
 	messages[1].Content = "Modified"
 	if m.GetMessages()[1].Content == "Modified" {
 		t.Error("GetMessages should return a copy, not reference")
@@ -149,14 +149,14 @@ func TestMaxMessagesLimit(t *testing.T) {
 	config.MaxMessages = 3
 	m := NewManager(config)
 
-	// Add 10 messages
+	
 	for i := 0; i < 10; i++ {
 		m.AddUserMessage("User message")
 		m.AddAssistantMessage("Assistant response")
 	}
 
-	// Should keep only MaxMessages pairs + system
-	expectedMax := 1 + (config.MaxMessages * 2) // system + 3 pairs
+	
+	expectedMax := 1 + (config.MaxMessages * 2) 
 	if len(m.messages) > expectedMax {
 		t.Errorf("expected at most %d messages, got %d", expectedMax, len(m.messages))
 	}

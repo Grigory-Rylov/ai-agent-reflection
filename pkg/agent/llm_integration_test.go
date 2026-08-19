@@ -17,11 +17,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-// ============================================================
-// Интеграционные тесты — проверка tool calling на реальном LLM
-// ============================================================
 
-// loadTestConfig загружает конфигурацию из config.json
 func loadTestConfig() (serverURL, model string, maxTokens int, temperature float64, err error) {
 	data, err := os.ReadFile("../../config.json")
 	if err != nil {
@@ -50,7 +46,7 @@ func loadTestConfig() (serverURL, model string, maxTokens int, temperature float
 	return serverURL, model, cfg.MaxTokens, cfg.Temperature, nil
 }
 
-// skipIfNoServer проверяет доступность LLM сервера
+
 func skipIfNoServer(t *testing.T, serverURL string) {
 	t.Helper()
 	client := &http.Client{Timeout: 2 * time.Second}
@@ -61,7 +57,7 @@ func skipIfNoServer(t *testing.T, serverURL string) {
 	resp.Body.Close()
 }
 
-// setupTestAgent создаёт агента с инструментами для теста
+
 func setupTestAgent(t *testing.T) (*agentImpl, string) {
 	t.Helper()
 
@@ -92,7 +88,7 @@ func setupTestAgent(t *testing.T) (*agentImpl, string) {
 
 	a := NewAgent(config)
 
-	// Регистрируем инструменты через тот же механизм что и agentloop
+	
 	if impl, ok := interface{}(a).(interface{ RegisterTools(*tools.Registry) }); ok {
 		impl.RegisterTools(reg)
 	}
@@ -100,15 +96,15 @@ func setupTestAgent(t *testing.T) (*agentImpl, string) {
 	return a, serverURL
 }
 
-// TestLLMToolCall_time_get проверяет что модель вызывает time_get
+
 func TestLLMToolCall_time_get(t *testing.T) {
 	a, _ := setupTestAgent(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// Добавляем сообщение в сессию перед вызовом ProcessMessage
-	// (как это делает agentloop)
+	
+	
 	sess := a.GetSession(99901)
 	sess.AddUserMessage("Который сейчас час? Используй инструмент time_get.")
 
@@ -124,14 +120,14 @@ func TestLLMToolCall_time_get(t *testing.T) {
 	t.Logf("Response: %s", response)
 }
 
-// TestLLMToolCall_calc проверяет что модель вызывает calc
+
 func TestLLMToolCall_calc(t *testing.T) {
 	a, _ := setupTestAgent(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// Добавляем сообщение в сессию перед вызовом ProcessMessage
+	
 	sess := a.GetSession(99902)
 	sess.AddUserMessage("Сколько будет 25 * 4 + 10? Используй инструмент calc.")
 
@@ -147,7 +143,7 @@ func TestLLMToolCall_calc(t *testing.T) {
 	t.Logf("Response: %s", response)
 }
 
-// TestLLMToolCall_file_write проверяет создание файла через tool call
+
 func TestLLMToolCall_file_write(t *testing.T) {
 	a, _ := setupTestAgent(t)
 
@@ -164,7 +160,7 @@ func TestLLMToolCall_file_write(t *testing.T) {
 
 	prompt := fmt.Sprintf("Создай файл %s и напиши в нём 'Hello from AI agent!'", testFilePath)
 
-	// Добавляем сообщение в сессию перед вызовом ProcessMessage
+	
 	sess := a.GetSession(99903)
 	sess.AddUserMessage(prompt)
 
@@ -179,7 +175,7 @@ func TestLLMToolCall_file_write(t *testing.T) {
 
 	t.Logf("Response: %s", response)
 
-	// Проверяем что файл реально создан
+	
 	data, err := os.ReadFile(testFilePath)
 	if err != nil {
 		t.Logf("File was not created (may be ok if model chose different path): %v", err)
@@ -188,7 +184,7 @@ func TestLLMToolCall_file_write(t *testing.T) {
 	}
 }
 
-// TestLLMToolCall_web_fetch проверяет web_fetch + ответ модели
+
 func TestLLMToolCall_web_fetch(t *testing.T) {
 	a, _ := setupTestAgent(t)
 
@@ -197,7 +193,7 @@ func TestLLMToolCall_web_fetch(t *testing.T) {
 
 	prompt := "Прочитай содержимое https://example.com используя web_fetch"
 
-	// Добавляем сообщение в сессию перед вызовом ProcessMessage
+	
 	sess := a.GetSession(99905)
 	sess.AddUserMessage(prompt)
 
@@ -215,9 +211,7 @@ func TestLLMToolCall_web_fetch(t *testing.T) {
 	}
 }
 
-// TestLLMToolCall_github_project — точное воспроизведение сценария из лога
-// модель → web_fetch("https://github.com/JonForShort/android-tools/tree/master")
-// → tool result → модель должна ответить без 400 ошибки
+
 func TestLLMToolCall_github_project(t *testing.T) {
 	a, _ := setupTestAgent(t)
 
@@ -226,7 +220,7 @@ func TestLLMToolCall_github_project(t *testing.T) {
 
 	prompt := "можешь прочитать описание проекта https://github.com/JonForShort/android-tools/tree/master ?"
 
-	// Добавляем сообщение в сессию перед вызовом ProcessMessage
+	
 	sess := a.GetSession(99906)
 	sess.AddUserMessage(prompt)
 
@@ -244,7 +238,7 @@ func TestLLMToolCall_github_project(t *testing.T) {
 	}
 }
 
-// TestLLMToolCall_web_search проверяет поиск в интернете
+
 func TestLLMToolCall_web_search(t *testing.T) {
 	a, _ := setupTestAgent(t)
 
@@ -253,7 +247,7 @@ func TestLLMToolCall_web_search(t *testing.T) {
 
 	prompt := "Найди в интернете информацию про Go语言. Используй web_search."
 
-	// Добавляем сообщение в сессию перед вызовом ProcessMessage
+	
 	sess := a.GetSession(99907)
 	sess.AddUserMessage(prompt)
 
@@ -271,17 +265,17 @@ func TestLLMToolCall_web_search(t *testing.T) {
 	}
 }
 
-// TestLLMToolCall_multiple_tools проверяет множественные вызовы инструментов
+
 func TestLLMToolCall_multiple_tools(t *testing.T) {
 	a, _ := setupTestAgent(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	// Запрос, который требует два инструмента: посчитать время + сделать вычисление
+	
 	prompt := "Сейчас который час? И сколько будет 2 + 2? Используй инструменты для ответа."
 
-	// Добавляем сообщение в сессию перед вызовом ProcessMessage
+	
 	sess := a.GetSession(99904)
 	sess.AddUserMessage(prompt)
 
@@ -297,7 +291,7 @@ func TestLLMToolCall_multiple_tools(t *testing.T) {
 	t.Logf("Response: %s", response)
 }
 
-// TestLLMToolCall_tool_schemas_format проверяет что схема тулзов корректна для OpenAI API
+
 func TestLLMToolCall_tool_schemas_format(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&tools.TimeGetTool{})
@@ -309,7 +303,7 @@ func TestLLMToolCall_tool_schemas_format(t *testing.T) {
 		t.Fatalf("Expected 2 schemas, got %d", len(schemas))
 	}
 
-	// Проверяем формат schemas для OpenAI
+	
 	for i, s := range schemas {
 		if s["type"] != "function" {
 			t.Errorf("Schema %d: expected type 'function', got '%v'", i, s["type"])
@@ -334,7 +328,7 @@ func TestLLMToolCall_tool_schemas_format(t *testing.T) {
 		t.Logf("Schema %d (%s):\n%s", i, fn["name"], string(jsonBytes))
 	}
 
-	// Отправляем schemas на сервер и проверяем что он отвечает
+	
 	serverURL, model, _, _, err := loadTestConfig()
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
@@ -389,10 +383,10 @@ func TestLLMToolCall_tool_schemas_format(t *testing.T) {
 		t.Fatal("No choices in API response")
 	}
 
-	// Проверяем что модель поняла про tool_calls
+	
 	choice := apiResp.Choices[0]
 	if choice.FinishReason != "tool_calls" && len(choice.Message.ToolCalls) == 0 {
-		// Если модель не вызвала инструмент — это не фатально, но заслуживает внимания
+		
 		t.Logf("Model did not call any tool (finish_reason=%s). Response: %s",
 			choice.FinishReason, choice.Message.Content)
 	}

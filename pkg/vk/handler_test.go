@@ -18,9 +18,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-// ============================================================
-// Mock agentloop для тестов
-// ============================================================
 
 type mockAgentLoop struct {
 	lastMessage       string
@@ -29,14 +26,14 @@ type mockAgentLoop struct {
 	sessions          map[int64]*session.Session
 	mu                sync.Mutex
 	returnErr         error
-	// blockCh — если не nil, ProcessMessage блокируется на этом канале,
-	// симулируя долгий LLM-запрос. Закрытие канала разблокирует вызов.
-	// Используется для тестов отмены контекста.
+	
+	
+	
 	blockCh chan struct{}
-	// cancelled — true если контекст был отменён во время блокировки.
+	
 	cancelled bool
-	// slowDelay — если > 0, ProcessMessage блокируется на это время (или до
-	// отмены контекста), симулируя медленный LLM-запрос.
+	
+	
 	slowDelay time.Duration
 }
 
@@ -50,7 +47,7 @@ func (m *mockAgentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID
 	m.lastMessage = prompt
 	m.lastPeerID = peerID
 
-	// Создаём или получаем сессию и добавляем сообщение
+	
 	sess := m.getOrCreateSession(peerID)
 	sess.AddUserMessage(prompt)
 	sess.AddAssistantMessage("processed: " + prompt)
@@ -62,14 +59,14 @@ func (m *mockAgentLoop) ProcessMessage(ctx context.Context, prompt string, peerI
 	if m.returnErr != nil {
 		return "", m.returnErr
 	}
-	// Если задан канал блокировки — ждём отмены контекста или разблокировки.
+	
 	if m.blockCh != nil {
 		select {
 		case <-ctx.Done():
 			m.cancelled = true
 			return "", ctx.Err()
 		case <-m.blockCh:
-			// разблокирован — продолжаем как обычно
+			
 		}
 	}
 	if m.slowDelay > 0 {
@@ -80,7 +77,7 @@ func (m *mockAgentLoop) ProcessMessage(ctx context.Context, prompt string, peerI
 			m.cancelled = true
 			return "", ctx.Err()
 		case <-timer.C:
-			// прошло slowDelay — продолжаем как обычно
+			
 		}
 	}
 	return m.ProcessPrompt(ctx, prompt, peerID)
@@ -132,7 +129,7 @@ func (m *mockAgentLoop) GetContextStats(peerID int64) (int, int, error) {
 		charCount += len(msg.Content)
 	}
 
-	// Для тестов просто возвращаем charCount как приблизительное количество токенов
+	
 	tokenCount := charCount / 4
 
 	return charCount, tokenCount, nil
@@ -163,9 +160,6 @@ func (m *mockAgentLoop) getOrCreateSession(peerID int64) *session.Session {
 	return sess
 }
 
-// ============================================================
-// Mock Orchestrator для тестов
-// ============================================================
 
 type mockOrchestrator struct {
 	mu            sync.Mutex
@@ -240,9 +234,6 @@ func (m *mockOrchestrator) GetSystemPrompt(agentName string) (string, error) {
 	return "system prompt for " + agentName, nil
 }
 
-// ============================================================
-// Тесты обработки команд
-// ============================================================
 
 func TestCommandsDoNotReachModel(t *testing.T) {
 	log, _ := logger.New(logger.DefaultConfig())
@@ -298,7 +289,7 @@ func TestRestarterCommandsDoNotReachLLM(t *testing.T) {
 
 	tests := []struct {
 		cmd            string
-		expectedResp   bool // true = должен вернуть сообщение пользователю
+		expectedResp   bool 
 	}{
 		{"/restart", true},
 		{"/update", true},
@@ -345,9 +336,6 @@ func TestCommandResponseFormats(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Тесты для /status - проверка бага с сообщениями и токенами
-// ============================================================
 
 func TestPinCommand(t *testing.T) {
 	log, _ := logger.New(logger.DefaultConfig())
@@ -417,18 +405,18 @@ func TestStatusShowsCorrectMessageCount(t *testing.T) {
 
 	peerID := int64(12345)
 
-	// Отправляем сообщение в AI (это создаст сессию в AgentLoop)
+	
 	_ = handler.ProcessMessage("Привет, как дела?", peerID)
 	_ = handler.ProcessMessage("Расскажи анекдот", peerID)
 
-	// Запрашиваем статус
+	
 	status := handler.ProcessMessage("/status", peerID)
 
 	t.Logf("Status output:\n%s", status)
 
-	// Проверяем, что сообщений > 0
-	// После 2 сообщений должно быть 4 записи в истории (2 user + 2 assistant)
-	// HistoryLength возвращает len(messages) - 1 (без системного)
+	
+	
+	
 	if strings.Contains(status, "Сообщений: 0") {
 		t.Error("BUG: Status shows 0 messages but should show > 0 after processing messages")
 	}
@@ -441,15 +429,15 @@ func TestStatusShowsCorrectTokenCount(t *testing.T) {
 
 	peerID := int64(12345)
 
-	// Отправляем сообщение в AI
+	
 	_ = handler.ProcessMessage("Привет, это тестовое сообщение для проверки подсчёта токенов", peerID)
 
-	// Запрашиваем статус
+	
 	status := handler.ProcessMessage("/status", peerID)
 
 	t.Logf("Status output:\n%s", status)
 
-	// Проверяем, что токенов > 0
+	
 	if strings.Contains(status, "Токенов в контексте: 0") {
 		t.Error("BUG: Status shows 0 tokens but should show > 0 after processing messages")
 	}
@@ -479,23 +467,20 @@ func TestStatusShowsCorrectCharCount(t *testing.T) {
 
 	peerID := int64(12345)
 
-	// Отправляем сообщение в AI
+	
 	_ = handler.ProcessMessage("Тестовое сообщение", peerID)
 
-	// Запрашиваем статус
+	
 	status := handler.ProcessMessage("/status", peerID)
 
 	t.Logf("Status output:\n%s", status)
 
-	// Проверяем, что символов > 0
+	
 	if strings.Contains(status, "Символов в контексте: 0") {
 		t.Error("BUG: Status shows 0 chars but should show > 0 after processing messages")
 	}
 }
 
-// ============================================================
-// Tests for ParseAgentHashMention
-// ============================================================
 
 func TestPrimaryAgentSharesMainContext(t *testing.T) {
 	log, _ := logger.New(logger.DefaultConfig())
@@ -505,7 +490,7 @@ func TestPrimaryAgentSharesMainContext(t *testing.T) {
 	mockOrch.systemPrompts = map[string]string{"lead": "You are a Lead Agent."}
 	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, mockOrch, nil)
 
-	// 1. #lead → главный персистентный агент с заменённым системным промптом
+	
 	response := handler.ProcessMessage("#lead создай проект", 12345)
 	if !strings.Contains(response, "processed: ") {
 		t.Fatalf("expected main-agent response, got: %s", response)
@@ -514,7 +499,7 @@ func TestPrimaryAgentSharesMainContext(t *testing.T) {
 		t.Errorf("expected lead system prompt to be passed, got: %q", mock.lastSystemPrompt)
 	}
 
-	// 2. Контекст сохранился в общей сессии
+	
 	sess := mock.GetSession(12345)
 	if sess == nil {
 		t.Fatal("expected shared session")
@@ -529,7 +514,7 @@ func TestPrimaryAgentSharesMainContext(t *testing.T) {
 		t.Error("expected #lead task in shared session history")
 	}
 
-	// 3. Обычное сообщение после #lead обрабатывается тем же главным агентом
+	
 	mock.lastMessage = ""
 	handler.ProcessMessage("расскажи про проект", 12345)
 	if !strings.Contains(mock.lastMessage, "расскажи про проект") {
@@ -545,7 +530,7 @@ func TestNonPrimaryAgentUsesRunAgent(t *testing.T) {
 	mockOrch.primaryAgents = map[string]bool{"lead": true}
 	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, mockOrch, nil)
 
-	// #worker не primary → идёт через RunAgent, а не через главный агент
+	
 	_ = handler.ProcessMessage("#worker сделай задачу", 12345)
 	if mockOrch.lastTask != "сделай задачу" {
 		t.Errorf("expected RunAgent to be called with task, got lastTask=%q", mockOrch.lastTask)
@@ -619,9 +604,6 @@ func TestParseAgentHashMention(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Tests for handleNewSession (/n command)
-// ============================================================
 
 func TestClearCancelsPendingQuestionAndGrants(t *testing.T) {
 	log, _ := logger.New(logger.DefaultConfig())
@@ -632,7 +614,7 @@ func TestClearCancelsPendingQuestionAndGrants(t *testing.T) {
 
 	peerID := int64(987)
 
-	// Регистрируем pending question и грант пути.
+	
 	ch := tools.RegisterPendingQuestion(peerID)
 	tools.ApplyPathGrant(peerID, "/some/path/")
 
@@ -643,9 +625,9 @@ func TestClearCancelsPendingQuestionAndGrants(t *testing.T) {
 		t.Fatal("expected path grant to be applied")
 	}
 
-	// Ожидающий ответ goroutine (как handleQuestion→waitForAnswer) должен
-	// разблокироваться после /clear — канал закрывается, иначе агент висел бы
-	// вечно с захваченным peer mutex'ом.
+	
+	
+	
 	waitDone := make(chan struct{})
 	go func() {
 		<-ch
@@ -678,8 +660,8 @@ func TestProcessMessageResolvesPendingQuestionWithoutMutex(t *testing.T) {
 
 	peerID := int64(555)
 
-	// Симулируем goroutine, которая держит peer mutex, ожидая ответа на вопрос
-	// (именно так работает handleQuestion→waitForAnswer внутри ProcessMessage).
+	
+	
 	mu := handler.getPeerMutex(peerID)
 	mu.Lock()
 	defer mu.Unlock()
@@ -687,9 +669,9 @@ func TestProcessMessageResolvesPendingQuestionWithoutMutex(t *testing.T) {
 	ch := tools.RegisterPendingQuestion(peerID)
 	defer tools.UnregisterPendingQuestion(peerID)
 
-	// Ответ должен быть доставлен, несмотря на захваченный mutex: раньше
-	// ProcessMessage брал mutex ДО разрешения вопроса и вставал в очередь
-	// навсегда — агент не продолжал работу, клавиатура не скрывалась.
+	
+	
+	
 	resultCh := make(chan string, 1)
 	go func() {
 		resultCh <- handler.ProcessMessage("✅ Allow", peerID)
@@ -723,7 +705,7 @@ func TestClearCancelsRunningAgent(t *testing.T) {
 
 	peerID := int64(456)
 
-	// Сессия создана.
+	
 	sess := mock.GetSession(peerID)
 	if sess == nil {
 		t.Fatal("expected session after /clear")
@@ -735,7 +717,7 @@ func TestClearCancelsRunningAgent(t *testing.T) {
 		t.Error("expected ClearActiveSessions called for peer 456")
 	}
 
-	// Сессия должна быть сброшена.
+	
 	sessAfter := mock.GetSession(peerID)
 	if sessAfter == nil {
 		t.Fatal("session should exist after /clear (recreated)")

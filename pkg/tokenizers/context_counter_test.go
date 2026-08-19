@@ -4,9 +4,6 @@ import (
 	"testing"
 )
 
-// ============================================================
-// Тесты ContextCounter
-// ============================================================
 
 func TestNewContextCounter(t *testing.T) {
 	counter := NewContextCounter(&mockTokenizer{}, 8192)

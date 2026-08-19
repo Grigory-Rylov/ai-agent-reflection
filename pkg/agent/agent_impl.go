@@ -19,7 +19,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-// Aliases for tools from tools package
+
 type FileReadTool = tools.FileReadTool
 type FileWriteTool = tools.FileWriteTool
 type TimeGetTool = tools.TimeGetTool
@@ -34,14 +34,10 @@ type EditTool = tools.EditTool
 type ApplyPatchTool = tools.ApplyPatchTool
 type QuestionTool = tools.QuestionTool
 
-// ============================================================
-// AI Agent Implementation — реализация агента с подключением к llama-server
-// ============================================================
 
-// ThinkingCallback callback для отправки thinking сообщений
 type ThinkingCallback func(peerID int64, content string) error
 
-// agentImpl реализует интерфейс AI агента с подключением к llama-server
+
 type agentImpl struct {
 	config            Config
 	sessions          map[int64]*session.Session
@@ -49,25 +45,23 @@ type agentImpl struct {
 	mu                sync.RWMutex
 	client            *http.Client
 	compactor         *compress.Compactor
-	systemPrompt      string                   // системный промпт из файла или дефолтный
-	thinkingCallback  ThinkingCallback         // callback для отправки thinking сообщений
-	toolSchemas       []map[string]interface{} // схемы инструментов, переданные извне
-	toolExecutor      ToolExecutor             // кастомный executor (для тестов через StubToolExecutor)
-	debugLog          debug.Logger             // логгер для отладочных сообщений
-	permissionChecker PermissionChecker        // проверка разрешений для инструментов
+	systemPrompt      string                   
+	thinkingCallback  ThinkingCallback         
+	toolSchemas       []map[string]interface{} 
+	toolExecutor      ToolExecutor             
+	debugLog          debug.Logger             
+	permissionChecker PermissionChecker        
+	responseLoops     map[int64]*responseLoopState
 }
 
-// PermissionChecker проверяет разрешения на выполнение инструментов
+
 type PermissionChecker interface {
-	Check(toolName string) string                    // "allow", "deny", "ask"
-	Evaluate(permission, pattern string) string      // "allow", "deny", "ask" по правилам
-	Approve(permission, pattern string)              // добавить правило allow
+	Check(toolName string) string                    
+	Evaluate(permission, pattern string) string      
+	Approve(permission, pattern string)              
 }
-// ============================================================
-// Инициализация
-// ============================================================
 
-// NewAgent создаёт новый AI Agent
+
 func NewAgent(config Config) *agentImpl {
 	agent := &agentImpl{
 		config:       config,
@@ -79,18 +73,19 @@ func NewAgent(config Config) *agentImpl {
 				DisableKeepAlives: true,
 			},
 		},
-		debugLog: debug.NewLogger(config.Debug),
+		debugLog:      debug.NewLogger(config.Debug),
+		responseLoops: make(map[int64]*responseLoopState),
 	}
 
-	// Загружаем системный промпт из файла или используем дефолтный
+	
 	agent.loadSystemPrompt()
 
-	// Регистрируем инструменты по умолчанию если включены
+	
 	if config.EnableTools {
 		agent.registerDefaultTools()
 	}
 
-	// Инициализируем компактор для opencode-style компакции
+	
 	if config.EnableCompression {
 		agent.initCompactor()
 	}
@@ -98,11 +93,11 @@ func NewAgent(config Config) *agentImpl {
 	return agent
 }
 
-// loadSystemPrompt загружает системный промпт из шаблонов или файла
+
 func (a *agentImpl) loadSystemPrompt() {
 	defaultPrompt := "You are a helpful assistant."
 
-	// Пробуем использовать TemplateEngine если указана директория с шаблонами
+	
 	if a.config.PromptsDir != "" {
 		a.loadFromTemplates()
 		if a.systemPrompt != "" {
@@ -110,7 +105,7 @@ func (a *agentImpl) loadSystemPrompt() {
 		}
 	}
 
-	// Fallback: читаем из файла
+	
 	if a.config.SystemPromptFile != "" {
 		data, err := os.ReadFile(a.config.SystemPromptFile)
 		if err == nil && strings.TrimSpace(string(data)) != "" {
@@ -163,18 +158,18 @@ func extractToolNames(toolList []tools.Tool) []string {
 	return names
 }
 
-// GetSystemPrompt возвращает системный промпт
+
 func (a *agentImpl) GetSystemPrompt() string {
 	return a.systemPrompt
 }
 
-// initCompactor инициализирует компактор для opencode-style компакции
+
 func (a *agentImpl) initCompactor() {
 	compressor := compress.NewLLMCompressor(a.config.LlamaServerURL, a.config.Model, a.config.Temperature)
 	a.compactor = compress.NewCompactor(compressor)
 }
 
-// registerDefaultTools регистрирует инструменты по умолчанию
+
 func (a *agentImpl) registerDefaultTools() {
 	a.toolsRegistry.Register(&FileReadTool{})
 	a.toolsRegistry.Register(&FileWriteTool{})
@@ -191,7 +186,7 @@ func (a *agentImpl) registerDefaultTools() {
 	a.toolsRegistry.Register(&QuestionTool{})
 }
 
-// RegisterTools регистрирует инструменты из внешнего реестра
+
 func (a *agentImpl) RegisterTools(registry *tools.Registry) {
 	if registry == nil {
 		return
@@ -201,14 +196,14 @@ func (a *agentImpl) RegisterTools(registry *tools.Registry) {
 			a.toolsRegistry.Register(tool)
 		}
 	}
-	// toolSchemas должен отражать весь накопленный реестр, а не затираться
-	// схемами последнего вызова. Иначе агент, которому инструменты регистрируют
-	// несколькими вызовами (основные инструменты + task-инструмент, как воркер
-	// в multi-agent режиме), видел в LLM только последний набор.
+	
+	
+	
+	
 	a.toolSchemas = a.toolsRegistry.ToOpenAISchema()
 }
 
-// ReplaceTools replaces the entire tools registry and schemas
+
 func (a *agentImpl) ReplaceTools(registry *tools.Registry) {
 	if registry == nil {
 		return
@@ -216,23 +211,20 @@ func (a *agentImpl) ReplaceTools(registry *tools.Registry) {
 	a.toolsRegistry = registry
 	a.toolSchemas = registry.ToOpenAISchema()
 }
-// ============================================================
-// Методы Agent Interface
-// ============================================================
 
-// ProcessMessage обрабатывает сообщение пользователя и возвращает ответ
+
 func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID int64) (string, error) {
 	a.debugLog.Debug("ProcessMessage called: peerID=%d, message=%q, tools=%d", peerID, message, len(a.toolsRegistry.GetAll()))
 
-	// Если контекст отменён (/clear, таймаут, etc) — не модифицируем сессию.
+	
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
 
-	// Получаем или создаём сессию
+	
 	s := a.getSession(peerID)
 
-	// Проверяем, не зациклилась ли AI
+	
 	if s.IsLoopDetected() {
 		alert := s.GetLoopAlertMessage()
 		if alert != "" {
@@ -240,41 +232,42 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 		}
 	}
 
-	// Добавляем сообщение в сессию, если его там ещё нет.
-	// В обычном потоке (через agentloop) сообщение уже добавлено в сессию
-	// и сохранено в файл. При прямом вызове (через Orchestrator) добавляем здесь.
+	
+	
+	
 	history := s.GetHistory()
 	if len(history) == 0 || history[len(history)-1].Role != session.UserRole || history[len(history)-1].Content != message {
 		s.AddUserMessage(message)
+		a.resetResponseLoop(peerID)
 		history = s.GetHistory()
 	}
 
-	// Проверяем и при необходимости сжимаем контекст (opencode-style)
+	
 	if a.compactor != nil {
 		a.compactIfNeeded(ctx, s, true)
 		history = s.GetHistory()
 	}
 
-	// Формируем сообщения для API (включая pinned промпты в начале)
+	
 	apiMessages := a.convertHistoryToAPIMessages(s.GetContextMessages())
 
-	// Добавляем AGENTS.md/CLAUDE.md из рабочей директории (как в opencode),
-	// сливая в основной системный промпт (vLLM требует все system в начале)
+	
+	
 	workingDir := s.GetWorkingDir()
 	if workingDir == "" {
 		workingDir = tools.WorkingDir
 	}
 	apiMessages = a.injectInstructions(apiMessages, workingDir)
 
-	// Перед LLM-запросом проверяем, не отменён ли контекст
-	// (защита от гонки с /clear после модификации сессии).
+	
+	
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 
-	// Проверяем, нужно ли использовать инструменты
+	
 	if a.config.EnableTools {
-		// Используем function calling с инструментами
+		
 		result, err := a.processWithTools(ctx, apiMessages, s)
 		if err != nil {
 			return "", fmt.Errorf("process with tools: %w", err)
@@ -282,14 +275,11 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 		return result.Response, nil
 	}
 
-	// Обычный streaming запрос без инструментов
+	
 	return a.processStreaming(ctx, apiMessages, s)
 }
 
-// compactIfNeeded выполняет opencode-style компакцию при переполнении контекста.
-// addAutoContinue — если true, добавляет CompactionAutoContinueText после успешной
-// компактизации (для ProcessMessage path); если false — не добавляет (tool loop).
-// Возвращает true если компактизация успешно выполнена (summary не пустой).
+
 func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session, addAutoContinue bool) bool {
 	history := s.GetHistory()
 
@@ -329,7 +319,7 @@ func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session, add
 	return true
 }
 
-// markCompactedHead помечает головные сообщения сессии как compacted.
+
 func (a *agentImpl) markCompactedHead(s *session.Session, tailStartID int) {
 	for i := 0; i < tailStartID && i < len(s.GetHistory()); i++ {
 		msg := s.GetHistory()[i]
@@ -340,25 +330,20 @@ func (a *agentImpl) markCompactedHead(s *session.Session, tailStartID int) {
 	a.debugLog.Info("Compaction fallback: marked %d head messages as compacted", tailStartID)
 }
 
-// compactionFallbackSummary — placeholder summary когда LLM-суммаризация не удалась.
+
 const compactionFallbackSummary = "## Goal\n- [context compacted — summary unavailable]\n\n## Constraints & Preferences\n- (none)\n\n## Progress\n### Done\n- (compact failed)\n\n### In Progress\n- (truncated)\n\n### Blocked\n- context overflow during summarization\n\n## Key Decisions\n- (lost during compaction fallback)\n\n## Next Steps\n- continue current task\n\n## Critical Context\n- [compaction summary could not be generated]\n\n## Relevant Files\n- (none)"
 
-// convertSessionHistory конвертирует историю сессии в tokenizers.Message
-// Tool call аргументы добавляются к контенту для корректной оценки токенов
-// (в opencode оценивается JSON.stringify всего request, включая tool calls)
-// После конвертации применяет FilterCompacted для корректного порядка
-// сообщений после компактизации: [compaction-user, summary, tail, after-summary]
+
 func (a *agentImpl) convertSessionHistory(history []session.Message) []tokenizers.Message {
 	return compress.FilterCompacted(a.convertSessionHistoryRaw(history))
 }
 
-// convertSessionHistoryRaw конвертирует историю 1:1 (без FilterCompacted),
-// сохраняя выравнивание индексов с session.messages для TailStartID.
+
 func (a *agentImpl) convertSessionHistoryRaw(history []session.Message) []tokenizers.Message {
 	messages := make([]tokenizers.Message, len(history))
 	for i, msg := range history {
 		content := msg.Content
-		// Добавляем содержимое tool calls к оценке токенов
+		
 		for _, tc := range msg.ToolCalls {
 			content += tc.Function.Arguments
 		}
@@ -373,15 +358,13 @@ func (a *agentImpl) convertSessionHistoryRaw(history []session.Message) []tokeni
 	return messages
 }
 
-// ResetSession сбрасывает сессию пользователя
+
 func (a *agentImpl) ResetSession(peerID int64) {
 	s := a.getSession(peerID)
 	s.Reset()
 }
 
-// compactionFallback возвращает SelectResult для агрессивного проранинга head,
-// когда LLM-суммаризация не уместилась в контекст. Использует тот же select(),
-// чтобы сохранить tail и максимально сократить head.
+
 func (a *agentImpl) compactionFallback(history []session.Message, tailTurns int, maxTokens int) *compress.SelectResult {
 	if len(history) == 0 {
 		return nil
@@ -398,42 +381,38 @@ func (a *agentImpl) compactionFallback(history []session.Message, tailTurns int,
 	return &selected
 }
 
-// GetSession возвращает сессию пользователя
+
 func (a *agentImpl) GetSession(peerID int64) *session.Session {
 	return a.getSession(peerID)
 }
 
-// SetThinkingCallback устанавливает callback для отправки thinking сообщений
+
 func (a *agentImpl) SetThinkingCallback(cb ThinkingCallback) {
 	a.thinkingCallback = cb
 }
 
-// SetTools регистрирует инструменты, переданные из agentloop
+
 func (a *agentImpl) SetTools(toolSchemas []map[string]interface{}) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.toolSchemas = toolSchemas
 }
 
-// SetToolExecutor устанавливает кастомный executor для инструментов
+
 func (a *agentImpl) SetToolExecutor(executor ToolExecutor) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.toolExecutor = executor
 }
 
-// SetPermissionChecker устанавливает проверку разрешений
+
 func (a *agentImpl) SetPermissionChecker(checker PermissionChecker) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.permissionChecker = checker
 }
 
-// ============================================================
-// Управление сессиями
-// ============================================================
 
-// getSession возвращает или создаёт сессию для пользователя
 func (a *agentImpl) getSession(peerID int64) *session.Session {
 	a.mu.RLock()
 	s, exists := a.sessions[peerID]
@@ -441,7 +420,7 @@ func (a *agentImpl) getSession(peerID int64) *session.Session {
 
 	if !exists {
 		a.mu.Lock()
-		// Double-check после получения write-lock
+		
 		s, exists = a.sessions[peerID]
 		if !exists {
 			config := a.config.SessionConfig
@@ -450,7 +429,7 @@ func (a *agentImpl) getSession(peerID int64) *session.Session {
 			s = session.NewSession(config)
 			a.sessions[peerID] = s
 
-			// Восстанавливаем workingDir из стора в глобальную переменную
+			
 			if wd := s.GetWorkingDir(); wd != "" {
 				tools.SetWorkingDir(wd)
 			}
@@ -461,11 +440,7 @@ func (a *agentImpl) getSession(peerID int64) *session.Session {
 	return s
 }
 
-// ============================================================
-// Streaming без инструментов
-// ============================================================
 
-// processStreaming обрабатывает streaming запрос без инструментов
 func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, session *session.Session) (string, error) {
 	streamConfig := StreamingConfig{
 		Model:       a.config.Model,
@@ -474,17 +449,22 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 		Stream:      true,
 	}
 
-	// Собираем ответ с reasoning (с бесконечным ретраем серверных ошибок)
+	
 	responseText, reasoningText, _, _, promptTokens, completionTokens, err := a.streamAndCollect(ctx, streamConfig, messages)
 	if err != nil {
 		return "", err
 	}
 
-	// Проверяем на XML tool calls в reasoning
+	loopRepeats := a.checkResponseLoop(session.GetPeerID(), responseText, reasoningText, nil)
+	if loopRepeats > 0 {
+		a.injectLoopCorrection(session, loopRepeats)
+	}
+
+	
 	if reasoningText != "" {
 		parsed := ParseXMLToolCalls(reasoningText)
 		if len(parsed.ToolCalls) > 0 {
-			// Есть XML tool calls - нужно переключиться на processWithTools
+			
 			result, err := a.processWithTools(ctx, messages, session)
 			if err != nil {
 				return "", err
@@ -493,7 +473,7 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 		}
 	}
 
-	// Отправляем очищенный reasoning в thinkingPeerID (без XML тегов)
+	
 	if reasoningText != "" && a.thinkingCallback != nil {
 		cleanedReasoning := reasoningText
 		parsed := ParseXMLToolCalls(reasoningText)
@@ -507,11 +487,11 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 		}
 	}
 
-	// Отправляем количество токенов после ответа LLM
+	
 	a.sendThinkingTokens(session.GetPeerID(), promptTokens, completionTokens)
 
-	// Если reasoning есть но response пустой — reasoning уже отправлен в thinking_peer_id
-	// Не возвращаем его как обычный ответ
+	
+	
 	if responseText == "" && reasoningText != "" {
 		return "", nil
 	}
@@ -522,19 +502,17 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 	return responseText, nil
 }
 
-// injectInstructions добавляет содержимое AGENTS.md/CLAUDE.md (если найдено
-// в рабочей директории или глобальной конфиг-директории) отдельным
-// system-сообщением сразу после основного системного промпта.
+
 func (a *agentImpl) injectInstructions(messages []Message, workingDir string) []Message {
 	content := instructions.Build(workingDir)
 	if content == "" {
 		return messages
 	}
 
-	// Сливаем инструкции в ПЕРВОЕ system-сообщение, а не добавляем отдельным.
-	// vLLM 0.27+ требует, чтобы ВСЕ system-сообщения были в начале; отдельное
-	// system-сообщение после первого (как раньше) отклонялось с 400
-	// «System message must be at the beginning».
+	
+	
+	
+	
 	out := make([]Message, len(messages))
 	copy(out, messages)
 	for i := range out {
@@ -543,15 +521,11 @@ func (a *agentImpl) injectInstructions(messages []Message, workingDir string) []
 			return out
 		}
 	}
-	// System-сообщения нет — добавляем в начало.
+	
 	return append([]Message{{Role: "system", Content: content}}, out...)
 }
 
-// ============================================================
-// Утилиты для конвертации
-// ============================================================
 
-// convertHistoryToAPIMessages конвертирует историю сессии в формат API
 func (a *agentImpl) convertHistoryToAPIMessages(history []session.Message) []Message {
 	apiMessages := make([]Message, len(history))
 	for i, msg := range history {
@@ -565,7 +539,7 @@ func (a *agentImpl) convertHistoryToAPIMessages(history []session.Message) []Mes
 			ToolCallID: msg.ToolCallID,
 			Name:       msg.Name,
 		}
-		// Конвертируем tool_calls если есть
+		
 		if len(msg.ToolCalls) > 0 {
 			apiMsg.ToolCalls = make([]ToolCall, len(msg.ToolCalls))
 			for j, tc := range msg.ToolCalls {

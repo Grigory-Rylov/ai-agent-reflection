@@ -8,21 +8,19 @@ import (
 	"sync"
 )
 
-// StubToolExecutor — заглушка для ToolExecutor, пишет вызовы в лог-файл
-// вместо реального выполнения инструментов. Потокобезопасен.
-// Всегда возвращает успешный результат с {"stub":true,"tool":"<name>"}.
+
 type StubToolExecutor struct {
 	LogPath string
 	mu      sync.Mutex
 }
 
-// NewStubToolExecutor создаёт StubToolExecutor и очищает лог-файл.
+
 func NewStubToolExecutor(logPath string) *StubToolExecutor {
 	os.Remove(logPath)
 	return &StubToolExecutor{LogPath: logPath}
 }
 
-// ExecuteAll логирует каждый tool call и возвращает заглушечный успешный результат.
+
 func (e *StubToolExecutor) ExecuteAll(ctx context.Context, toolCalls []ToolCall, peerID int64) FunctionCallResult {
 	results := make([]ToolCallResult, len(toolCalls))
 	for i, tc := range toolCalls {
@@ -58,7 +56,7 @@ func (e *StubToolExecutor) writeLog(format string, args ...interface{}) {
 	fmt.Fprintln(f, line)
 }
 
-// ReadLog возвращает все строки из лог-файла.
+
 func (e *StubToolExecutor) ReadLog() []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -74,7 +72,7 @@ func (e *StubToolExecutor) ReadLog() []string {
 	return strings.Split(content, "\n")
 }
 
-// Contains проверяет, содержит ли лог-файл строку с указанным текстом.
+
 func (e *StubToolExecutor) Contains(substr string) bool {
 	for _, line := range e.ReadLog() {
 		if strings.Contains(line, substr) {
@@ -84,7 +82,7 @@ func (e *StubToolExecutor) Contains(substr string) bool {
 	return false
 }
 
-// Count возвращает количество строк в логе, содержащих указанный текст.
+
 func (e *StubToolExecutor) Count(substr string) int {
 	count := 0
 	for _, line := range e.ReadLog() {

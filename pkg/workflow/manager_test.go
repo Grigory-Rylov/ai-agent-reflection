@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// ============================================================
-// Tests — Workflow Manager
-// ============================================================
 
 func TestWorkflowManager_New(t *testing.T) {
 	mgr := NewWorkflowManager("")
@@ -464,7 +461,7 @@ func TestWorkflowManager_SaveAndLoadArtifact_SpecialFilename(t *testing.T) {
 		t.Fatalf("SaveArtifact failed: %v", err)
 	}
 
-	// Файл должен быть сохранён (sanitizeFilename заменит спецсимволы)
+	
 	files, err := mgr.ListWorkflowArtifacts(wf.ID, taskID)
 	if err != nil {
 		t.Fatalf("ListWorkflowArtifacts failed: %v", err)
@@ -556,19 +553,19 @@ func TestWorkflowManager_EdgeCases(t *testing.T) {
 	tmpDir := t.TempDir()
 	mgr := NewWorkflowManager(tmpDir)
 
-	// Создаём workflow с пустым userOriginal
+	
 	wf := mgr.CreateWorkflow(789, "")
 	if wf.UserOriginal != "" {
 		t.Error("expected empty UserOriginal")
 	}
 
-	// Добавляем задачу с пустым описанием
+	
 	err := mgr.AddTask(wf.ID, Task{Title: "T", Assignee: DeveloperRole})
 	if err != nil {
 		t.Fatalf("AddTask failed: %v", err)
 	}
 
-	// Обновляем статус
+	
 	wf = mgr.GetWorkflow(wf.ID)
 	err = mgr.UpdateTaskStatus(wf.ID, wf.Tasks[0].ID, TaskApproved, "", "")
 	if err != nil {
@@ -645,7 +642,7 @@ func TestWorkflow_PartialWorkflowCompletion(t *testing.T) {
 
 	wf := mgr.CreateWorkflow(123, "Задача")
 
-	// Добавляем 3 задачи
+	
 	for i := 1; i <= 3; i++ {
 		mgr.AddTask(wf.ID, Task{
 			Title:      fmt.Sprintf("Задача %d", i),
@@ -654,16 +651,16 @@ func TestWorkflow_PartialWorkflowCompletion(t *testing.T) {
 		})
 	}
 
-	// Одобрим первую
+	
 	wf = mgr.GetWorkflow(wf.ID)
 	t0 := wf.Tasks[0].ID
 	mgr.UpdateTaskStatus(wf.ID, t0, TaskApproved, "", "Результат 1")
 
-	// Вторая — revision
+	
 	t1 := wf.Tasks[1].ID
 	mgr.UpdateTaskStatus(wf.ID, t1, TaskNeedsRevision, "Исправь код", "")
 
-	// Получим следующую на выполнение — должна быть вторая
+	
 	next, err := mgr.GetNextTaskToExecute(wf.ID)
 	if err != nil {
 		t.Fatalf("GetNextTaskToExecute failed: %v", err)
@@ -675,7 +672,7 @@ func TestWorkflow_PartialWorkflowCompletion(t *testing.T) {
 		t.Errorf("expected 'Задача 2', got %q", next.Title)
 	}
 
-	// Первая должна быть одобрена
+	
 	approved := mgr.GetAllApprovedTasks(wf.ID)
 	if len(approved) != 1 {
 		t.Errorf("expected 1 approved task, got %d", len(approved))
@@ -692,7 +689,7 @@ func TestWorkflowManager_SaveWorkflow_CreatesDirectory(t *testing.T) {
 		t.Fatalf("SaveWorkflow failed: %v", err)
 	}
 
-	// Проверяем что директория создана
+	
 	dir := mgr.GetWorkflowDir(wf.ID)
 	info, err := os.Stat(dir)
 	if err != nil {
@@ -702,7 +699,7 @@ func TestWorkflowManager_SaveWorkflow_CreatesDirectory(t *testing.T) {
 		t.Fatal("path should be a directory")
 	}
 
-	// Проверяем что файл создан
+	
 	data, err := os.ReadFile(filepath.Join(dir, "workflow.json"))
 	if err != nil {
 		t.Fatalf("workflow.json should exist: %v", err)
@@ -711,7 +708,7 @@ func TestWorkflowManager_SaveWorkflow_CreatesDirectory(t *testing.T) {
 		t.Error("workflow.json should not be empty")
 	}
 
-	// Проверяем что это валидный JSON
+	
 	var decoded Workflow
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("workflow.json should be valid JSON: %v", err)

@@ -4,7 +4,7 @@ import (
 	"fmt"
 )
 
-// Role определяет роль сообщения в диалоге
+
 type Role string
 
 const (
@@ -13,23 +13,23 @@ const (
 	AssistantRole Role = "assistant"
 )
 
-// Message представляет одно сообщение в истории диалога
+
 type Message struct {
 	Role    Role
 	Content string
 }
 
-// Config содержит настройки контекста
+
 type Config struct {
-	// MaxMessages — максимальное количество сообщений в истории
+	
 	MaxMessages int
-	// KeepSystemMessage — сохранять ли системное сообщение после сброса
+	
 	KeepSystemMessage bool
-	// SystemPrompt — системный промпт
+	
 	SystemPrompt string
 }
 
-// DefaultConfig возвращает настройки по умолчанию
+
 func DefaultConfig() Config {
 	return Config{
 		MaxMessages:       50,
@@ -38,20 +38,20 @@ func DefaultConfig() Config {
 	}
 }
 
-// Manager управляет историей диалога
+
 type Manager struct {
 	config   Config
 	messages []Message
 }
 
-// NewManager создаёт новый менеджер контекста
+
 func NewManager(config Config) *Manager {
 	m := &Manager{
 		config:   config,
 		messages: make([]Message, 0),
 	}
 
-	// Добавляем системное сообщение при создании
+	
 	if config.KeepSystemMessage && config.SystemPrompt != "" {
 		m.messages = append(m.messages, Message{
 			Role:    SystemRole,
@@ -62,7 +62,7 @@ func NewManager(config Config) *Manager {
 	return m
 }
 
-// AddUserMessage добавляет сообщение пользователя в историю
+
 func (m *Manager) AddUserMessage(content string) {
 	m.messages = append(m.messages, Message{
 		Role:    UserRole,
@@ -71,7 +71,7 @@ func (m *Manager) AddUserMessage(content string) {
 	m.enforceLimits()
 }
 
-// AddAssistantMessage добавляет сообщение ассистента в историю
+
 func (m *Manager) AddAssistantMessage(content string) {
 	m.messages = append(m.messages, Message{
 		Role:    AssistantRole,
@@ -80,18 +80,18 @@ func (m *Manager) AddAssistantMessage(content string) {
 	m.enforceLimits()
 }
 
-// GetMessages возвращает все сообщения для отправки в API
+
 func (m *Manager) GetMessages() []Message {
 	result := make([]Message, len(m.messages))
 	copy(result, m.messages)
 	return result
 }
 
-// Reset полностью очищает историю, оставляя только системное сообщение
+
 func (m *Manager) Reset() {
 	m.messages = m.messages[:0]
 
-	// Восстанавливаем системное сообщение
+	
 	if m.config.KeepSystemMessage && m.config.SystemPrompt != "" {
 		m.messages = append(m.messages, Message{
 			Role:    SystemRole,
@@ -100,12 +100,12 @@ func (m *Manager) Reset() {
 	}
 }
 
-// HistoryLength возвращает количество сообщений (без системного)
+
 func (m *Manager) HistoryLength() int {
-	return len(m.messages) - 1 // вычитаем системное сообщение
+	return len(m.messages) - 1 
 }
 
-// HistoryText возвращает текстовое представление истории
+
 func (m *Manager) HistoryText() string {
 	var result string
 	for i, msg := range m.messages {
@@ -114,17 +114,17 @@ func (m *Manager) HistoryText() string {
 	return result
 }
 
-// enforceLimits удаляет старые сообщения при превышении лимита
+
 func (m *Manager) enforceLimits() {
-	// Пропускаем системное сообщение при проверке лимита
+	
 	systemOffset := 0
 	if m.config.KeepSystemMessage {
 		systemOffset = 1
 	}
 
-	// Удаляем самые старые пользовательские сообщения
+	
 	for len(m.messages)-systemOffset > m.config.MaxMessages {
-		// Ищем первое сообщение не системное
+		
 		for i := systemOffset; i < len(m.messages); i++ {
 			if m.messages[i].Role != SystemRole {
 				m.messages = append(m.messages[:i], m.messages[i+1:]...)

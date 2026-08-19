@@ -34,7 +34,7 @@ func TestParseContextOverflowError(t *testing.T) {
 			name:         "context exceed without JSON",
 			err:          fmt.Errorf("request exceeds context size"),
 			wantOverflow: true,
-			wantTokens:   0, // не распарсились
+			wantTokens:   0, 
 			wantMaxCtx:   0,
 		},
 	}

@@ -8,9 +8,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
 )
 
-// ============================================================
-// MockTokenizer — test stub for tokenizers.Tokenizer
-// ============================================================
 
 type mockTokenizer struct {
 	countTokens    func(text string) (int, error)
@@ -49,9 +46,6 @@ func (m *mockTokenizer) Name() string {
 	return m.name
 }
 
-// ============================================================
-// Test: RealEstimator uses tokenizer for EstimateMessages
-// ============================================================
 
 func TestRealEstimator_EstimateMessages(t *testing.T) {
 	msgs := []tokenizers.Message{
@@ -86,9 +80,6 @@ func TestRealEstimator_EstimateMessages(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Test: RealEstimator returns 0 on error
-// ============================================================
 
 func TestRealEstimator_ReturnsZeroOnError(t *testing.T) {
 	mock := &mockTokenizer{
@@ -117,15 +108,12 @@ func TestRealEstimator_ReturnsZeroOnError(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Test: Compare usable/isOverflow with real tokenizer vs heuristic
-// ============================================================
 
 func TestOverflow_RealTokenizerVsHeuristic(t *testing.T) {
 	tests := []struct {
 		name           string
 		messages       []tokenizers.Message
-		tokenizerCount int // what mock tokenizer returns
+		tokenizerCount int 
 		contextLimit   int
 		inputLimit     int
 		reserved       int
@@ -133,9 +121,9 @@ func TestOverflow_RealTokenizerVsHeuristic(t *testing.T) {
 		{
 			name: "real tokenizer shows no overflow, heuristic does",
 			messages: []tokenizers.Message{
-				{Role: "user", Content: string(make([]byte, 50000))}, // large content
+				{Role: "user", Content: string(make([]byte, 50000))}, 
 			},
-			tokenizerCount: 5000, // real count is much less than heuristic
+			tokenizerCount: 5000, 
 			contextLimit:   128000,
 			inputLimit:     0,
 			reserved:       0,
@@ -185,9 +173,6 @@ func TestOverflow_RealTokenizerVsHeuristic(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Test: Provider-reported token count influences compaction decision
-// ============================================================
 
 func TestIsOverflowWithProviderTokens_InfluencesDecision(t *testing.T) {
 	tests := []struct {
@@ -252,9 +237,6 @@ func TestIsOverflowWithProviderTokens_InfluencesDecision(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Test: Compactor uses tokenizer when available
-// ============================================================
 
 func TestCompactor_WithTokenizer(t *testing.T) {
 	mock := &mockTokenizer{
@@ -269,7 +251,7 @@ func TestCompactor_WithTokenizer(t *testing.T) {
 	llm := &stubCompressor{}
 	c := NewCompactorWithEstimator(llm, NewRealEstimator(mock))
 
-	// Verify the compactor's estimator uses the real tokenizer
+	
 	msgs := []tokenizers.Message{
 		{Role: "user", Content: "test"},
 	}
@@ -293,9 +275,6 @@ func TestCompactor_WithoutTokenizer(t *testing.T) {
 	}
 }
 
-// ============================================================
-// stubCompressor — minimal LLMCompressorInterface for tests
-// ============================================================
 
 type stubCompressor struct{}
 

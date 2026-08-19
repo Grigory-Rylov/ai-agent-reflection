@@ -9,9 +9,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/store"
 )
 
-// ============================================================
-// Тесты Session — сущность для хранения истории сессии
-// ============================================================
 
 func TestNewSession(t *testing.T) {
 	testDir, err := os.MkdirTemp("", "session_new_test_*")
@@ -35,7 +32,7 @@ func TestNewSession(t *testing.T) {
 		if s.GetPeerID() != 12345 {
 			t.Errorf("expected PeerID 12345, got %d", s.GetPeerID())
 		}
-		// HistoryLength не считает системное сообщение
+		
 		if s.HistoryLength() != 0 {
 			t.Errorf("expected 0 user messages (system only), got %d", s.HistoryLength())
 		}
@@ -49,7 +46,7 @@ func TestAddMessages(t *testing.T) {
 
 	t.Run("adds user message", func(t *testing.T) {
 		s.AddUserMessage("Hello")
-		// HistoryLength не считает системное сообщение
+		
 		if s.HistoryLength() != 1 {
 			t.Errorf("expected 1 user message, got %d", s.HistoryLength())
 		}
@@ -57,7 +54,7 @@ func TestAddMessages(t *testing.T) {
 
 	t.Run("adds assistant message", func(t *testing.T) {
 		s.AddAssistantMessage("Hi there!")
-		// HistoryLength не считает системное сообщение
+		
 		if s.HistoryLength() != 2 {
 			t.Errorf("expected 2 user messages, got %d", s.HistoryLength())
 		}
@@ -85,19 +82,16 @@ func TestGetHistory(t *testing.T) {
 	s.AddAssistantMessage("Answer 2")
 
 	history := s.GetHistory()
-	if len(history) != 5 { // system + 4 messages
+	if len(history) != 5 { 
 		t.Errorf("expected 5 messages in history, got %d", len(history))
 	}
 }
 
-// ============================================================
-// Тесты Loop Detection — обнаружение зацикливания
-// ============================================================
 
 func TestLoopDetection(t *testing.T) {
 	config := DefaultConfig()
 	config.PeerID = 12345
-	config.MaxLoopHistory = 5 // храним последние 5 ответов AI
+	config.MaxLoopHistory = 5 
 	s := NewSession(config)
 
 	t.Run("no loop detected initially", func(t *testing.T) {
@@ -108,7 +102,7 @@ func TestLoopDetection(t *testing.T) {
 	})
 
 	t.Run("detects exact duplicate", func(t *testing.T) {
-		// Добавляем одинаковые ответы
+		
 		s.AddAssistantMessage("I don't know")
 		s.AddAssistantMessage("I don't know")
 
@@ -118,10 +112,10 @@ func TestLoopDetection(t *testing.T) {
 	})
 
 	t.Run("tracks loop count", func(t *testing.T) {
-		// Добавляем ещё один дубликат
+		
 		s.AddAssistantMessage("I don't know")
 
-		// Loop count должен увеличиваться
+		
 		loops := s.GetLoopCount()
 		if loops < 1 {
 			t.Errorf("expected loop count >= 1, got %d", loops)
@@ -140,32 +134,32 @@ func TestLoopDetectionWithSimilarity(t *testing.T) {
 	config := DefaultConfig()
 	config.PeerID = 12345
 	config.MaxLoopHistory = 3
-	config.LoopSimilarityThreshold = 0.8 // 80% схожесть
+	config.LoopSimilarityThreshold = 0.8 
 	s := NewSession(config)
 
 	t.Run("detects similar responses", func(t *testing.T) {
-		// Добавляем похожие ответы
+		
 		s.AddAssistantMessage("I'm sorry, I cannot help with that.")
 		s.AddAssistantMessage("I'm sorry, I can't help with that.")
 
-		// Должно обнаружить схожесть
+		
 		if !s.IsLoopDetected() {
 			t.Error("should detect similar responses as loop")
 		}
 	})
 
 	t.Run("does not detect different responses", func(t *testing.T) {
-		// Создаём новую сессию с пустым SessionFile (не загружать из файла)
+		
 		s2 := NewSession(Config{
 			PeerID:                  12345,
-			SessionFile:             "", // не загружать из файла
+			SessionFile:             "", 
 			MaxLoopHistory:          3,
 			LoopSimilarityThreshold: 0.8,
 		})
 		s2.AddAssistantMessage("The answer is 42.")
 		s2.AddAssistantMessage("Hello, how are you today?")
 
-		// Проверка: разные ответы не должны вызывать loop detection
+		
 		if s2.IsLoopDetected() {
 			t.Error("should not detect loop for different responses")
 		}
@@ -181,7 +175,7 @@ func TestLoopAlertMessage(t *testing.T) {
 	config.MaxLoopHistory = 3
 	s := NewSession(config)
 
-	// Создаём цикл
+	
 	s.AddAssistantMessage("Repeated message A")
 	s.AddAssistantMessage("Repeated message A")
 
@@ -194,9 +188,6 @@ func TestLoopAlertMessage(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Тесты Session Persistence — сохранение в файл
-// ============================================================
 
 func TestSessionPersistence(t *testing.T) {
 	testDir, err := os.MkdirTemp("", "session_persist_test_*")
@@ -217,14 +208,14 @@ func TestSessionPersistence(t *testing.T) {
 		s.AddUserMessage("User message")
 		s.AddAssistantMessage("Assistant reply")
 
-		// Файл должен быть создан (автосохранение)
+		
 		if _, err := os.Stat(sessionFile); os.IsNotExist(err) {
 			t.Error("session file should be created with auto-save")
 		}
 	})
 
 	t.Run("loads session from file", func(t *testing.T) {
-		// Сначала создаём сессию
+		
 		config1 := DefaultConfig()
 		config1.PeerID = 12345
 		config1.SessionFile = sessionFile
@@ -233,20 +224,20 @@ func TestSessionPersistence(t *testing.T) {
 		s1.AddAssistantMessage("Original reply")
 		s1.Save()
 
-		// Загружаем в новую сессию
+		
 		config2 := DefaultConfig()
 		config2.PeerID = 12345
 		config2.SessionFile = sessionFile
 		s2 := NewSession(config2)
 
-		// Должно загрузить историю
-		if s2.HistoryLength() < 3 { // system + user + assistant
+		
+		if s2.HistoryLength() < 3 { 
 			t.Errorf("expected at least 3 messages, got %d", s2.HistoryLength())
 		}
 	})
 
 	t.Run("persists loop detection state", func(t *testing.T) {
-		// Создаём сессию с циклом
+		
 		config1 := DefaultConfig()
 		config1.PeerID = 12345
 		config1.SessionFile = sessionFile
@@ -256,26 +247,23 @@ func TestSessionPersistence(t *testing.T) {
 		s1.AddAssistantMessage("Loop message")
 		s1.AddAssistantMessage("Loop message")
 
-		// Сохраняем
+		
 		s1.Save()
 
-		// Загружаем
+		
 		config2 := DefaultConfig()
 		config2.PeerID = 12345
 		config2.SessionFile = sessionFile
 		config2.MaxLoopHistory = 3
 		s2 := NewSession(config2)
 
-		// Должно загрузить состояние цикла
+		
 		if !s2.IsLoopDetected() {
 			t.Error("loop detection state should be persisted")
 		}
 	})
 }
 
-// ============================================================
-// Тесты Session Reset и Clear
-// ============================================================
 
 func TestSessionReset(t *testing.T) {
 	config := DefaultConfig()
@@ -287,28 +275,25 @@ func TestSessionReset(t *testing.T) {
 	s.AddUserMessage("Message 2")
 	s.AddAssistantMessage("Reply 2")
 
-	// Сбрасываем сессию
+	
 	s.Reset()
 
-	// Должно остаться только системное сообщение (HistoryLength не считает системное)
+	
 	if s.HistoryLength() != 0 {
 		t.Errorf("expected 0 user messages after reset, got %d", s.HistoryLength())
 	}
 
-	// Loop detection должен быть очищен
+	
 	if s.IsLoopDetected() {
 		t.Error("loop detection should be reset")
 	}
 
-	// Last assistant message должен быть nil
+	
 	if s.GetLastAssistantMessage() != nil {
 		t.Error("last assistant message should be nil after reset")
 	}
 }
 
-// ============================================================
-// Тесты Session Config
-// ============================================================
 
 func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
@@ -324,9 +309,9 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
-// TestSetWorkingDirPersists проверяет что SetWorkingDir сохраняет workingDir в стор
+
 func TestSetWorkingDirPersists(t *testing.T) {
-	// Моковый стор
+	
 	mockSt := &mockWorkingDirStore{
 		workingDir: "",
 	}
@@ -341,18 +326,18 @@ func TestSetWorkingDirPersists(t *testing.T) {
 	newDir := "/home/user/projects/my-project"
 	s.SetWorkingDir(newDir)
 
-	// Проверяем что workingDir установлен
+	
 	if s.GetWorkingDir() != newDir {
 		t.Errorf("expected workingDir = %q, got %q", newDir, s.GetWorkingDir())
 	}
 
-	// Проверяем что workingDir сохранён в стор
+	
 	if mockSt.workingDir != newDir {
 		t.Errorf("expected store workingDir = %q, got %q", newDir, mockSt.workingDir)
 	}
 }
 
-// mockWorkingDirStore — минимальный мок стора для тестирования workingDir
+
 type mockWorkingDirStore struct {
 	workingDir string
 }
@@ -403,9 +388,6 @@ func (m *mockWorkingDirStore) ClearAgentChain(peerID int64) error               
 func (m *mockWorkingDirStore) GetAllActiveChains() ([]store.AgentChainData, error) { return nil, nil }
 func (m *mockWorkingDirStore) ClearPeerData(peerID int64) error                  { return nil }
 
-// ============================================================
-// Тесты Pinned промптов (/pin)
-// ============================================================
 
 func TestPinnedPrompts(t *testing.T) {
 	config := DefaultConfig()
@@ -485,7 +467,7 @@ func TestContextMessagesIncludePinned(t *testing.T) {
 
 	msgs := s.GetContextMessages()
 
-	// system, pin one, pin two, hello
+	
 	if len(msgs) != 4 {
 		t.Fatalf("expected 4 context messages, got %d: %v", len(msgs), msgs)
 	}
@@ -509,15 +491,15 @@ func TestContextMessagesDoNotDuplicatePinned(t *testing.T) {
 	config.SystemPrompt = "You are helpful."
 	s := NewSession(config)
 
-	// Симуляция /pin <промпт>: промпт закреплён и сразу отправлен как сообщение
+	
 	s.AddPinned("Always answer in Russian")
 	s.AddUserMessage("Always answer in Russian")
 	s.AddUserMessage("Hello")
 
 	msgs := s.GetContextMessages()
 
-	// system, "Always answer in Russian" (из истории), "Hello"
-	// pinned НЕ дублируется, т.к. контент уже в истории
+	
+	
 	if len(msgs) != 3 {
 		t.Fatalf("expected 3 context messages, got %d: %v", len(msgs), msgs)
 	}
@@ -535,7 +517,7 @@ func TestContextMessagesIncludePinnedAfterReset(t *testing.T) {
 	config.SystemPrompt = "You are helpful."
 	s := NewSession(config)
 
-	// Симуляция /pin <промпт> и последующей компактизации/reset
+	
 	s.AddPinned("Always answer in Russian")
 	s.AddUserMessage("Always answer in Russian")
 	s.AddUserMessage("Hello")
@@ -543,7 +525,7 @@ func TestContextMessagesIncludePinnedAfterReset(t *testing.T) {
 
 	msgs := s.GetContextMessages()
 
-	// system, pinned — исходное сообщение очищено, pinned вставляется
+	
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 context messages after reset, got %d: %v", len(msgs), msgs)
 	}
@@ -582,9 +564,6 @@ func TestPinnedPromptsPersistence(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Тесты SessionID
-// ============================================================
 
 func TestSessionIDGeneration(t *testing.T) {
 	config := DefaultConfig()
@@ -650,9 +629,6 @@ func TestGenerateSessionIDWithProvided(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Тесты Pinned + MarkCompaction — pinned переживают компактизацию
-// ============================================================
 
 func TestPinnedAfterMarkCompaction(t *testing.T) {
 	config := DefaultConfig()
@@ -660,20 +636,20 @@ func TestPinnedAfterMarkCompaction(t *testing.T) {
 	config.SystemPrompt = "You are helpful."
 	s := NewSession(config)
 
-	// Добавляем pinned и историю
+	
 	s.AddPinned("Always answer in Russian")
 	s.AddUserMessage("Hello")
 	s.AddAssistantMessage("Hi there!")
 	s.AddUserMessage("How are you?")
 	s.AddAssistantMessage("I'm fine, thanks!")
 
-	// Маркируем компактизацию (tail начинается с индекса 4)
+	
 	tailStartID := 4
 	s.MarkCompaction(tailStartID, "Earlier: user said hello and how are you")
 
 	msgs := s.GetContextMessages()
 
-	// system, pinned, compaction-user, summary, ...tail...
+	
 	foundPinned := false
 	for _, msg := range msgs {
 		if msg.Role == UserRole && msg.Content == "Always answer in Russian" {
@@ -698,13 +674,13 @@ func TestPinnedAfterMarkCompactionOrder(t *testing.T) {
 	s.AddAssistantMessage("Reply 1")
 	s.AddUserMessage("Msg 2")
 
-	// TailStartID=5 — original tail не попадает в контекст, тестируем порядок pinned + marker
+	
 	tailStartID := 5
 	s.MarkCompaction(tailStartID, "Summary of earlier conversation")
 
 	msgs := s.GetContextMessages()
 
-	// system(0), pin A(1), pin B(2), compaction-user(3), summary(4), Msg 2(5)
+	
 	if len(msgs) < 5 {
 		t.Fatalf("expected at least 5 context messages, got %d", len(msgs))
 	}
@@ -723,7 +699,7 @@ func TestPinnedAfterMarkCompactionOrder(t *testing.T) {
 		t.Errorf("expected 2 pinned messages in context, got %d", len(pinIndices))
 	}
 
-	// Pinned должны идти после system (index 0), до compaction marker
+	
 	for _, idx := range pinIndices {
 		if idx > 3 {
 			t.Errorf("pinned message at index %d should come before compaction marker", idx)
@@ -741,14 +717,14 @@ func TestPinnedAfterMultipleMarkCompactions(t *testing.T) {
 	s.AddUserMessage("First question")
 	s.AddAssistantMessage("First answer")
 
-	// Первая компактизация
+	
 	tailStartID := 2
 	s.MarkCompaction(tailStartID, "Summary 1")
 
 	s.AddUserMessage("Second question")
 	s.AddAssistantMessage("Second answer")
 
-	// Вторая компактизация (tail с нового хвоста)
+	
 	msgsBefore := s.GetHistory()
 	tailStartID2 := len(msgsBefore) - 2
 	s.MarkCompaction(tailStartID2, "Summary 2")
@@ -775,10 +751,10 @@ func TestPinnedNotDuplicatedAfterMarkCompaction(t *testing.T) {
 
 	promptText := "Always answer in Russian"
 	s.AddPinned(promptText)
-	s.AddUserMessage(promptText) // то же самое как обычное сообщение
+	s.AddUserMessage(promptText) 
 	s.AddAssistantMessage("Ok")
 
-	// Tail начинается после pinned message (индекс 3)
+	
 	tailStartID := 3
 	s.MarkCompaction(tailStartID, "Summary")
 
@@ -790,8 +766,8 @@ func TestPinnedNotDuplicatedAfterMarkCompaction(t *testing.T) {
 			count++
 		}
 	}
-	// Pinned не дублируется, т.к. исходное сообщение скрыто компактизацией (compacted=true)
-	// и hasUserMessageContent проверяет только видимые сообщения
+	
+	
 	if count != 1 {
 		t.Errorf("pinned prompt should appear exactly once after compaction (hidden original), got %d occurrences: %v", count, msgs)
 	}

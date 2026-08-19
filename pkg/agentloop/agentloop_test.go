@@ -12,11 +12,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util"
 )
 
-// ============================================================
-// Mock implementations для тестов
-// ============================================================
 
-// mockVKClient — mock для VKClient
 type mockVKClient struct {
 	mu             sync.Mutex
 	messages       []string
@@ -55,7 +51,7 @@ func (m *mockVKClient) GetThinking() []string {
 	return m.thinking
 }
 
-// mockToolRegistry — mock для ToolRegistry
+
 type mockToolRegistry struct {
 	mu     sync.Mutex
 	tools  map[string]tools.Tool
@@ -85,9 +81,6 @@ func (m *mockToolRegistry) Register(name string, tool tools.Tool) {
 	m.tools[name] = tool
 }
 
-// ============================================================
-// Тесты AgentLoop
-// ============================================================
 
 func testHolder() *modelsconfig.Holder {
 	return modelsconfig.NewTestHolder(&modelsconfig.ModelsConfig{
@@ -123,9 +116,9 @@ func TestNewAgentLoopEmptyConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	// Должно использовать значения по умолчанию
+	
 	if loop != nil {
-		// Проверяем что цикл создан
+		
 	}
 }
 
@@ -194,13 +187,13 @@ func TestAgentLoopGetSession(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	// Сначала сессии нет
+	
 	if loop.GetSession(123) != nil {
 		t.Error("expected nil session before any operation")
 	}
 
-	// Создаём сессию через ProcessPrompt (но это требует LLM)
-	// Для теста просто проверяем что метод существует и не паникует
+	
+	
 }
 
 func TestAgentLoopResetSession(t *testing.T) {
@@ -214,7 +207,7 @@ func TestAgentLoopResetSession(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	// Не должно паниковать даже если сессии нет
+	
 	loop.ResetSession(123)
 }
 
@@ -266,7 +259,7 @@ func TestDefaultLogger(t *testing.T) {
 		t.Fatal("expected non-nil logger")
 	}
 
-	// Проверяем что все методы вызываются без ошибок
+	
 	l.DebugLog("test")
 	l.InfoLog("test")
 	l.WarnLog("test")
@@ -278,27 +271,24 @@ func TestDefaultLogger(t *testing.T) {
 }
 
 func TestTruncate(t *testing.T) {
-	// Тестируем утилиту truncate
+	
 	short := "hello"
 	long := "this is a very long string that should be truncated"
 
 	if util.Truncate(short, 100) != short {
 		t.Error("short string should not be truncated")
 	}
-	// Truncate возвращает s[:maxLen] + "...", поэтому длина будет maxLen + 3
+	
 	if len(util.Truncate(long, 10)) != 13 {
 		t.Errorf("expected length 13, got %d", len(util.Truncate(long, 10)))
 	}
-	// Проверяем что заканчивается на "..."
+	
 	truncated := util.Truncate(long, 10)
 	if truncated[10] != '.' || truncated[11] != '.' || truncated[12] != '.' {
 		t.Error("truncated string should end with ...")
 	}
 }
 
-// ============================================================
-// Тесты Loop Detection
-// ============================================================
 
 func TestSimilarityExactMatch(t *testing.T) {
 	sim := similarity("Hello world", "Hello world")
@@ -312,7 +302,7 @@ func TestSimilarityDifferentStrings(t *testing.T) {
 	if sim < 0.0 || sim > 1.0 {
 		t.Errorf("similarity should be between 0.0 and 1.0, got %f", sim)
 	}
-	// "world" совпадает, поэтому similarity > 0
+	
 	if sim <= 0.0 {
 		t.Errorf("expected some similarity due to common word 'world', got %f", sim)
 	}
@@ -339,9 +329,6 @@ func TestSimilarityCaseInsensitive(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Тесты Tool Processing
-// ============================================================
 
 func TestGetStringField(t *testing.T) {
 	m := map[string]interface{}{
@@ -400,9 +387,6 @@ func TestProcessToolCallsNoRegistry(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Тесты Thinking Messages
-// ============================================================
 
 func TestSendThinkingDisabled(t *testing.T) {
 	vk := &mockVKClient{}
@@ -412,7 +396,7 @@ func TestSendThinkingDisabled(t *testing.T) {
 
 	loop, _ := NewAgentLoop(config, vk, nil)
 
-	// Не должно вызывать ошибку
+	
 	loop.(*agentLoop).sendThinking(123, "Thinking content")
 }
 
@@ -425,7 +409,7 @@ func TestSendThinkingNoThinkingPeerID(t *testing.T) {
 
 	loop, _ := NewAgentLoop(config, vk, nil)
 
-	// Не должно вызывать ошибку
+	
 	loop.(*agentLoop).sendThinking(123, "Thinking content")
 }
 
@@ -438,23 +422,20 @@ func TestSendThinkingWithVK(t *testing.T) {
 
 	loop, _ := NewAgentLoop(config, vk, nil)
 
-	// sendThinking в agentloop вызывает vk.SendThinking
-	// SendThinking в bot.go уже добавляет префикс "[THINKING]"
+	
+	
 	loop.(*agentLoop).sendThinking(123, "Reading file...")
 
 	thinking := vk.GetThinking()
 	if len(thinking) != 1 {
 		t.Errorf("expected 1 thinking message, got %d", len(thinking))
 	}
-	// Проверяем что сообщение отправлено (префикс добавляется в bot.go)
+	
 	if thinking[0] == "" {
 		t.Error("expected non-empty thinking message")
 	}
 }
 
-// ============================================================
-// Тесты Event Dispatcher с обработчиками
-// ============================================================
 
 func TestEventDispatcherMultipleHandlers(t *testing.T) {
 	dispatcher := NewEventDispatcher()
@@ -481,7 +462,7 @@ func TestEventDispatcherHandlerOrder(t *testing.T) {
 
 	dispatcher.Emit(NewEvent(EventPromptReceived, 123))
 
-	// Обработчики вызываются в порядке регистрации
+	
 	if len(order) != 2 || order[0] != 1 || order[1] != 2 {
 		t.Errorf("expected handlers in order [1, 2], got %v", order)
 	}

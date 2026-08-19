@@ -15,9 +15,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-// ============================================================
-// Тесты AI Agent Implementation
-// ============================================================
 
 func TestNewAgent(t *testing.T) {
 	config := DefaultConfig()
@@ -73,23 +70,23 @@ func TestAgentResetSession(t *testing.T) {
 	agent := NewAgent(config)
 	peerID := int64(12345)
 
-	// Создаём сессию
+	
 	agent.GetSession(peerID)
 
-	// Добавляем сообщения в сессию
+	
 	s := agent.GetSession(peerID)
 	s.AddUserMessage("Test message")
 	s.AddAssistantMessage("Test response")
 
-	// Проверяем что есть сообщения
+	
 	if s.HistoryLength() != 2 {
 		t.Errorf("expected 2 messages, got %d", s.HistoryLength())
 	}
 
-	// Сбрасываем сессию
+	
 	agent.ResetSession(peerID)
 
-	// Проверяем что сессия сброшена
+	
 	s = agent.GetSession(peerID)
 	if s.HistoryLength() != 0 {
 		t.Errorf("expected 0 messages after reset, got %d", s.HistoryLength())
@@ -97,10 +94,10 @@ func TestAgentResetSession(t *testing.T) {
 }
 
 func TestAgentProcessMessageWithMockServer(t *testing.T) {
-	// Создаём тестовый сервер с SSE форматом
+	
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		// SSE формат для streaming
+		
 		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n"))
 		w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 		w.Write([]byte("[DONE]\n"))
@@ -121,13 +118,13 @@ func TestAgentProcessMessageWithMockServer(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Ответ должен содержать "Hello"
+	
 	if response == "" {
 		t.Error("expected non-empty response")
 	}
 }
 
-// TestProcessMessageAddsUserMessageToSession добавляет юзер-сообщение в сессию
+
 func TestProcessMessageAddsUserMessageToSession(t *testing.T) {
 	server := newMockSSEServer("Response")
 	defer server.Close()
@@ -158,9 +155,7 @@ func TestProcessMessageAddsUserMessageToSession(t *testing.T) {
 	}
 }
 
-// TestProcessMessage_InjectsAGENTSMD проверяет что AGENTS.md из рабочей
-// директории попадает в LLM-запрос отдельным system-сообщением
-// в формате "Instructions from: <путь>" (как в opencode).
+
 func TestProcessMessage_InjectsAGENTSMD(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, ".git"), 0755); err != nil {
@@ -289,10 +284,10 @@ func newMockSSEServer(responseText string) *httptest.Server {
 }
 
 func TestAgentLoopDetectionIntegration(t *testing.T) {
-	// Создаём сервер который отвечает одинаково (симуляция цикла)
+	
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		// AI отвечает одинаково — это вызовет loop detection
+		
 		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"I don't know\"}}]}\n\n"))
 		w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 		w.Write([]byte("[DONE]\n"))
@@ -308,25 +303,25 @@ func TestAgentLoopDetectionIntegration(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Первый запрос — AI отвечает "I don't know"
+	
 	agent.ProcessMessage(ctx, "Question 1", 12345)
 
-	// Второй запрос — AI снова отвечает "I don't know" — должен сработать loop detection
+	
 	agent.ProcessMessage(ctx, "Question 2", 12345)
 
-	// Проверяем что цикл обнаружен
+	
 	s := agent.GetSession(12345)
 	if !s.IsLoopDetected() {
 		t.Error("expected loop detection to be triggered")
 	}
 
-	// Третий запрос — должен получить alert
+	
 	response, err := agent.ProcessMessage(ctx, "Question 3", 12345)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Ответ должен содержать информацию о цикле
+	
 	if response == "" {
 		t.Error("expected non-empty response")
 	}
@@ -349,10 +344,10 @@ func TestAgentSessionPersistence(t *testing.T) {
 
 	agent := NewAgent(config)
 
-	// Добавляем сообщения
+	
 	agent.ProcessMessage(context.Background(), "Hello", 12345)
 
-	// Файл должен быть создан (автосохранение)
+	
 	if _, err := os.Stat(sessionFile); os.IsNotExist(err) {
 		t.Error("session file should be created with auto-save")
 	}
@@ -367,7 +362,7 @@ func TestAgentPreservesSessionHistory(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Сообщения добавляются без жёсткого лимита (управление токенами — компакция)
+	
 	for i := 0; i < 20; i++ {
 		agent.ProcessMessage(ctx, "Message "+string(rune('A'+i%26)), 12345)
 	}
@@ -378,7 +373,7 @@ func TestAgentPreservesSessionHistory(t *testing.T) {
 	}
 }
 
-// mockStoreWorkingDir — мок стора, возвращающий сессию с заданным workingDir
+
 type mockStoreWorkingDir struct {
 	sessionData *store.SessionData
 }
@@ -482,12 +477,12 @@ func TestWorkingDirRestoredFromStore(t *testing.T) {
 
 	agent := NewAgent(config)
 
-	// Симулируем рестарт: WorkingDir сброшен к директории бинарника
+	
 	prevDir := tools.WorkingDir
 	tools.SetWorkingDir(fakeDefaultDir)
 	defer tools.SetWorkingDir(prevDir)
 
-	// Получаем сессию — должна восстановить workingDir из стора
+	
 	_ = agent.GetSession(12345)
 
 	if tools.WorkingDir != savedDir {
@@ -505,7 +500,7 @@ func TestWorkingDirNotOverwrittenWhenEmpty(t *testing.T) {
 	mockSt := &mockStoreWorkingDir{
 		sessionData: &store.SessionData{
 			PeerID:     12346,
-			WorkingDir: "", // сессия без сохранённой workingDir
+			WorkingDir: "", 
 		},
 	}
 
@@ -516,12 +511,12 @@ func TestWorkingDirNotOverwrittenWhenEmpty(t *testing.T) {
 
 	agent := NewAgent(config)
 
-	// Устанавливаем дефолтную директорию
+	
 	prevDir := tools.WorkingDir
 	tools.SetWorkingDir(fakeDefaultDir)
 	defer tools.SetWorkingDir(prevDir)
 
-	// Получаем сессию — не должна сбросить workingDir
+	
 	_ = agent.GetSession(12346)
 
 	if tools.WorkingDir != fakeDefaultDir {

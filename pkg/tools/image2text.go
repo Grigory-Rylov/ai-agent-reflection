@@ -17,11 +17,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util/stringutil"
 )
 
-// ============================================================
-// Image2Text Tool — распознавание изображения мультимодальной моделью
-// ============================================================
 
-// Image2TextConfig — конфигурация инструмента image2text.
 type Image2TextConfig struct {
 	ModelHolder *modelsconfig.Holder
 	MaxTokens   int
@@ -29,7 +25,7 @@ type Image2TextConfig struct {
 
 var globalImage2Text Image2TextConfig
 
-// SetImage2TextConfig задаёт глобальную конфигурацию для image2text.
+
 func SetImage2TextConfig(cfg Image2TextConfig) {
 	globalImage2Text = cfg
 }
@@ -90,8 +86,7 @@ func (t *Image2TextTool) Execute(ctx context.Context, inputs map[string]string) 
 	}, nil
 }
 
-// recognize отправляет изображение в мультимодальную модель и возвращает
-// распознанный текст.
+
 func (t *Image2TextTool) recognize(ctx context.Context, imagePath string, data []byte, prompt string) (string, error) {
 	model, host := currentImage2TextModel()
 	if host == "" {
@@ -123,8 +118,7 @@ func (t *Image2TextTool) recognize(ctx context.Context, imagePath string, data [
 	return postChatCompletion(ctx, host, jsonData)
 }
 
-// postChatCompletion отправляет запрос на OpenAI-совместимый /v1/chat/completions
-// и возвращает content из первого choice.
+
 func postChatCompletion(ctx context.Context, host string, jsonData []byte) (string, error) {
 	url := strings.TrimSuffix(host, "/") + "/v1/chat/completions"
 
@@ -165,7 +159,7 @@ func postChatCompletion(ctx context.Context, host string, jsonData []byte) (stri
 	return strings.TrimSpace(parsed.Choices[0].Message.Content), nil
 }
 
-// currentImage2TextModel возвращает имя модели и URL сервера из конфигурации.
+
 func currentImage2TextModel() (model, host string) {
 	if globalImage2Text.ModelHolder != nil {
 		_, model, host = globalImage2Text.ModelHolder.GetCurrent()
@@ -173,9 +167,7 @@ func currentImage2TextModel() (model, host string) {
 	return model, host
 }
 
-// image2TextMaxTokens возвращает лимит токенов ответа (по умолчанию 4096).
-// Это лимит OUTPUT (описания), не контекста модели — передавать весь
-// контекст сюда нельзя (vLLM отдаст 400).
+
 func image2TextMaxTokens() int {
 	if globalImage2Text.MaxTokens > 0 {
 		return globalImage2Text.MaxTokens
@@ -183,7 +175,7 @@ func image2TextMaxTokens() int {
 	return 4096
 }
 
-// imageMimeType определяет MIME-тип изображения по расширению файла.
+
 func imageMimeType(path string) string {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".png":
@@ -200,6 +192,5 @@ func imageMimeType(path string) string {
 		return "application/octet-stream"
 	}
 }
-
 
 

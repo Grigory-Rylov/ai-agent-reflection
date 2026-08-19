@@ -39,14 +39,14 @@ type AgentOrchestrator interface {
 	GetCurrentAgent() string
 	GetActiveAgentSessions(peerID int64) (string, error)
 	ClearActiveSessions(peerID int64)
-	// ClearRegisteredAgents отменяет все зарегистрированные контексты агентов
-	// пира (включая сабагентов через task-инструмент главного агента) и
-	// возвращает их sessionID для освобождения слотов.
+	
+	
+	
 	ClearRegisteredAgents(peerID int64) []string
-	// IsPrimary сообщает, помечен ли агент как primary (mode: primary|all
-	// в config.json). Primary-агенты используют общий контекст главного агента.
+	
+	
 	IsPrimary(agentName string) bool
-	// GetSystemPrompt возвращает системный промпт агента.
+	
 	GetSystemPrompt(agentName string) (string, error)
 }
 
@@ -63,23 +63,23 @@ type BotHandler struct {
 	cancelFuncs    map[int64]*cancelEntry
 	cancelMu       sync.RWMutex
 	attachmentsDir string
-	// peerProcessors — per-peer mutex для сериализации обработки сообщений.
-	// Когда агент занят, новые сообщения от того же peerID встают в очередь и ждут
-	// завершения текущей задачи без отмены контекста.
+	
+	
+	
 	peerProcessors     map[int64]*sync.Mutex
 	peerProcessorsMu   sync.RWMutex
-	// semaphore limits concurrent message processing goroutines.
+	
 	semaphore chan struct{}
-	// pendingKeyboards — temporary keyboard to send with next response per peerID.
+	
 	pendingKeyboards    map[int64]map[string]interface{}
 	pendingKeyboardMu   sync.RWMutex
-	// Очистка очереди при /clear и /n: сообщение фиксирует генерацию сессии
-	// ДО ожидания peer-mutex (beginProcessingWait); если во время ожидания
-	// сессию сбросили (bumpPeerGeneration) — после захвата mutex'а версия уже
-	// другая, и устаревшее сообщение отбрасывается без запуска агента.
+	
+	
+	
+	
 	queueMu       sync.Mutex
-	waitingCounts map[int64]int    // не-командных сообщений, ждущих peer-mutex
-	generations   map[int64]uint64 // версия сессии: растёт при каждом /clear, /n
+	waitingCounts map[int64]int    
+	generations   map[int64]uint64 
 }
 
 const maxConcurrentHandlers = 10
@@ -150,7 +150,7 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 
 	command := extractCommand(message)
 
-	// Команды обрабатываются немедленно — без блокировки peer mutex'ом.
+	
 	if strings.HasPrefix(command, "/") {
 		result := h.handleCommand(command, peerID)
 		if result != "" {
@@ -162,11 +162,11 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 		return fmt.Sprintf("Неизвестная команда: %s. Напишите /help для списка команд.", command)
 	}
 
-	// Ответы на pending вопросы (права доступа, уточнения) обрабатываются ДО
-	// захвата peer mutex'а: этот mutex держит goroutine, которая выполняет агента
-	// и блокируется в handleQuestion, ожидая ответ. Если ждать mutex здесь —
-	// наступит взаимная блокировка: goroutine с ответом встанет в очередь навсегда,
-	// клавиатура не скроется, а агент не продолжит работу.
+	
+	
+	
+	
+	
 	if tools.HasPendingQuestion(peerID) {
 		logger.DebugToFile("[ProcessMessage] HasPendingQuestion=true for peer %d, command=%s", peerID, stringutil.Truncate(command, 100, "..."))
 		if tools.ResolvePendingQuestion(peerID, command) {
@@ -179,11 +179,11 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	releaseQueueSlot, generationAtArrival := h.beginProcessingWait(peerID)
 	mu := h.getPeerMutex(peerID)
 	mu.Lock()
-	releaseQueueSlot() // из очереди вышли — теперь в обработке (или отбросимся ниже)
+	releaseQueueSlot() 
 	defer mu.Unlock()
 
-	// Сессия могла быть сброшена (/clear, /n), пока сообщение стояло в очереди:
-	// тогда это устаревшее сообщение и выполнять его в чистой сессии нельзя.
+	
+	
 	if h.peerGeneration(peerID) != generationAtArrival {
 		logger.DebugToFile("[ProcessMessage] peer %d: session was reset while message waited in queue, dropping stale message", peerID)
 		return ""
@@ -191,8 +191,8 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// Атомарная замена cancel func: старый (если есть) отменяется, новый
-	// устанавливается без промежутка, в котором /clear не нашёл бы cancel.
+	
+	
 	cancelEntry := &cancelEntry{cancel: cancel}
 	h.setCancelFunc(peerID, cancelEntry.cancel)
 	defer h.clearCancelFunc(peerID, cancelEntry)
@@ -207,9 +207,9 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 		}
 
 		if h.orchestrator != nil && h.orchestrator.IsPrimary(agentName) {
-			// Primary-агент выполняется на главном персистентном агенте: его
-			// системный промпт временно ЗАМЕНЯЕТ основной (чтобы не конфликтовать),
-			// а история остаётся общей с обычным чатом. Имя агента берётся из конфига.
+			
+			
+			
 			agentPrompt, err := h.orchestrator.GetSystemPrompt(agentName)
 			logger.DebugToFile("[#%s] GetSystemPrompt -> %d chars, err=%v", agentName, len(agentPrompt), err)
 			if err != nil {
@@ -281,9 +281,7 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	}
 }
 
-// getPeerMutex возвращает mutex для сериализации обработки сообщений одного peerID.
-// Если для peerID ещё нет мьютекса — создаёт новый. Обеспечивает безопасную работу
-// нескольких goroutine через sync.Map паттерн с RWMutex.
+
 func (h *BotHandler) getPeerMutex(peerID int64) *sync.Mutex {
 	h.peerProcessorsMu.RLock()
 	mu, ok := h.peerProcessors[peerID]
@@ -333,8 +331,8 @@ func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, _ t
 		return fmt.Sprintf("Неизвестная команда: %s. Напишите /help для списка команд.", command)
 	}
 
-	// Ответ на pending вопрос обрабатывается до захвата peer mutex'а —
-	// иначе дедлок, см. комментарий в ProcessMessage.
+	
+	
 	if tools.HasPendingQuestion(peerID) {
 		logger.DebugToFile("[ProcessMessageWithTimeout] HasPendingQuestion=true for peer %d, command=%s", peerID, stringutil.Truncate(command, 100, "..."))
 		if tools.ResolvePendingQuestion(peerID, command) {
@@ -344,10 +342,10 @@ func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, _ t
 
 	releaseQueueSlot, generationAtArrival := h.beginProcessingWait(peerID)
 	mu.Lock()
-	releaseQueueSlot() // из очереди вышли — теперь в обработке (или отбросимся ниже)
+	releaseQueueSlot() 
 	defer mu.Unlock()
 
-	// Сессия могла быть сброслена (/clear, /n), пока сообщение стояло в очереди.
+	
 	if h.peerGeneration(peerID) != generationAtArrival {
 		logger.DebugToFile("[ProcessMessageWithTimeout] peer %d: session was reset while message waited in queue, dropping stale message", peerID)
 		return ""
@@ -500,7 +498,7 @@ func (h *BotHandler) handleModelsList(peerID int64) string {
 	models := h.modelHolder.List()
 	currentAlias := h.modelHolder.GetDefaultAlias()
 
-	// Сохраняем клавиатуру для отправки с ответом.
+	
 	aliases := make([]string, 0, len(models))
 	for alias := range models {
 		aliases = append(aliases, alias)
@@ -541,14 +539,14 @@ func (h *BotHandler) handleModelSwitch(input string) string {
 	return fmt.Sprintf("✓ Модель переключена на: %s\n  %s (%s)", alias2, modelName, host)
 }
 
-// setPendingKeyboard сохраняет клавиатуру для отправки со следующим ответом.
+
 func (h *BotHandler) setPendingKeyboard(peerID int64, kb map[string]interface{}) {
 	h.pendingKeyboardMu.Lock()
 	h.pendingKeyboards[peerID] = kb
 	h.pendingKeyboardMu.Unlock()
 }
 
-// popPendingKeyboard извлекает и удаляет pending-клавиатуру для peerID.
+
 func (h *BotHandler) popPendingKeyboard(peerID int64) map[string]interface{} {
 	h.pendingKeyboardMu.Lock()
 	kb := h.pendingKeyboards[peerID]
@@ -557,7 +555,7 @@ func (h *BotHandler) popPendingKeyboard(peerID int64) map[string]interface{} {
 	return kb
 }
 
-// payloadToCommand преобразует callback payload клавиатуры в текстовую команду.
+
 func (h *BotHandler) payloadToCommand(payloadJSON string) string {
 	var payload struct {
 		Command string `json:"command"`
@@ -614,8 +612,8 @@ func (h *BotHandler) handlePinCommand(input string, peerID int64) string {
 		}
 
 		pinCtx, pinCancel := context.WithCancel(context.Background())
-		// Регистрируем cancel func, чтобы /clear мог отменить выполнение /pin
-		// (и его сабагентов). Иначе /pin крутится на фоне после /clear.
+		
+		
 		pinEntry := &cancelEntry{cancel: pinCancel}
 		h.setCancelFunc(peerID, pinEntry.cancel)
 		defer h.clearCancelFunc(peerID, pinEntry)
@@ -685,29 +683,29 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 		return fmt.Sprintf("Ошибка: не удалось получить абсолютный путь: %v", err)
 	}
 
-	// Сначала отменяем ВСЕ активные запросы (главный агент + сабагенты),
-	// ТОЛЬКО ПОТОМ чистим сессии. Команды обрабатываются без peer-мьютекса,
-	// поэтому /clear и /n выполняются параллельно с ProcessMessage: если
-	// очистить сессию до отмены, работающий агент продолжит писать в
-	// очищенную сессию (reasoning/tool calls продолжатся после /clear).
+	
+	
+	
+	
+	
 	h.cancelActiveRequest(peerID)
 	if h.orchestrator != nil {
 		h.orchestrator.ClearActiveSessions(peerID)
 	}
 
 	tools.UnregisterPendingQuestion(peerID)
-	// ClearPeerSession (а не ResetSession): сбрасывает историю/pinned в памяти,
-	// слот KV-cache и сообщения в сторе. ResetSession трогает только память —
-	// в сторе остаётся старая история, и после рестарта процесс "продолжит"
-	// прерванную задачу (ResumeInterruptedTask), а agentLoop.getOrCreateSession
-	// поднимет старую историю из стора в новую сессию.
+	
+	
+	
+	
+	
 	h.aiAgent.ClearPeerSession(peerID)
 	tools.ClearGrants(peerID)
 
-	// Физически удаляем из БД всё, что /clear мог не отменить: сессии
-	// сабагентов (agent_sessions), активную цепочку (active_agent_chain) и
-	// todos. Без этого после рестарта ResumeActiveChains / ResumeInterruptedTask
-	// поднимали бы «продолжение» уже очищенной задачи.
+	
+	
+	
+	
 	if st := h.aiAgent.GetStore(); st != nil {
 		if err := st.ClearPeerData(peerID); err != nil && h.log != nil {
 			h.log.WarnLogf("ClearPeerData for peer %d: %v", peerID, err)
@@ -730,8 +728,8 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 
 	h.clearHandlerSession(peerID)
 
-	// Все сообщения, вставшие в очередь до этого сброса, теперь устарели:
-	// их зафиксированная генерация перестала совпадать с текущей.
+	
+	
 	h.bumpPeerGeneration(peerID)
 
 	if h.log != nil {
@@ -768,10 +766,7 @@ func (h *BotHandler) clearHandlerSession(peerID int64) {
 	delete(h.sessions, peerID)
 }
 
-// cancelEntry — обёртка над cancel func: указатель на структуру сравниваем,
-// в отличие от самого func (в Go функции нельзя сравнивать на равенство).
-// cancelled=true ставит cancelActiveRequest (/clear): после этого entry
-// не должна отменять новый запрос, подставленный в setCancelFunc.
+
 type cancelEntry struct {
 	cancel    context.CancelFunc
 	cancelled bool
@@ -791,9 +786,9 @@ func (h *BotHandler) cancelActiveRequest(peerID int64) {
 func (h *BotHandler) setCancelFunc(peerID int64, cancel context.CancelFunc) {
 	h.cancelMu.Lock()
 	defer h.cancelMu.Unlock()
-	// Отменяем предыдущий запрос только если он ещё активен. Если он уже
-	// отменён /clear'ом (cancelled=true), не трогаем: его ctx и так мёртв,
-	// а новая entry должна стать единственной живой.
+	
+	
+	
 	if prev, ok := h.cancelFuncs[peerID]; ok && !prev.cancelled {
 		prev.cancel()
 	}
@@ -803,17 +798,15 @@ func (h *BotHandler) setCancelFunc(peerID int64, cancel context.CancelFunc) {
 func (h *BotHandler) clearCancelFunc(peerID int64, entry *cancelEntry) {
 	h.cancelMu.Lock()
 	defer h.cancelMu.Unlock()
-	// Удаляем только если в мапе ещё НАША entry. Если за время разворота
-	// запроса новый запрос уже поставил свою entry (setCancelFunc), не
-	// удаляем чужую — иначе новый активный агент станет неотменяемым /clear.
+	
+	
+	
 	if cur, ok := h.cancelFuncs[peerID]; ok && cur == entry {
 		delete(h.cancelFuncs, peerID)
 	}
 }
 
-// beginProcessingWait отмечает не-командное сообщение как «в очереди» и
-// возвращает зафиксированную генерацию сессии + release-функцию. Release
-// вызывается явно сразу после успешного захвата peer-mutex'а (см. ProcessMessage).
+
 func (h *BotHandler) beginProcessingWait(peerID int64) (release func(), generation uint64) {
 	h.queueMu.Lock()
 	h.waitingCounts[peerID]++
@@ -833,22 +826,21 @@ func (h *BotHandler) beginProcessingWait(peerID int64) (release func(), generati
 	}, generation
 }
 
-// bumpPeerGeneration повышает генерацию сессии. Вызывается после сброса в
-// handleNewSession (/clear, /n) — устаревает очередь сообщений пира.
+
 func (h *BotHandler) bumpPeerGeneration(peerID int64) {
 	h.queueMu.Lock()
 	defer h.queueMu.Unlock()
 	h.generations[peerID]++
 }
 
-// peerGeneration возвращает текущую генерацию сессии пира.
+
 func (h *BotHandler) peerGeneration(peerID int64) uint64 {
 	h.queueMu.Lock()
 	defer h.queueMu.Unlock()
 	return h.generations[peerID]
 }
 
-// waitingMessages — сколько не-командных сообщений пира сейчас ждут peer-mutex.
+
 func (h *BotHandler) waitingMessages(peerID int64) int {
 	h.queueMu.Lock()
 	defer h.queueMu.Unlock()
@@ -1011,8 +1003,7 @@ func (h *BotHandler) handleIncomingMessage(
 	}
 }
 
-// launchMessageHandler spawns a goroutine for message processing bounded by semaphore.
-// If the semaphore is full, it drops the message with a warning log.
+
 func (h *BotHandler) launchMessageHandler(
 	msg VKMessage,
 	replyPeerID int64,
@@ -1033,12 +1024,12 @@ func (h *BotHandler) launchMessageHandler(
 
 func (h *BotHandler) buildFullText(msg *VKMessage, fullMsgMap map[int64]VKMessage) string {
 	full, found := fullMsgMap[msg.ID]
-	// Приоритет: аттачи из getById (полные URL), иначе — из самого long-poll
-	// события. Bots Long Poll иногда отдаёт message_new без message.id (id=0),
-	// тогда fetchFullMessages его пропускает и getById не вызывается — но
-	// вlayout long-poll уже несёт аттачи с URL, их можно скачать напрямую.
-	// Без этого фолбэка путь к файлу в промпт не попадает (фича «аттач → путь»
-	// молча не работает).
+	
+	
+	
+	
+	
+	
 	atts := full.Attachments
 	attSource := "getById"
 	if !found || len(atts) == 0 {
@@ -1072,12 +1063,12 @@ func (h *BotHandler) buildFullText(msg *VKMessage, fullMsgMap map[int64]VKMessag
 	return msg.Text + "\n\n" + info
 }
 
-// downloadAttachments скачивает аттачи в h.attachmentsDir и возвращает их пути.
+
 func (h *BotHandler) downloadAttachments(atts []VKAttachment) ([]DownloadedAttachment, error) {
 	return DownloadAttachments(toRawAttachments(atts), h.attachmentsDir)
 }
 
-// describeAttachments строит краткое описание аттачей для логов.
+
 func describeAttachments(atts []VKAttachment) string {
 	parts := make([]string, 0, len(atts))
 	for _, a := range atts {
@@ -1094,7 +1085,7 @@ func toRawAttachments(attachments []VKAttachment) []map[string]interface{} {
 	return result
 }
 
-// writeSignalFile creates a signal file that restarter's monitorAgent picks up.
+
 func (h *BotHandler) writeSignalFile(name string, data string) {
 	if h.log != nil {
 		h.log.InfoLogf("Writing signal file: %s", name)

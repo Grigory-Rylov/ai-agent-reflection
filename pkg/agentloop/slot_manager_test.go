@@ -55,7 +55,7 @@ func TestSlotManager_GetOrAssign_AssignsDistinctSlots(t *testing.T) {
 func TestSlotManager_GetOrAssign_LRUEviction(t *testing.T) {
 	m := NewSlotManager(newSlotClient())
 
-	// Fill all 2 slots
+	
 	s0, _ := m.GetOrAssign("session-1", 2)
 	s1, _ := m.GetOrAssign("session-2", 2)
 
@@ -63,11 +63,11 @@ func TestSlotManager_GetOrAssign_LRUEviction(t *testing.T) {
 		t.Fatal("slots should be distinct")
 	}
 
-	// Access session-1 to make it more recent
+	
 	m.Touch("session-1")
 	time.Sleep(1 * time.Millisecond)
 
-	// New session should evict session-2 (LRU)
+	
 	_, evicted := m.GetOrAssign("session-3", 2)
 
 	if evicted == "" {
@@ -77,7 +77,7 @@ func TestSlotManager_GetOrAssign_LRUEviction(t *testing.T) {
 		t.Errorf("expected session-2 evicted, got %s", evicted)
 	}
 
-	// session-2 was LRU, its slot should now belong to session-3
+	
 	if m.GetSlotID("session-2") != -1 {
 		t.Error("session-2 should be evicted")
 	}
@@ -110,7 +110,7 @@ func TestSlotManager_Release_ReassignsSlot(t *testing.T) {
 	m.Release("session-1")
 
 	slot2, _ := m.GetOrAssign("session-2", 4)
-	// Should get same slot
+	
 	if slot2 != slot1 {
 		t.Errorf("expected reused slot %d, got %d", slot1, slot2)
 	}
@@ -148,12 +148,12 @@ func TestSlotManager_Touch(t *testing.T) {
 	time.Sleep(1 * time.Millisecond)
 	m.Touch("session-1")
 
-	// session-2 should now be LRU
+	
 	_, evicted := m.GetOrAssign("session-3", 2)
 	if evicted == "" {
 		t.Error("expected eviction")
 	}
-	// session-2 should be evicted (it's LRU after touch)
+	
 	if m.GetSlotID("session-2") != -1 {
 		t.Error("session-2 should be evicted as LRU")
 	}
@@ -233,7 +233,7 @@ func TestSlotManager_Availability_CachesResult(t *testing.T) {
 	m.CheckAvailability(context.Background(), server.URL, "model-x")
 	m.CheckAvailability(context.Background(), server.URL, "model-x")
 
-	// Should only call once (cached)
+	
 	if callCount != 1 {
 		t.Errorf("expected 1 call (cached), got %d", callCount)
 	}
@@ -258,7 +258,7 @@ func TestSlotManager_ConcurrentAccess(t *testing.T) {
 	}
 	wg.Wait()
 
-	// All should get the same slot
+	
 	if len(slots) != 1 {
 		t.Errorf("expected 1 unique slot for same session, got %d", len(slots))
 	}

@@ -10,8 +10,8 @@ import (
 )
 
 func TestShellPermissionNonFileCommandSkipsAsk(t *testing.T) {
-	// docker, adb, curl — не файловые команды, нет путей вне allowed dirs
-	// → не должны запрашивать пермишен
+	
+	
 	dir := t.TempDir()
 	prevWD := tools.WorkingDir
 	tools.SetWorkingDir(dir)
@@ -61,7 +61,7 @@ func TestShellPermissionNonFileCommandSkipsAsk(t *testing.T) {
 }
 
 func TestShellPermissionPathOutsideAllowedAsks(t *testing.T) {
-	// cat /etc/passwd — путь вне allowed dirs → должен запрашивать
+	
 	dir := t.TempDir()
 	prevWD := tools.WorkingDir
 	tools.SetWorkingDir(dir)
@@ -94,7 +94,7 @@ func TestShellPermissionPathOutsideAllowedAsks(t *testing.T) {
 }
 
 func TestShellPermissionRedirectOutsideAllowedAsks(t *testing.T) {
-	// echo hi > /tmp/x — редирекст вне allowed dirs → должен запрашивать
+	
 	dir := t.TempDir()
 	prevWD := tools.WorkingDir
 	tools.SetWorkingDir(dir)
@@ -127,7 +127,7 @@ func TestShellPermissionRedirectOutsideAllowedAsks(t *testing.T) {
 }
 
 func TestShellPermissionFileCommandInsideAllowedSkipsAsk(t *testing.T) {
-	// cat ./local.txt — путь внутри allowed dirs → не должен запрашивать
+	
 	dir := t.TempDir()
 	prevWD := tools.WorkingDir
 	tools.SetWorkingDir(dir)

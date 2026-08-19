@@ -11,15 +11,14 @@ import (
 	"time"
 )
 
-// validSSEStream — корректный SSE-ответ сервера.
+
 func validSSEStream() string {
 	return "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n" +
 		"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" +
 		"[DONE]\n"
 }
 
-// TestStreamAndCollectRetriesServerErrors — HTTP 5xx (сервер перезагружается)
-// должен ретраиться бесконечно до успеха.
+
 func TestStreamAndCollectRetriesServerErrors(t *testing.T) {
 	var calls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -54,15 +53,14 @@ func TestStreamAndCollectRetriesServerErrors(t *testing.T) {
 	}
 }
 
-// TestStreamAndCollectRetriesTruncatedStream — пустой/оборванный стрим
-// (HTTP 200 без данных) должен ретраиться.
+
 func TestStreamAndCollectRetriesTruncatedStream(t *testing.T) {
 	var calls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt32(&calls, 1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		if n == 1 {
-			// Оборванный стрим: заголовок выставлен, данных нет.
+			
 			return
 		}
 		fmt.Fprint(w, validSSEStream())
@@ -87,7 +85,7 @@ func TestStreamAndCollectRetriesTruncatedStream(t *testing.T) {
 	}
 }
 
-// TestStreamAndCollectNoRetryOnClientError — HTTP 4xx не должен ретраиться.
+
 func TestStreamAndCollectNoRetryOnClientError(t *testing.T) {
 	var calls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -111,8 +109,7 @@ func TestStreamAndCollectNoRetryOnClientError(t *testing.T) {
 	}
 }
 
-// TestStreamAndCollectNoRetryOnSSEContextError — SSE-ошибка
-// (context_length_exceeded) не должна ретраиться.
+
 func TestStreamAndCollectNoRetryOnSSEContextError(t *testing.T) {
 	var calls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -137,8 +134,7 @@ func TestStreamAndCollectNoRetryOnSSEContextError(t *testing.T) {
 	}
 }
 
-// TestStreamAndCollectReadableServerError — когда LLM-сервер недоступен,
-// ошибка должна содержать понятный текст, а не "context deadline exceeded".
+
 func TestStreamAndCollectReadableServerError(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -151,7 +147,7 @@ func TestStreamAndCollectReadableServerError(t *testing.T) {
 			getServerURL: func() string {
 				server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 				server.Start()
-				server.Close() // immediately close — no connection possible
+				server.Close() 
 				return server.Listener.Addr().String()
 			},
 			ctxTimeout:     100 * time.Millisecond,
@@ -165,7 +161,7 @@ func TestStreamAndCollectReadableServerError(t *testing.T) {
 
 			config := DefaultConfig()
 			config.LlamaServerURL = url
-			config.RetryDelay = 50 * time.Millisecond // enough for connection refused to happen fast
+			config.RetryDelay = 50 * time.Millisecond 
 			a := NewAgent(config)
 
 			ctx, cancel := context.WithTimeout(context.Background(), tt.ctxTimeout)
@@ -179,9 +175,9 @@ func TestStreamAndCollectReadableServerError(t *testing.T) {
 			errMsg := err.Error()
 			t.Logf("error message: %s", errMsg)
 
-			// Error should contain readable text about LLM server shutdown, not raw context error
+			
 			if tt.expectShutdown {
-				// When retries are exhausted, lastErr is wrapped. Should still be readable.
+				
 				hasReadable := strings.Contains(errMsg, "LLM request exhausted") ||
 					strings.Contains(errMsg, "shutdown") || strings.Contains(errMsg, "unreachable")
 				if !hasReadable {
@@ -192,12 +188,11 @@ func TestStreamAndCollectReadableServerError(t *testing.T) {
 	}
 }
 
-// TestStreamAndCollectPreservesLastErrorOnRetryExhaustion — при истощении ретраев
-// через контекст, сохраняется исходная ошибка сервера в lastErr.
+
 func TestStreamAndCollectPreservesLastErrorOnRetryExhaustion(t *testing.T) {
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	server.Start()
-	server.Close() // immediately close — connection refused every attempt
+	server.Close() 
 
 	config := DefaultConfig()
 	config.LlamaServerURL = "http://" + server.Listener.Addr().String()
@@ -215,7 +210,7 @@ func TestStreamAndCollectPreservesLastErrorOnRetryExhaustion(t *testing.T) {
 	errMsg := err.Error()
 	t.Logf("error message: %s", errMsg)
 
-	// lastErr should be preserved (wrapped in "LLM request exhausted"), not replaced by ctx.Err()
+	
 	if !strings.Contains(errMsg, "LLM request exhausted") {
 		t.Errorf("expected 'LLM request exhausted' wrapper preserving last error, got: %s", errMsg)
 	}

@@ -19,15 +19,11 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 )
 
-// TestLeadHashEndToEnd проверяет полный путь #lead → primary-агент: конфиг
-// агента (lead: mode=primary) → orchestrator.GetSystemPrompt → handler →
-// agentLoop.ProcessPromptWithSystemPrompt → LLM. В отличие от unit-тестов, здесь
-// не моки: реальный Orchestrator и реальный AgentLoop, а LLM — скриптовый сервер,
-// фиксирующий системный промпт, ушедший в запрос.
+
 func TestLeadHashEndToEnd(t *testing.T) {
 	const leadContent = "You are a Lead Agent. Delegate tasks to worker and qa via the task tool."
 
-	// Скриптовый LLM-сервер: возвращает "done" и фиксирует system-сообщение.
+	
 	var mu sync.Mutex
 	var capturedSystem string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +78,7 @@ func TestLeadHashEndToEnd(t *testing.T) {
 		t.Fatalf("NewAgentLoop: %v", err)
 	}
 
-	// Реальный AgentManager, как после initAgentManager (промпт уже контент).
+	
 	am := agentpolicy.NewAgentManager()
 	am.LoadFromConfig(map[string]agentpolicy.AgentCfg{
 		"lead": {Mode: "primary", Prompt: leadContent},

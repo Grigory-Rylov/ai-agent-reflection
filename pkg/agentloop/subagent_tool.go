@@ -34,13 +34,13 @@ type SubAgentTool struct {
 	Debug           bool
 	ModelHolder     *modelsconfig.Holder
 	SetActiveAgent  func(name string)
-	Store           store.Store // SQLite store для сессий сабагентов
-	ParentSessionID  string      // UUID родительской сессии
-	ParentAgent      agent.Agent // агент-родитель (для сохранения истории перед запуском ребёнка)
-	AgentSessionID   string      // UUID текущей сессии сабагента
-	Chain            []string    // Цепочка вызовов (список UUID от корня до текущего)
-	ParentAgentName  string      // имя агента-владельца инструмента (caller)
-	AllowedSubagents []string    // допустимые цели делегирования; пусто = любые
+	Store           store.Store 
+	ParentSessionID  string      
+	ParentAgent      agent.Agent 
+	AgentSessionID   string      
+	Chain            []string    
+	ParentAgentName  string      
+	AllowedSubagents []string    
 	SlotManager      *SlotManager
 	Slots            *SlotClient
 }
@@ -182,8 +182,8 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 		return tools.ToolResult{Success: false, Error: fmt.Sprintf("failed to create sub-agent %q: %v", name, err)}, nil
 	}
 
-	// Сохраняем историю родителя ДО запуска ребёнка — чтобы при краше
-	// посреди выполнения сабагента цепочка могла быть восстановлена.
+	
+	
 	if t.Store != nil {
 		t.saveParentHistory()
 	}
@@ -214,8 +214,8 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 
 	response, err := a.ProcessMessage(ctx, task, t.PeerID)
 	if err != nil {
-		// Слот освобождаем всегда (даже без Store), иначе утекает. БД/цепочка
-		// чистятся только при наличии Store (для resume).
+		
+		
 		if t.Store != nil {
 			t.saveSessionHistory(a, t.AgentSessionID, task)
 		}
@@ -226,8 +226,8 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 	if t.Store != nil {
 		t.saveSessionHistory(a, t.AgentSessionID, task)
 	}
-	// KV-cache сохраняется per-response внутри agent_impl (SlotSaver);
-	// здесь только освобождаем слот (erase in-memory + release в пул).
+	
+	
 	t.completeAgentSession()
 
 	return tools.ToolResult{
@@ -347,25 +347,25 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 	cfg.EnableLoopAlert = false
 	cfg.EnableCompression = true
 	cfg.AgentName = name
-	cfg.SlotID = -1 // Default: no slot pinning
+	cfg.SlotID = -1 
 	cfg.SlotSave = false
 
-	// Генерируем собственный UUID сессии сабагента. makeSubAgentTool мог
-	// оставить placeholder (родительский ID) — перегенерируем в свежий, чтобы
-	// сабагент получил отдельную сессию и слот, не перетирая данные родителя.
-	// Этот же ID прокидываем в cfg.SessionConfig.SessionID, поэтому
-	// a.GetSession().GetSessionID() совпадает с DB/slot ID — единый идентификатор
-	// сессии (как в главном цикле). Иначе slot-менеджер привяжет слот к одному
-	// ID, а cleanupAgentSession освободит по другому (slot leak).
+	
+	
+	
+	
+	
+	
+	
 	t.AgentSessionID = t.generateUUID()
 	sessionID := t.AgentSessionID
 	cfg.SessionConfig.SessionID = sessionID
 
-	// Назначаем слот через общий хелпер: проверка доступности, LRU-вытеснение
-	// (save+clear), восстановление собственного кэша. cfg.SlotID прокидывается
-	// в agent, пиня каждый LLM-запрос сабагента к его слоту — пока сабагент
-	// жив, серверный KV-cache слота переиспользуется между вызовами инструментов.
-	// SlotSaver сохраняет кэш после каждого ответа LLM (только при slot-save).
+	
+	
+	
+	
+	
 	if t.ModelHolder != nil && t.ModelHolder.GetCurrentSlotSave() {
 		cfg.SlotSave = true
 		if slotID := AssignSessionSlot(t.SlotManager, t.Slots, t.ModelHolder, sessionID, t.Log); slotID >= 0 {
@@ -380,15 +380,15 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 	a := agent.NewAgent(cfg)
 	a.GetSession(t.PeerID).UpdateSystemPrompt(systemPrompt)
 
-	// Сохраняем сессию сабагента и цепочку в БД (sessionID уже сгенерирован выше).
+	
 	if t.Store != nil {
-		// Строим цепочку: родительская цепочка + текущая сессия
+		
 		chain := make([]string, len(t.Chain))
 		copy(chain, t.Chain)
 		chain = append(chain, sessionID)
 		t.Chain = chain
 
-		// Сохраняем сессию
+		
 		t.Store.SaveAgentSession(&store.AgentSessionData{
 			ID:           sessionID,
 			ParentID:     t.ParentSessionID,
@@ -399,7 +399,7 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 			Status:       "active",
 		})
 
-		// Сохраняем цепочку
+		
 		t.Store.SaveAgentChain(t.PeerID, chain)
 	}
 
@@ -519,8 +519,7 @@ func (t *SubAgentTool) makeThinkingCallback(agentName string) func(peerID int64,
 	}
 }
 
-// newSessionUUID генерирует уникальный идентификатор сессии агента
-// (общий для SubAgentTool и Orchestrator).
+
 func newSessionUUID(parts ...string) string {
 	h := fnv.New128a()
 	for _, p := range parts {
@@ -532,12 +531,12 @@ func newSessionUUID(parts ...string) string {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", sum[:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
-// generateUUID создаёт уникальный идентификатор для сессии
+
 func (t *SubAgentTool) generateUUID() string {
 	return newSessionUUID(t.ParentSessionID, strconv.Itoa(t.CurrentDepth), strconv.FormatInt(t.PeerID, 10))
 }
 
-// saveSessionHistory сохраняет историю сообщений сессии агента в БД
+
 func (t *SubAgentTool) saveSessionHistory(a agent.Agent, sessionID, task string) {
 	if t.Store == nil || sessionID == "" || a == nil {
 		return
@@ -556,7 +555,7 @@ func (t *SubAgentTool) saveSessionHistory(a agent.Agent, sessionID, task string)
 	}
 }
 
-// saveParentHistory сохраняет историю родительского агента перед запуском ребёнка
+
 func (t *SubAgentTool) saveParentHistory() {
 	if t.Store == nil || t.ParentAgent == nil || t.ParentSessionID == "" {
 		return
@@ -579,7 +578,7 @@ func (t *SubAgentTool) saveParentHistory() {
 	}
 }
 
-// completeAgentSession удаляет сессию, освобождает слот и «всплывает» цепочку к родителю
+
 func (t *SubAgentTool) completeAgentSession() {
 	t.cleanupAgentSession()
 	if t.Store == nil || t.AgentSessionID == "" {
@@ -589,7 +588,7 @@ func (t *SubAgentTool) completeAgentSession() {
 	t.popChain()
 }
 
-// cancelAgentSession удаляет сессию, освобождает слот и «всплывает» цепочку к родителю
+
 func (t *SubAgentTool) cancelAgentSession() {
 	t.cleanupAgentSession()
 	if t.Store == nil || t.AgentSessionID == "" {
@@ -599,15 +598,12 @@ func (t *SubAgentTool) cancelAgentSession() {
 	t.popChain()
 }
 
-// cleanupAgentSession освобождает слот сабагента при завершении: удаляет
-// файл KV-cache, очищает серверный слот и возвращает слот в свободный пул.
-// Использует t.AgentSessionID — тот же ID, что был привязан к слоту в createAgent
-// (и к строке в БД), поэтому освобождается именно тот слот.
+
 func (t *SubAgentTool) cleanupAgentSession() {
 	ReleaseSessionSlot(t.SlotManager, t.Slots, t.ModelHolder, t.AgentSessionID, t.Log)
 }
 
-// popChain удаляет текущую сессию из активной цепочки (возврат к родителю)
+
 func (t *SubAgentTool) popChain() {
 	parent := t.Chain
 	if len(parent) > 0 {
@@ -616,12 +612,7 @@ func (t *SubAgentTool) popChain() {
 	t.Store.SaveAgentChain(t.PeerID, parent)
 }
 
-// mainToolsWithoutTask возвращает реестр основных инструментов без общего
-// task-инструмента. Общий SubAgentTool главного агента (parent="",
-// CurrentDepth=0, без ограничений) нельзя инжектить в сабагентов: он не
-// отслеживает parent/цепочку, не ограничивает глубину рекурсии и позволяет
-// воркеру спавнить других воркеров. Вместо него каждый сабагент получает
-// собственный инструмент через registerSubAgentTool.
+
 func mainToolsWithoutTask(reg *tools.Registry) *tools.Registry {
 	if reg == nil {
 		return nil
@@ -638,8 +629,7 @@ func mainToolsWithoutTask(reg *tools.Registry) *tools.Registry {
 	return filtered
 }
 
-// checkAllowedSubagent проверяет, разрешено ли текущему владельцу инструмента
-// делегировать агенту name. Возвращает nil, если ограничений нет.
+
 func (t *SubAgentTool) checkAllowedSubagent(name string) error {
 	if len(t.AllowedSubagents) == 0 {
 		return nil

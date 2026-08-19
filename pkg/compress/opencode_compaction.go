@@ -8,9 +8,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
 )
 
-// ============================================================
-// Opencode-style Compaction — select(), Summary, LLM-based
-// ============================================================
 
 const (
 	DEFAULT_TAIL_TURNS         = 2
@@ -20,21 +17,21 @@ const (
 	TOOL_OUTPUT_MAX_CHARS = 2000
 )
 
-// TruncateToolOutput truncates tool output to TOOL_OUTPUT_MAX_CHARS (like opencode)
+
 func TruncateToolOutput(content string) string {
 	if len(content) <= TOOL_OUTPUT_MAX_CHARS {
 		return content
 	}
 	head := content[:TOOL_OUTPUT_MAX_CHARS] + "\n[truncated]"
-	// Сохраняем хвостовую подсказку с путём к полному выводу, чтобы LLM
-	// мог перечитать файл порциями после компакции.
+	
+	
 	if idx := strings.LastIndex(content, "Full output saved to:"); idx >= 0 {
 		return head + "\n" + content[idx:]
 	}
 	return head
 }
 
-// SUMMARY_TEMPLATE — шаблон для суммаризации контекста в формате opencode.
+
 const SUMMARY_TEMPLATE = `Output exactly the Markdown structure shown inside <template> and keep the section order unchanged. Do not include the <template> tags in your response.
 <template>
 ## Goal
@@ -72,26 +69,24 @@ Rules:
 - Preserve exact file paths, commands, error strings, and identifiers when known.
 - Do not mention the summary process or that context was compacted.`
 
-// Turn представляет user-оборот (user message + все последующие assistant/tool сообщениях до следующего user).
+
 type Turn struct {
-	Start int // индекс первого сообщения оборота
-	End   int // индекс после последнего сообщения оборота
+	Start int 
+	End   int 
 }
 
-// SelectResult — результат выбора сообщений для компакшена.
-// TailStartID — индекс (стабильный ID) первого сообщения хвоста в исходном
-// slice сообщений; -1 означает «хвост не сохраняется» (head = все сообщения).
+
 type SelectResult struct {
-	Head        []tokenizers.Message // сообщения для сжатия
-	TailStartID int                  // индекс первого сообщения хвоста
+	Head        []tokenizers.Message 
+	TailStartID int                  
 }
 
-// PreserveRecentBudget вычисляет бюджет для сохранения последних сообщений.
+
 func PreserveRecentBudget(maxTokens int, preserveRecent *int) int {
 	return preserveRecentBudget(maxTokens, preserveRecent)
 }
 
-// preserveRecentBudget вычисляет бюджет для сохранения последних сообщений.
+
 func preserveRecentBudget(maxTokens int, preserveRecent *int) int {
 	if preserveRecent != nil && *preserveRecent > 0 {
 		return *preserveRecent
@@ -107,9 +102,7 @@ func preserveRecentBudget(maxTokens int, preserveRecent *int) int {
 	return budget
 }
 
-// userTurns разбивает сообщения на user-обороты.
-// Как в opencode compaction.ts `turns()`: compaction user-сообщения (маркеры
-// компактизации) НЕ считаются границей оборота.
+
 func userTurns(messages []tokenizers.Message) []Turn {
 	var result []Turn
 	for i, msg := range messages {
@@ -130,12 +123,12 @@ func userTurns(messages []tokenizers.Message) []Turn {
 	return result
 }
 
-// estimateMessagesTokens оценивает токены в сообщениях.
+
 func estimateMessagesTokens(messages []tokenizers.Message) int {
 	return EstimateMessagesTokensSimple(messages)
 }
 
-// splitTurn пытается разделить оборот, сохраняя только часть сообщений.
+
 func splitTurn(messages []tokenizers.Message, turn Turn, budget int) (int, bool) {
 	if budget <= 0 {
 		return 0, false
@@ -152,12 +145,7 @@ func splitTurn(messages []tokenizers.Message, turn Turn, budget int) (int, bool)
 	return 0, false
 }
 
-// SelectMessages разделяет сообщения на head (для сжатия) и tail (сохранить).
-// Сохраняет последние tailTurns user-оборотов, вписываясь в budget.
-// Повторяет семантику opencode compaction.ts `select()`:
-//   - keep.start === 0 (всё помещается в бюджет) → head = все сообщения,
-//     tail_start_id = undefined (ничего не сохраняется, компактится всё);
-//   - newest оборот не влезает и не делится → head = все сообщения.
+
 func SelectMessages(messages []tokenizers.Message, tailTurns int, budget int) SelectResult {
 	if tailTurns <= 0 {
 		return SelectResult{Head: messages, TailStartID: -1}
@@ -174,7 +162,7 @@ func SelectMessages(messages []tokenizers.Message, tailTurns int, budget int) Se
 	var total int
 	var keepStart int = -1
 
-	// Идём от newest к oldest, пытаемся вписаться в budget
+	
 	for i := len(recent) - 1; i >= 0; i-- {
 		turn := recent[i]
 		size := estimateMessagesTokens(messages[turn.Start:turn.End])
@@ -192,13 +180,13 @@ func SelectMessages(messages []tokenizers.Message, tailTurns int, budget int) Se
 		break
 	}
 
-	// Как в opencode: если хвост не выбран или начинается с индекса 0 —
-	// head = все сообщения, tail_start_id = undefined.
+	
+	
 	if keepStart <= 0 {
 		return SelectResult{Head: messages, TailStartID: -1}
 	}
 
-	// Находим ID первого user сообщения в tail
+	
 	tailStartID := -1
 	for i := keepStart; i < len(messages); i++ {
 		if messages[i].Role == "user" {
@@ -210,20 +198,16 @@ func SelectMessages(messages []tokenizers.Message, tailTurns int, budget int) Se
 		tailStartID = keepStart
 	}
 
-	// Head доходит до границы хвоста, а не до split-точки: при splitTurn
-	// (keepStart на не-user сообщении) остаток оборота messages[keepStart:tailStartID]
-	// обязан попасть в head, иначе он выпадет и из head, и из tail.
+	
+	
+	
 	return SelectResult{
 		Head:        messages[:tailStartID],
 		TailStartID: tailStartID,
 	}
 }
 
-// BuildSummaryPrompt строит промпт для суммаризации как opencode buildPrompt():
-// [инструкция, SUMMARY_TEMPLATE, ...context]. Head передаётся отдельными
-// сообщениями (см. summarizeChunk), а не дампится в текст промпта.
-// context — сериализованные сообщения (например, recent предыдущей
-// компактизации).
+
 func BuildSummaryPrompt(previousSummary string, context []string) string {
 	parts := make([]string, 0, len(context)+2)
 	if previousSummary != "" {
@@ -236,8 +220,7 @@ func BuildSummaryPrompt(previousSummary string, context []string) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// recentContextToPrompt сериализует сообщения recent (хвост предыдущей
-// компактизации) в строки контекста промпта суммаризации.
+
 func recentContextToPrompt(msgs []tokenizers.Message) []string {
 	ctx := make([]string, 0, len(msgs))
 	for _, m := range msgs {
@@ -246,26 +229,26 @@ func recentContextToPrompt(msgs []tokenizers.Message) []string {
 	return ctx
 }
 
-// OpenCodeCompactResult — результат opencode-компакшена.
+
 type OpenCodeCompactResult struct {
-	Summary      string               // текст summary
-	SummaryMsg   tokenizers.Message   // сообщение с summary
-	KeptTail     []tokenizers.Message // сохранённый хвост
-	TokensBefore int                  // токенов до
-	TokensAfter  int                  // токенов после
-	// TailStartID — индекс первого сообщения сохранённого хвоста в исходной
-	// истории (tail_start_id в opencode). -1 — хвост не сохраняется.
+	Summary      string               
+	SummaryMsg   tokenizers.Message   
+	KeptTail     []tokenizers.Message 
+	TokensBefore int                  
+	TokensAfter  int                  
+	
+	
 	TailStartID int
 }
 
-// CompactWithOpenCode выполняет сжатие в стиле opencode.
+
 func (c *Compactor) CompactWithOpenCode(ctx context.Context, messages []tokenizers.Message, maxTokens int, tailTurns int, preserveRecentTokens *int) (*OpenCodeCompactResult, error) {
 	tokensBefore := c.estimator.EstimateMessages(messages)
 	budget := preserveRecentBudget(maxTokens, preserveRecentTokens)
 	selected := SelectMessages(messages, tailTurns, budget)
 
-	// Как в opencode processCompaction: head исключает пары «маркер+summary»
-	// предыдущих компактизаций (hidden set), previousSummary передаётся отдельно.
+	
+	
 	head := withoutCompactionPairs(selected.Head)
 	tail := copyTail(messages, selected.TailStartID)
 
@@ -305,13 +288,13 @@ func (c *Compactor) CompactWithOpenCode(ctx context.Context, messages []tokenize
 }
 
 const (
-	// SUMMARY_CHUNK_OVERHEAD — резерв токенов под system-промпт и выход summary.
+	
 	SUMMARY_CHUNK_OVERHEAD = 8_192
-	// MIN_SUMMARY_CHUNK_BUDGET — минимальный бюджет одного вызова суммаризации.
+	
 	MIN_SUMMARY_CHUNK_BUDGET = 1_024
 )
 
-// summaryChunkBudget вычисляет бюджет токенов одного вызова суммаризации.
+
 func summaryChunkBudget(maxTokens int) int {
 	usable := Usable(maxTokens, nil)
 	budget := usable - SUMMARY_CHUNK_OVERHEAD
@@ -325,10 +308,7 @@ func summaryChunkBudget(maxTokens int) int {
 	return budget
 }
 
-// summarizeHead суммирует head по кускам, каждый из которых укладывается в контекст.
-// Summary накапливается: каждый следующий вызов обновляет summary предыдущего.
-// previousRecent (recent предыдущей компактизации) попадает в контекст только
-// первого вызова — как previousSummary.recent в opencode core compactAfterOverflow.
+
 func (c *Compactor) summarizeHead(ctx context.Context, head []tokenizers.Message, previousSummary string, previousRecent []tokenizers.Message, maxTokens int) (string, error) {
 	summary := previousSummary
 	remaining := head
@@ -354,9 +334,7 @@ func (c *Compactor) summarizeHead(ctx context.Context, head []tokenizers.Message
 	return summary, nil
 }
 
-// summarizeChunk вызывает LLM для суммаризации одного куска head.
-// Head передаётся отдельными сообщениями, промпт — только инструкция+шаблон
-// (+ recent предыдущей компактизации в context).
+
 func (c *Compactor) summarizeChunk(ctx context.Context, previousSummary string, chunk []tokenizers.Message, previousRecent []tokenizers.Message, includeRecent bool) (string, error) {
 	var context []string
 	if includeRecent && previousSummary != "" && len(previousRecent) > 0 {
@@ -380,7 +358,7 @@ func (c *Compactor) summarizeChunk(ctx context.Context, previousSummary string, 
 	return extractSummary(compResult), nil
 }
 
-// extractSummary извлекает текст summary из результата сжатия.
+
 func extractSummary(compResult *CompressionResult) string {
 	for _, m := range compResult.CompressedMessages {
 		if m.Role == "user" && m.Content != "" {
@@ -390,8 +368,7 @@ func extractSummary(compResult *CompressionResult) string {
 	return compResult.Summary
 }
 
-// takeOldestFit возвращает самый длинный префикс messages, укладывающийся в budget.
-// Если первое сообщение не влезает, возвращает пустой chunk — вызывающий обязан его обрезать.
+
 func takeOldestFit(messages []tokenizers.Message, budget int) ([]tokenizers.Message, []tokenizers.Message) {
 	if budget <= 0 || len(messages) == 0 {
 		return nil, messages
@@ -410,9 +387,9 @@ func takeOldestFit(messages []tokenizers.Message, budget int) ([]tokenizers.Mess
 	return messages, nil
 }
 
-// truncateToBudget обрезает содержимое сообщения до укладывания в budget токенов.
+
 func truncateToBudget(msg tokenizers.Message, budget int) tokenizers.Message {
-	// Резерв под роль, разметку и маркер обрезки.
+	
 	maxChars := (budget - 64) * 4
 	if maxChars < 0 {
 		maxChars = 0
@@ -424,7 +401,7 @@ func truncateToBudget(msg tokenizers.Message, budget int) tokenizers.Message {
 	return msg
 }
 
-// copyTail копирует хвост сообщений, начиная с tailStartID.
+
 func copyTail(messages []tokenizers.Message, tailStartID int) []tokenizers.Message {
 	if tailStartID > 0 {
 		tail := make([]tokenizers.Message, len(messages)-tailStartID)
@@ -439,10 +416,7 @@ func copyTail(messages []tokenizers.Message, tailStartID int) []tokenizers.Messa
 	return nil
 }
 
-// withoutCompactionPairs удаляет пары «маркер компактизации (user) + summary
-// (assistant)» из сообщений. Как в opencode processCompaction: старые пары
-// исключаются из контекста суммаризации (hidden set), а previousSummary
-// передаётся отдельно.
+
 func withoutCompactionPairs(messages []tokenizers.Message) []tokenizers.Message {
 	result := make([]tokenizers.Message, 0, len(messages))
 	skipNext := false
@@ -460,11 +434,7 @@ func withoutCompactionPairs(messages []tokenizers.Message) []tokenizers.Message 
 	return result
 }
 
-// findPreviousCompaction ищет последний summary в сообщениях (как opencode
-// completedCompactions().at(-1)) — обновляется последний, самый свежий.
-// Возвращает текст summary и recent — хвост, сохранённый предыдущей
-// компактизацией (messages[tailStartID:markerIdx]), который передаётся в
-// контекст при повторной суммаризации.
+
 func findPreviousCompaction(messages []tokenizers.Message) (summary string, recent []tokenizers.Message) {
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role != "assistant" || !messages[i].Summary {

@@ -11,20 +11,13 @@ import (
 	"testing"
 )
 
-// llmCall фиксирует один LLM-запрос, сделанный в ходе восстановления цепочки.
+
 type llmCall struct {
-	agent string // "reviewer", "worker" или "lead"
-	body  string // сырое тело запроса
+	agent string 
+	body  string 
 }
 
-// scriptedLLM возвращает httptest-сервер, который отвечает на запросы
-// скриптовыми SSE-ответами, выбирая ответ по содержимому тела запроса.
-// Так имитируется «мок ответов LLM» без реальной модели.
-//
-// Маршрутизация:
-//   - body содержит WORKER_RESULT  → это lead (ему пришёл результат воркера)
-//   - body содержит REVIEWER_RESULT → это worker (ему пришёл результат ревьюера)
-//   - иначе                        → это reviewer (самый глубокий, восстанавливается первым)
+
 func scriptedLLM(t *testing.T) (*httptest.Server, func() []llmCall, func() bool, func() int) {
 	t.Helper()
 

@@ -2,16 +2,16 @@ package agentpolicy
 
 import "fmt"
 
-// AgentMode определяет в каких контекстах может работать агент
+
 type AgentMode string
 
 const (
-	ModePrimary  AgentMode = "primary"  // Главный агент, может общаться с пользователем
-	ModeSubagent AgentMode = "subagent" // Под-агент, используется для делегирования
-	ModeAll      AgentMode = "all"      // Оба режима
+	ModePrimary  AgentMode = "primary"  
+	ModeSubagent AgentMode = "subagent" 
+	ModeAll      AgentMode = "all"      
 )
 
-// AgentInfo описывает конфигурацию агента
+
 type AgentInfo struct {
 	Name        string                   `json:"name"`
 	Description string                   `json:"description"`
@@ -32,12 +32,12 @@ type AgentInfo struct {
 	Options     map[string]interface{}    `json:"options"`
 }
 
-// AgentManager управляет доступными агентами
+
 type AgentManager struct {
 	agents map[string]AgentInfo
 }
 
-// NewAgentManager создаёт менеджер с предустановленными агентами
+
 func NewAgentManager() *AgentManager {
 	am := &AgentManager{
 		agents: make(map[string]AgentInfo),
@@ -46,11 +46,11 @@ func NewAgentManager() *AgentManager {
 	return am
 }
 
-// initDefaults инициализирует стандартные агенты (как в opencode)
+
 func (am *AgentManager) initDefaults() {
 	defaultPerm := DefaultPermission()
 
-	// Build agent — основной агент для выполнения задач
+	
 	am.agents["build"] = AgentInfo{
 		Name:        "build",
 		Description: "The default agent. Executes tools based on configured permissions.",
@@ -61,7 +61,7 @@ func (am *AgentManager) initDefaults() {
 		Options:     map[string]interface{}{},
 	}
 
-	// Plan agent — режим планирования (ограниченные права на редактирование)
+	
 	planPerm := MergePermissions(
 		defaultPerm,
 		NewPermissionFromConfig(map[string]string{
@@ -77,10 +77,10 @@ func (am *AgentManager) initDefaults() {
 		Options:     map[string]interface{}{},
 	}
 
-	// Note: qa/worker/explore/generate agents should be configured in config.json and loaded via LoadFromConfig().
-	// initDefaults only provides fallback agents for environments without config file.
+	
+	
 
-	// General subagent — для исследования и параллельных задач (fallback)
+	
 	am.agents["general"] = AgentInfo{
 		Name:        "general",
 		Description: "General-purpose agent for researching complex questions and executing multi-step tasks.",
@@ -97,7 +97,7 @@ func (am *AgentManager) initDefaults() {
 		Options:     map[string]interface{}{},
 	}
 
-	// QA agent — review агент (fallback, overridden by config.json)
+	
 	am.agents["qa"] = AgentInfo{
 		Name:        "qa",
 		Description: "Reviews code, builds/tests it, calls worker for fixes, approves when done.",
@@ -108,7 +108,7 @@ func (am *AgentManager) initDefaults() {
 		Options:     map[string]interface{}{},
 	}
 
-	// Explore agent — быстрый поиск по коду (только чтение) (fallback)
+	
 	explorePerm := NewPermissionFromConfig(map[string]string{
 		"grep":        "allow",
 		"glob":        "allow",
@@ -138,7 +138,7 @@ func (am *AgentManager) initDefaults() {
 		Options:     map[string]interface{}{},
 	}
 
-	// Summary agent — internal utility for creating summaries
+	
 	am.agents["summary"] = AgentInfo{
 		Name:        "summary",
 		Description: "Agent for creating concise summaries of conversations and files.",
@@ -150,7 +150,7 @@ func (am *AgentManager) initDefaults() {
 	}
 }
 
-// GetAgent возвращает информацию о агенте по имени
+
 func (am *AgentManager) GetAgent(name string) (AgentInfo, error) {
 	a, ok := am.agents[name]
 	if !ok {
@@ -159,7 +159,7 @@ func (am *AgentManager) GetAgent(name string) (AgentInfo, error) {
 	return a, nil
 }
 
-// ListAgentNames возвращает имена всех зарегистрированных агентов
+
 func (am *AgentManager) ListAgentNames() []string {
 	names := make([]string, 0, len(am.agents))
 	for name := range am.agents {
@@ -168,7 +168,7 @@ func (am *AgentManager) ListAgentNames() []string {
 	return names
 }
 
-// ListAgents возвращает список всех доступных агентов
+
 func (am *AgentManager) ListAgents() []AgentInfo {
 	agents := make([]AgentInfo, 0, len(am.agents))
 	for _, a := range am.agents {
@@ -177,8 +177,7 @@ func (am *AgentManager) ListAgents() []AgentInfo {
 	return agents
 }
 
-// SubagentTypesFor возвращает список агентов, которым разрешено делегировать
-// агенту name. Пустой список означает «любые доступные сабагенты».
+
 func (am *AgentManager) SubagentTypesFor(name string) []string {
 	if am == nil {
 		return nil
@@ -190,7 +189,7 @@ func (am *AgentManager) SubagentTypesFor(name string) []string {
 	return a.SubagentTypes
 }
 
-// CanAccess проверяет может ли агент использовать инструмент
+
 func (am *AgentManager) CanAccess(agentName, toolName string) (bool, error) {
 	a, err := am.GetAgent(agentName)
 	if err != nil {
@@ -199,19 +198,19 @@ func (am *AgentManager) CanAccess(agentName, toolName string) (bool, error) {
 	return a.Permission.Check(toolName), nil
 }
 
-// DeriveSubagentPermission вычисляет разрешения для subagent относительно parent
+
 func (am *AgentManager) DeriveSubagentPermission(parentPerm Permission, subagentName string) Permission {
 	subagent, err := am.GetAgent(subagentName)
 	if err != nil {
-		return parentPerm // Если subagent не найден, используем parent
+		return parentPerm 
 	}
-	// Subagent наследует ограничения parent + свои собственные
+	
 	return MergePermissions(parentPerm, subagent.Permission)
 }
 
-// RegisterAgent добавляет или обновляет агента
+
 func (am *AgentManager) RegisterAgent(info AgentInfo) {
-	// Установить дефолтные разрешения если не указаны
+	
 	if info.Permission == nil || len(info.Permission) == 0 {
 		info.Permission = DefaultPermission()
 	}
@@ -221,7 +220,7 @@ func (am *AgentManager) RegisterAgent(info AgentInfo) {
 	am.agents[info.Name] = info
 }
 
-// RemoveAgent удаляет агента из реестра
+
 func (am *AgentManager) RemoveAgent(name string) bool {
 	if _, ok := am.agents[name]; ok {
 		delete(am.agents, name)
@@ -230,17 +229,17 @@ func (am *AgentManager) RemoveAgent(name string) bool {
 	return false
 }
 
-// DefaultAgent возвращает агента по умолчанию (build)
+
 func (am *AgentManager) DefaultAgent() (AgentInfo, error) {
 	return am.GetAgent("build")
 }
 
-// GetAvailableModes возвращает доступные режимы для агента
+
 func (am *AgentManager) GetAvailableModes() []AgentMode {
 	return []AgentMode{ModePrimary, ModeSubagent, ModeAll}
 }
 
-// LoadFromConfig загружает агентов из конфига (map[name]AgentCfg)
+
 func (am *AgentManager) LoadFromConfig(cfg map[string]AgentCfg) {
 	for name, ac := range cfg {
 		mode := AgentMode(ac.Mode)
@@ -267,7 +266,7 @@ func (am *AgentManager) LoadFromConfig(cfg map[string]AgentCfg) {
 	}
 }
 
-// AgentCfg — упрощённая конфигурация агента из JSON-конфига
+
 type AgentCfg struct {
 	Mode        string     `json:"mode"`
 	Description string     `json:"description"`

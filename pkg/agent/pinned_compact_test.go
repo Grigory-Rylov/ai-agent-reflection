@@ -13,7 +13,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-// mockPinnedCompressor — стаб LLM-компрессора для компакции.
+
 type mockPinnedCompressor struct {
 	compressFunc func(ctx context.Context, req *compress.CompressionRequest) (*compress.CompressionResult, error)
 }
@@ -34,21 +34,20 @@ func (m *mockPinnedCompressor) Compress(ctx context.Context, req *compress.Compr
 	}, nil
 }
 
-// newPinnedTestAgent создаёт агента с подставленным компактором.
+
 func newPinnedTestAgent(t *testing.T) *agentImpl {
 	t.Helper()
 	config := DefaultConfig()
 	config.LlamaServerURL = "127.0.0.1:8080"
 	config.Model = "test-model"
-	config.MaxTokens = 1000 // маленький лимит — компактизация сработает
+	config.MaxTokens = 1000 
 
 	agent := NewAgent(config)
 	agent.compactor = compress.NewCompactor(&mockPinnedCompressor{})
 	return agent
 }
 
-// TestPinnedPromptsSurviveCompaction проверяет, что pinned промпты остаются
-// в начале контекста после компактизации.
+
 func TestPinnedPromptsSurviveCompaction(t *testing.T) {
 	agent := newPinnedTestAgent(t)
 
@@ -77,10 +76,7 @@ func TestPinnedPromptsSurviveCompaction(t *testing.T) {
 	}
 }
 
-// TestSystemPromptAndInstructionsSurviveCompaction (п.12) проверяет, что после
-// компактизации system-сообщение остаётся первым в контексте, а AGENTS.md
-// по-прежнему инжектится отдельным system-сообщением (opencode: system prompt
-// собирается динамически и не теряется при компакшене).
+
 func TestSystemPromptAndInstructionsSurviveCompaction(t *testing.T) {
 	agent := newPinnedTestAgent(t)
 
@@ -122,8 +118,7 @@ func TestSystemPromptAndInstructionsSurviveCompaction(t *testing.T) {
 	}
 }
 
-// TestPinnedPromptsInContextAfterCompaction проверяет, что после компактизации
-// pinned промпты попадают в API-сообщения в начале контекста.
+
 func TestPinnedPromptsInContextAfterCompaction(t *testing.T) {
 	agent := newPinnedTestAgent(t)
 

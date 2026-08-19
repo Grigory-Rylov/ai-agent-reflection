@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// ============================================================
-// Mock server для тестирования
-// ============================================================
 
 func createMockServer(response string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -33,9 +30,6 @@ func createMockServer(response string) *httptest.Server {
 	}))
 }
 
-// ============================================================
-// Tests for ServerInfoClient
-// ============================================================
 
 func TestServerInfoClient_GetModelContextLength(t *testing.T) {
 	t.Run("gets --ctx-size from /v1/models status args", func(t *testing.T) {
@@ -137,7 +131,7 @@ func TestServerInfoClient_GetModelContextLength(t *testing.T) {
 	})
 
 	t.Run("handles empty meta field - falls back to /props", func(t *testing.T) {
-		// Когда meta=null, функция делает фоллбэк на /props
+		
 		response := `{
 			"object": "list",
 			"data": [{
@@ -155,14 +149,14 @@ func TestServerInfoClient_GetModelContextLength(t *testing.T) {
 		client := NewServerInfoClient(server.URL)
 		ctxLen := client.GetModelContextLength("test-model")
 
-		// Ожидаем фоллбэк на /props который возвращает 8192
+		
 		if ctxLen != 8192 {
 			t.Errorf("Expected fallback to /props (8192), got %d", ctxLen)
 		}
 	})
 
 	t.Run("handles missing data array - falls back to /props", func(t *testing.T) {
-		// Когда data пустой, функция делает фоллбэк на /props
+		
 		response := `{
 			"object": "list",
 			"data": []
@@ -174,7 +168,7 @@ func TestServerInfoClient_GetModelContextLength(t *testing.T) {
 		client := NewServerInfoClient(server.URL)
 		ctxLen := client.GetModelContextLength("test-model")
 
-		// Ожидаем фоллбэк на /props который возвращает 8192
+		
 		if ctxLen != 8192 {
 			t.Errorf("Expected fallback to /props (8192), got %d", ctxLen)
 		}
@@ -250,9 +244,6 @@ func TestServerInfoClient_GetModelInfo(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Tests for LlamaServerTokenizer with context detection
-// ============================================================
 
 func TestLlamaServerTokenizer_ContextDetection(t *testing.T) {
 	t.Run("resolves to actual context when available", func(t *testing.T) {
@@ -282,13 +273,13 @@ func TestLlamaServerTokenizer_ContextDetection(t *testing.T) {
 			t.Errorf("Expected actual context 131072, got %d", actualCtx)
 		}
 
-		// MaxContextLength должен возвращать реальное значение
+		
 		maxCtx := tokenizer.MaxContextLength()
 		if maxCtx != 131072 {
 			t.Errorf("Expected MaxContextLength 131072, got %d", maxCtx)
 		}
 
-		// ResolveMaxTokens тоже должен возвращать реальное значение
+		
 		resolved := tokenizer.ResolveMaxTokens()
 		if resolved != 131072 {
 			t.Errorf("Expected ResolveMaxTokens 131072, got %d", resolved)
@@ -303,13 +294,13 @@ func TestLlamaServerTokenizer_ContextDetection(t *testing.T) {
 			t.Error("Expected error when server unavailable, got nil")
 		}
 
-		// MaxContextLength должен вернуть конфигурационное значение
+		
 		maxCtx := tokenizer.MaxContextLength()
 		if maxCtx != 8192 {
 			t.Errorf("Expected MaxContextLength 8192 (fallback), got %d", maxCtx)
 		}
 
-		// ResolveMaxTokens тоже должен вернуть конфигурационное значение
+		
 		resolved := tokenizer.ResolveMaxTokens()
 		if resolved != 8192 {
 			t.Errorf("Expected ResolveMaxTokens 8192 (fallback), got %d", resolved)
@@ -337,11 +328,11 @@ func TestLlamaServerTokenizer_ContextDetection(t *testing.T) {
 		tokenizer := NewLlamaServerTokenizer(server.URL, "test", 4096)
 		tokenizer.InitializeContextLimit()
 
-		// Первый вызов
+		
 		tokenizer.GetActualContextLimit()
 		firstCallCount := callCount
 
-		// Второй вызов (должен использовать кеш)
+		
 		tokenizer.GetActualContextLimit()
 		secondCallCount := callCount
 
@@ -355,7 +346,7 @@ func TestLlamaServerTokenizer_ContextDetection(t *testing.T) {
 	})
 
 	t.Run("distinguishes between configured and actual context", func(t *testing.T) {
-		// Симулируем ситуацию когда в конфиге 200k, а у сервера реально 80k
+		
 		response := `{
 			"object": "list",
 			"data": [{
@@ -375,7 +366,7 @@ func TestLlamaServerTokenizer_ContextDetection(t *testing.T) {
 
 		actualCtx := tokenizer.GetActualContextLimit()
 
-		// Реальный контекст должен отличаться от конфигурационного
+		
 		if actualCtx == configuredMax {
 			t.Errorf("Expected actual context (%d) to differ from configured (%d)",
 				actualCtx, configuredMax)
@@ -385,7 +376,7 @@ func TestLlamaServerTokenizer_ContextDetection(t *testing.T) {
 			t.Errorf("Expected actual context 81920, got %d", actualCtx)
 		}
 
-		// MaxContextLength должен вернуть реальное значение, а не конфигурационное
+		
 		maxCtx := tokenizer.MaxContextLength()
 		if maxCtx != 81920 {
 			t.Errorf("Expected MaxContextLength 81920 (actual), got %d", maxCtx)
@@ -393,9 +384,6 @@ func TestLlamaServerTokenizer_ContextDetection(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Integration scenarios
-// ============================================================
 
 func TestScenarios_ContextLimitMismatch(t *testing.T) {
 	scenarios := []struct {
@@ -460,9 +448,6 @@ func TestScenarios_ContextLimitMismatch(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Debug mode tests
-// ============================================================
 
 func TestCtxSizeFromArgs(t *testing.T) {
 	t.Run("parses --ctx-size", func(t *testing.T) {
@@ -529,7 +514,7 @@ func TestServerInfoClient_DebugMode(t *testing.T) {
 		defer server.Close()
 
 		client := NewServerInfoClient(server.URL)
-		client.SetDebug(true) // Просто проверяем что не паникует
+		client.SetDebug(true) 
 
 		ctxLen := client.GetModelContextLength("test-model")
 		if ctxLen != 4096 {

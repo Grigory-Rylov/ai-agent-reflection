@@ -5,15 +5,7 @@ import (
 	"strings"
 )
 
-// Match reports whether input matches a wildcard pattern.
-//
-// Wildcards:
-//   - `*` matches any sequence of characters (including `/`)
-//   - `?` matches exactly one character
-//
-// A trailing ` *` (space + wildcard) is treated as optional, so `cat *`
-// matches both `cat` and `cat file.txt`. This mirrors the opencode
-// wildcard matcher used for command and path permission patterns.
+
 func Match(input, pattern string) bool {
 	normalized := strings.ReplaceAll(input, "\\", "/")
 

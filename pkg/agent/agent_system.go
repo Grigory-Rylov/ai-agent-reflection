@@ -4,20 +4,16 @@ import (
 	"sort"
 )
 
-// ============================================================
-// Agent System — поддержка ролей агентов как в opencode
-// ============================================================
 
-// AgentMode определяет в каком режиме может работать агент
 type AgentMode string
 
 const (
-	AgentModePrimary AgentMode = "primary" // Основной агент (build, plan)
-	AgentModeSubagent AgentMode = "subagent" // Субагент (general, explore)
-	AgentModeAll     AgentMode = "all"     // Любой режим
+	AgentModePrimary AgentMode = "primary" 
+	AgentModeSubagent AgentMode = "subagent" 
+	AgentModeAll     AgentMode = "all"     
 )
 
-// AgentRole представляет роль агента
+
 type AgentRole struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
@@ -27,7 +23,7 @@ type AgentRole struct {
 	Color       string   `json:"color"`
 }
 
-// AvailableAgents возвращает доступные агенты
+
 var AvailableAgents = map[string]AgentRole{
 	"build": {
 		Name: "build",
@@ -76,7 +72,7 @@ var AvailableAgents = map[string]AgentRole{
 	},
 }
 
-// GetAgent возвращает информацию об агенте
+
 func GetAgent(name string) (*AgentRole, bool) {
 	agent, exists := AvailableAgents[name]
 	if !exists {
@@ -85,7 +81,7 @@ func GetAgent(name string) (*AgentRole, bool) {
 	return &agent, true
 }
 
-// ListAgents возвращает список доступных агентов
+
 func ListAgents(modeFilter AgentMode) []string {
 	var names []string
 	for name, role := range AvailableAgents {
@@ -98,7 +94,7 @@ func ListAgents(modeFilter AgentMode) []string {
 	return names
 }
 
-// HasPermission проверяет имеет ли роль разрешение на действие
+
 func HasPermission(role, action string, permissions []string) bool {
 	for _, perm := range permissions {
 		if perm == role || perm == action || perm == "*" {
@@ -108,7 +104,7 @@ func HasPermission(role, action string, permissions []string) bool {
 	return false
 }
 
-// GetDefaultAgent возвращает агента по умолчанию
+
 func GetDefaultAgent() string {
 	if agent, exists := AvailableAgents["build"]; exists {
 		return agent.Name

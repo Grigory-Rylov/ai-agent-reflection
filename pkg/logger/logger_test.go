@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// ============================================================
-// Тесты Logger
-// ============================================================
 
 func TestNewLogger(t *testing.T) {
 	t.Run("creates logger with default config", func(t *testing.T) {
@@ -70,7 +67,7 @@ func TestLoggerMethods(t *testing.T) {
 		logger, _ := New(DefaultConfig())
 		defer logger.Close()
 
-		// Должно завершиться без паники
+		
 		logger.InfoLog("test info message")
 	})
 
@@ -138,9 +135,9 @@ func TestRotateLogFile(t *testing.T) {
 
 		logFile := filepath.Join(dir, "app.log")
 
-		// Создаём файл размером > 1MB
+		
 		f, _ := os.Create(logFile)
-		f.Write(make([]byte, 1100*1024)) // 1.1 MB
+		f.Write(make([]byte, 1100*1024)) 
 		f.Close()
 
 		err := RotateLogFile(logFile, 1, 7)
@@ -148,7 +145,7 @@ func TestRotateLogFile(t *testing.T) {
 			t.Fatalf("expected no error, got %v", err)
 		}
 
-		// Проверяем что оригинал переименован
+		
 		_, err = os.Stat(logFile)
 		if err == nil {
 			t.Error("expected original file to be renamed")
@@ -161,17 +158,17 @@ func TestRotateLogFile(t *testing.T) {
 
 		logFile := filepath.Join(dir, "app.log")
 
-		// Создаём маленький файл
+		
 		f, _ := os.Create(logFile)
 		f.WriteString("small")
 		f.Close()
 
-		err := RotateLogFile(logFile, 10, 7) // 10MB limit
+		err := RotateLogFile(logFile, 10, 7) 
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
 
-		// Оригинальный файл должен остаться
+		
 		_, err = os.Stat(logFile)
 		if err != nil {
 			t.Error("expected original file to remain")
@@ -186,7 +183,7 @@ func TestNewLoggerRotatesInsteadOfTruncating(t *testing.T) {
 
 		logFile := filepath.Join(dir, "debug.log")
 		f, _ := os.Create(logFile)
-		f.Write(make([]byte, 6*1024*1024)) // 6MB
+		f.Write(make([]byte, 6*1024*1024)) 
 		f.Close()
 
 		config := DefaultConfig()
@@ -273,9 +270,6 @@ func TestGetStartTime(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Вспомогательные функции
-// ============================================================
 
 func setupTempDir(t *testing.T) string {
 	dir, err := os.MkdirTemp("", "logger_test_*")

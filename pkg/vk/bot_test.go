@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// ============================================================
-// Тесты VKBotClient
-// ============================================================
 
 func TestNewBotClient(t *testing.T) {
 	t.Run("creates client with valid token", func(t *testing.T) {
@@ -34,14 +31,14 @@ func TestSendTextMessage(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			json.NewDecoder(r.Body).Decode(&receivedRequest)
 
-			// Проверяем что запрос правильный
+			
 			if peerID, ok := receivedRequest["peer_id"].(float64); ok {
 				if int64(peerID) != 12345 {
 					t.Errorf("expected peer_id 12345, got %d", int64(peerID))
 				}
 			}
 
-			// Возвращаем успешный ответ в формате VK API
+			
 			response := map[string]interface{}{
 				"response": []map[string]interface{}{
 					{"message_id": float64(1)},
@@ -53,7 +50,7 @@ func TestSendTextMessage(t *testing.T) {
 		}))
 		defer server.Close()
 
-		// Переопределяем baseURL для тестового сервера
+		
 		client := NewBotClient("test_token")
 		client.baseURL = server.URL + "/method/"
 
@@ -99,7 +96,7 @@ func TestSendMessageWithSplitting(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestCount++
 			if requestCount >= 2 {
-				// Возвращаем успешный ответ для всех частей в формате VK API
+				
 				response := map[string]interface{}{
 					"response": []map[string]interface{}{
 						{"message_id": float64(requestCount)},
@@ -110,7 +107,7 @@ func TestSendMessageWithSplitting(t *testing.T) {
 				json.NewEncoder(w).Encode(response)
 				return
 			}
-			// Первый запрос — пустой ответ
+			
 			w.WriteHeader(http.StatusOK)
 		}))
 		defer server.Close()
@@ -118,7 +115,7 @@ func TestSendMessageWithSplitting(t *testing.T) {
 		client := NewBotClient("test_token")
 		client.baseURL = server.URL + "/method/"
 
-		// Длинное сообщение (> 2000 символов)
+		
 		longText := ""
 		for i := 0; i < 100; i++ {
 			longText += "This is a test line for splitting.\n"
@@ -126,7 +123,7 @@ func TestSendMessageWithSplitting(t *testing.T) {
 
 		_, _ = client.SendMessage(12345, longText)
 
-		// Должно быть отправлено несколько сообщений
+		
 		if requestCount < 2 {
 			t.Errorf("expected multiple requests for long message, got %d", requestCount)
 		}
@@ -137,7 +134,7 @@ func TestSplitText(t *testing.T) {
 	t.Run("splits text into parts", func(t *testing.T) {
 		client := NewBotClient("test_token")
 
-		// Создаём текст длиной > maxLength
+		
 		longText := ""
 		for i := 0; i < 50; i++ {
 			longText += "Test line " + string(rune('a'+i%26)) + "\n"
@@ -179,13 +176,13 @@ func TestCreateQuestionKeyboard(t *testing.T) {
 			t.Fatal("keyboard should not be nil")
 		}
 
-		// Проверяем что inline = false
+		
 		inline, ok := keyboard["inline"].(bool)
 		if !ok || inline {
 			t.Error("expected inline to be false")
 		}
 
-		// Проверяем кнопки
+		
 		buttons, ok := keyboard["buttons"].([][]map[string]interface{})
 		if !ok {
 			t.Fatal("expected buttons to be [][]map[string]interface{}")
@@ -266,9 +263,9 @@ func TestParseMessageNewUpdate(t *testing.T) {
 	})
 
 	t.Run("falls back to top-level message_id when message.id missing", func(t *testing.T) {
-		// Bots Long Poll: object.message_id + object.message, где message.id
-		// может отсутствовать. Без фолбэка id=0 → fetchFullMessages пропускает
-		// сообщение → getById не вызывается → аттачи не скачиваются.
+		
+		
+		
 		object := map[string]interface{}{
 			"message_id": float64(987654),
 			"message": map[string]interface{}{

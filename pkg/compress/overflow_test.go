@@ -4,9 +4,7 @@ import (
 	"testing"
 )
 
-// TestUsable_ModelLimitInput проверяет что Usable поддерживает model.limit.input
-// отдельно от context, как в opencode overflow.ts:
-//   model.limit.input ? max(0, input - reserved) : max(0, context - maxOutputTokens)
+
 func TestUsable_ModelLimitInput(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -20,21 +18,21 @@ func TestUsable_ModelLimitInput(t *testing.T) {
 			contextLimit: 200_000,
 			inputLimit:   0,
 			reserved:     nil,
-			want:         168_000, // 200000 - OUTPUT_TOKEN_MAX(32000)
+			want:         168_000, 
 		},
 		{
 			name:         "with input limit uses input minus reserved",
 			contextLimit: 200_000,
 			inputLimit:   150_000,
 			reserved:     nil,
-			want:         130_000, // 150000 - 20000
+			want:         130_000, 
 		},
 		{
 			name:         "custom reserved with input limit",
 			contextLimit: 200_000,
 			inputLimit:   150_000,
 			reserved:     intPtr(30_000),
-			want:         120_000, // 150000 - 30000
+			want:         120_000, 
 		},
 		{
 			name:         "zero context returns 0",
@@ -48,7 +46,7 @@ func TestUsable_ModelLimitInput(t *testing.T) {
 			contextLimit: 200_000,
 			inputLimit:   10_000,
 			reserved:     intPtr(30_000),
-			want:         0, // max(0, 10000 - 30000) = 0
+			want:         0, 
 		},
 	}
 
@@ -63,8 +61,7 @@ func TestUsable_ModelLimitInput(t *testing.T) {
 	}
 }
 
-// TestIsOverflow_ProviderTokens проверяет что IsOverflow учитывает
-// provider-reported tokens (total || input+output+cache), как в opencode.
+
 func TestIsOverflow_ProviderTokens(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -78,28 +75,28 @@ func TestIsOverflow_ProviderTokens(t *testing.T) {
 			contextLimit: 200_000,
 			inputLimit:   0,
 			tokens:       ProviderTokens{Total: 190_000},
-			wantOverflow: true, // 190000 >= usable(168000)
+			wantOverflow: true, 
 		},
 		{
 			name:         "total tokens under limit",
 			contextLimit: 200_000,
 			inputLimit:   0,
 			tokens:       ProviderTokens{Total: 100_000},
-			wantOverflow: false, // 100000 < 168000
+			wantOverflow: false, 
 		},
 		{
 			name:         "total 0 falls back to input+output",
 			contextLimit: 200_000,
 			inputLimit:   0,
 			tokens:       ProviderTokens{Input: 150_000, Output: 10_000},
-			wantOverflow: false, // 160000 < 168000
+			wantOverflow: false, 
 		},
 		{
 			name:         "input+output+cache exceeds limit",
 			contextLimit: 200_000,
 			inputLimit:   0,
 			tokens:       ProviderTokens{Input: 150_000, Output: 30_000, CacheRead: 5_000},
-			wantOverflow: true, // 185000 >= 168000
+			wantOverflow: true, 
 		},
 	}
 

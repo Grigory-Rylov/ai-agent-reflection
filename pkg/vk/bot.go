@@ -14,25 +14,20 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 )
 
-// ============================================================
-// Модели данных VK Bot API (согласно Python-референсу)
-// ============================================================
 
-// LongPollServerResponse — ответ от groups.getLongPollServer
 type LongPollServerResponse struct {
 	Server string `json:"server"`
 	Key    string `json:"key"`
 	Ts     string `json:"ts"`
 }
 
-// VKAttachment — аттач в сообщении VK
+
 type VKAttachment struct {
 	Type string                 `json:"type"`
 	Raw  map[string]interface{} `json:"-"`
 }
 
-// UnmarshalJSON implements custom JSON unmarshaling for VKAttachment.
-// Extracts "type" and stores all other fields in Raw.
+
 func (a *VKAttachment) UnmarshalJSON(data []byte) error {
 	var raw map[string]interface{}
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -43,7 +38,7 @@ func (a *VKAttachment) UnmarshalJSON(data []byte) error {
 		a.Type = typ
 	}
 
-	// Copy all fields except "type" into Raw
+	
 	a.Raw = make(map[string]interface{})
 	for k, v := range raw {
 		if k != "type" {
@@ -54,7 +49,7 @@ func (a *VKAttachment) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// ToRaw reconstructs the raw map with type + all Raw fields.
+
 func (a *VKAttachment) ToRaw() map[string]interface{} {
 	result := make(map[string]interface{})
 	result["type"] = a.Type
@@ -64,14 +59,14 @@ func (a *VKAttachment) ToRaw() map[string]interface{} {
 	return result
 }
 
-// DownloadedAttachment — результат скачанного аттача
+
 type DownloadedAttachment struct {
 	Type     string
 	Path     string
 	Filename string
 }
 
-// VKMessage — сообщение из VK Long Poll
+
 type VKMessage struct {
 	ID          int64            `json:"id"`
 	PeerID      int64            `json:"peer_id"`
@@ -79,21 +74,17 @@ type VKMessage struct {
 	Date        int64            `json:"date"`
 	Text        string           `json:"text"`
 	Payload     string           `json:"payload,omitempty"`
-	EventID     string           `json:"event_id,omitempty"` // для message_event callback-кнопок
+	EventID     string           `json:"event_id,omitempty"` 
 	Attachments []VKAttachment   `json:"attachments,omitempty"`
 }
 
-// APIErrorResponse — ошибка VK API
+
 type APIErrorResponse struct {
 	ErrorCode    int    `json:"error_code"`
 	ErrorMessage string `json:"error_msg"`
 }
 
-// ============================================================
-// VKBotClient — клиент для VK Bot API
-// ============================================================
 
-// BotClient работает с VK Bot API
 type BotClient struct {
 	token      string
 	apiVersion string
@@ -102,11 +93,7 @@ type BotClient struct {
 	groupID    int64
 }
 
-// ============================================================
-// Инициализация
-// ============================================================
 
-// NewBotClient создаёт новый клиент VK Bot API
 func NewBotClient(token string) *BotClient {
 	return &BotClient{
 		token:      token,
@@ -118,16 +105,11 @@ func NewBotClient(token string) *BotClient {
 	}
 }
 
-// ============================================================
-// Внутренние методы
-// ============================================================
 
-// doRequestPOST выполняет POST запрос к VK API (для отправки сообщений)
-// VK API messages.send ожидает form-data в теле запроса
 func (c *BotClient) doRequestPOST(endpoint string, params map[string]interface{}) ([]byte, error) {
 	endpointURL := fmt.Sprintf("%s%s", c.baseURL, endpoint)
 
-	// Формируем form-data тело (как в питоне)
+	
 	body := &bytes.Buffer{}
 	for k, v := range params {
 		if body.Len() > 0 {
@@ -137,7 +119,7 @@ func (c *BotClient) doRequestPOST(endpoint string, params map[string]interface{}
 		body.WriteString(url.QueryEscape(k) + "=" + url.QueryEscape(val))
 	}
 
-	// Отправляем POST запрос с form-data телом
+	
 	req, err := http.NewRequest("POST", endpointURL, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -159,7 +141,7 @@ func (c *BotClient) doRequestPOST(endpoint string, params map[string]interface{}
 		return nil, fmt.Errorf("HTTP error: %d, body: %s", resp.StatusCode, string(responseBody[:min(500, len(responseBody))]))
 	}
 
-	// Проверяем на наличие API ошибки
+	
 	var apiError struct {
 		Error APIErrorResponse `json:"error"`
 	}
@@ -170,11 +152,11 @@ func (c *BotClient) doRequestPOST(endpoint string, params map[string]interface{}
 	return responseBody, nil
 }
 
-// doRequestGET выполняет GET запрос к VK API (для получения данных)
+
 func (c *BotClient) doRequestGET(endpoint string, params map[string]interface{}) ([]byte, error) {
 	reqURL := fmt.Sprintf("%s%s", c.baseURL, endpoint)
 
-	// Добавляем access_token и v как URL query параметры
+	
 	query := "access_token=" + c.token + "&v=" + c.apiVersion
 
 	for k, v := range params {
@@ -202,7 +184,7 @@ func (c *BotClient) doRequestGET(endpoint string, params map[string]interface{})
 		return nil, fmt.Errorf("HTTP error: %d", resp.StatusCode)
 	}
 
-	// Проверяем на наличие API ошибки
+	
 	var apiError struct {
 		Error APIErrorResponse `json:"error"`
 	}
@@ -213,7 +195,7 @@ func (c *BotClient) doRequestGET(endpoint string, params map[string]interface{})
 	return responseBody, nil
 }
 
-// formatValue конвертирует значение в строку
+
 func formatValue(v interface{}) string {
 	if f, ok := v.(float64); ok && f == float64(int64(f)) {
 		return fmt.Sprintf("%.0f", f)
@@ -221,11 +203,7 @@ func formatValue(v interface{}) string {
 	return fmt.Sprintf("%v", v)
 }
 
-// ============================================================
-// Long Polling
-// ============================================================
 
-// ensureGroupID определяет идентификатор сообщества из токена.
 func (c *BotClient) ensureGroupID() error {
 	if c.groupID != 0 {
 		return nil
@@ -254,7 +232,7 @@ func (c *BotClient) ensureGroupID() error {
 	return nil
 }
 
-// GetLongPollServer получает параметры Bots Long Poll сервера.
+
 func (c *BotClient) GetLongPollServer() (string, string, int64, error) {
 	if err := c.ensureGroupID(); err != nil {
 		return "", "", 0, err
@@ -279,10 +257,7 @@ func (c *BotClient) GetLongPollServer() (string, string, int64, error) {
 	return response.Response.Server, response.Response.Key, toInt64(response.Response.Ts), nil
 }
 
-// CheckUpdates проверяет обновления через Bots Long Poll API.
-// События приходят как JSON-объекты {"type", "object", "group_id"}:
-//   - "message_new"    — object.message содержит сообщение
-//   - "message_event"  — object содержит event_id/payload от callback-кнопок
+
 func (c *BotClient) CheckUpdates(ctx context.Context, server, key string, ts int64) ([]VKMessage, int64, error) {
 	lpURL := fmt.Sprintf("%s?act=a_check&key=%s&ts=%d&wait=25", server, key, ts)
 
@@ -301,7 +276,7 @@ func (c *BotClient) CheckUpdates(ctx context.Context, server, key string, ts int
 		return nil, ts, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Парсим ответ
+	
 	var result struct {
 		Failed  int         `json:"failed"`
 		Ts      interface{} `json:"ts"`
@@ -333,14 +308,14 @@ func (c *BotClient) CheckUpdates(ctx context.Context, server, key string, ts int
 	return messages, toInt64(result.Ts), nil
 }
 
-// lpUpdate — одно событие Bots Long Poll.
+
 type lpUpdate struct {
 	Type    string                 `json:"type"`
 	Object  map[string]interface{} `json:"object"`
 	GroupID int64                  `json:"group_id"`
 }
 
-// parseMessageNewUpdate извлекает VKMessage из object события message_new.
+
 func parseMessageNewUpdate(object map[string]interface{}) VKMessage {
 	raw, ok := object["message"].(map[string]interface{})
 	if !ok {
@@ -351,11 +326,11 @@ func parseMessageNewUpdate(object map[string]interface{}) VKMessage {
 		return VKMessage{}
 	}
 
-	// Bots Long Poll отдаёт message_new как object.message_id + object.message,
-	// причём message.id может отсутствовать (частичное сообщение). Тогда
-	// берём id из верхнеуровневого message_id — иначе fetchFullMessages
-	// пропускает сообщение (id=0) и getById не вызывается, и аттачи не
-	// скачиваются (путь к файлу не попадает в промпт).
+	
+	
+	
+	
+	
 	id := toInt64(raw["id"])
 	if id == 0 {
 		id = toInt64(object["message_id"])
@@ -384,7 +359,7 @@ func parseMessageNewUpdate(object map[string]interface{}) VKMessage {
 	return msg
 }
 
-// parseMessageEventUpdate извлекает VKMessage из object события message_event.
+
 func parseMessageEventUpdate(object map[string]interface{}) VKMessage {
 	var payloadStr string
 	switch p := object["payload"].(type) {
@@ -406,7 +381,7 @@ func parseMessageEventUpdate(object map[string]interface{}) VKMessage {
 	}
 }
 
-// toInt64 извлекает int64 из числа или строки (ts в long poll приходит строкой).
+
 func toInt64(v interface{}) int64 {
 	switch n := v.(type) {
 	case float64:
@@ -427,12 +402,12 @@ func toString(v interface{}) string {
 }
 
 func extractMessageID(response interface{}) (int64, error) {
-	// Формат 1: { "response": 12345 } — просто число
+	
 	if msgID, ok := response.(float64); ok {
 		return int64(msgID), nil
 	}
 
-	// Формат 2: { "response": [{ "message_id": 12345 }] } — массив с объектом
+	
 	if arr, ok := response.([]interface{}); ok {
 		if len(arr) > 0 {
 			if msgMap, ok := arr[0].(map[string]interface{}); ok {
@@ -443,7 +418,7 @@ func extractMessageID(response interface{}) (int64, error) {
 		}
 	}
 
-	// Формат 3: { "response": { "message_id": 12345 } } — объект
+	
 	if msgMap, ok := response.(map[string]interface{}); ok {
 		if msgID, ok := msgMap["message_id"].(float64); ok {
 			return int64(msgID), nil
@@ -453,17 +428,13 @@ func extractMessageID(response interface{}) (int64, error) {
 	return 0, fmt.Errorf("unexpected response format: %v", response)
 }
 
-// ============================================================
-// Отправка сообщений
-// ============================================================
 
-// SendMessage отправляет текстовое сообщение (с авто-дроблением длинных)
 func (c *BotClient) SendMessage(peerID int64, text string) (int64, error) {
 	if text == "" {
 		return 0, fmt.Errorf("empty message text")
 	}
 
-	// Если сообщение длинное — дробим на части
+	
 	if len(text) > 2000 {
 		parts := c.splitText(text, 2000)
 		lastMsgID := int64(0)
@@ -476,7 +447,7 @@ func (c *BotClient) SendMessage(peerID int64, text string) (int64, error) {
 			}
 			lastMsgID = msgID
 
-			// Пауза между сообщениями
+			
 			if i < len(parts)-1 {
 				time.Sleep(300 * time.Millisecond)
 			}
@@ -487,12 +458,12 @@ func (c *BotClient) SendMessage(peerID int64, text string) (int64, error) {
 	return c.sendSingleMessage(peerID, text, "", nil)
 }
 
-// SendMessageWithKeyboard отправляет сообщение с клавиатурой
+
 func (c *BotClient) SendMessageWithKeyboard(peerID int64, text string, keyboard map[string]interface{}) (int64, error) {
 	return c.sendSingleMessage(peerID, text, "", keyboard)
 }
 
-// sendSingleMessage отправляет одно сообщение
+
 func (c *BotClient) sendSingleMessage(peerID int64, text, attachment string, keyboard map[string]interface{}) (int64, error) {
 	params := map[string]interface{}{
 		"peer_id":   peerID,
@@ -516,8 +487,8 @@ func (c *BotClient) sendSingleMessage(peerID int64, text, attachment string, key
 		return 0, err
 	}
 
-	// VK messages.send возвращает: { "response": 12345 }
-	// Иногда: { "response": [{ "message_id": 12345 }] }
+	
+	
 	var fullResponse struct {
 		Response interface{} `json:"response"`
 	}
@@ -525,11 +496,11 @@ func (c *BotClient) sendSingleMessage(peerID int64, text, attachment string, key
 		return 0, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	// Извлекаем message_id из ответа
+	
 	return extractMessageID(fullResponse.Response)
 }
 
-// EditMessage редактирует существующее сообщение
+
 func (c *BotClient) EditMessage(peerID, messageID int64, text string, keyboard map[string]interface{}) error {
 	params := map[string]interface{}{
 		"peer_id":      peerID,
@@ -563,11 +534,7 @@ func (c *BotClient) SendMessageEventAnswer(eventID string, userID, peerID int64,
 	return err
 }
 
-// ============================================================
-// Получение сообщений
-// ============================================================
 
-// GetMessagesByID получает сообщения по ID
 func (c *BotClient) GetMessagesByID(messageIDs []int64) ([]VKMessage, error) {
 	idsStr := ""
 	for i, id := range messageIDs {
@@ -610,11 +577,7 @@ func truncateForLog(data []byte, max int) string {
 	return string(data[:max]) + "..."
 }
 
-// ============================================================
-// Утилиты для работы с текстом
-// ============================================================
 
-// splitText разбивает текст на части по строкам
 func (c *BotClient) splitText(text string, maxLength int) []string {
 	safeLength := maxLength - 20
 
@@ -654,7 +617,7 @@ func (c *BotClient) splitText(text string, maxLength int) []string {
 	return parts
 }
 
-// splitLines разбивает текст на строки
+
 func splitLines(text string) []string {
 	lines := []string{}
 	currentLine := ""
@@ -672,11 +635,7 @@ func splitLines(text string) []string {
 	return lines
 }
 
-// ============================================================
-// Thinking Messages
-// ============================================================
 
-// SendThinking отправляет сообщение о "размышлении"
 func (c *BotClient) SendThinking(peerID int64, content string) (int64, error) {
 	if content == "" {
 		return 0, fmt.Errorf("empty thinking content")
@@ -685,11 +644,7 @@ func (c *BotClient) SendThinking(peerID int64, content string) (int64, error) {
 	return c.SendMessage(peerID, content)
 }
 
-// ============================================================
-// Клавиатуры
-// ============================================================
 
-// CreateQuestionKeyboard создаёт клавиатуру для вопросов
 func CreateQuestionKeyboard(header string, questionText string, options []map[string]string) map[string]interface{} {
 	buttons := [][]map[string]interface{}{}
 	for _, opt := range options {
@@ -713,7 +668,7 @@ func CreateQuestionKeyboard(header string, questionText string, options []map[st
 	return keyboard
 }
 
-// CreateKeyboard создает клавиатуру с указанными кнопками
+
 func CreateKeyboard(buttons [][]map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{
 		"inline": false,
@@ -721,7 +676,7 @@ func CreateKeyboard(buttons [][]map[string]interface{}) map[string]interface{} {
 	}
 }
 
-// CreateCommandKeyboard создаёт клавиатуру с командами бота
+
 func CreateCommandKeyboard() map[string]interface{} {
 	return map[string]interface{}{
 		"inline": false,
@@ -742,7 +697,7 @@ func CreateCommandKeyboard() map[string]interface{} {
 	}
 }
 
-// CreatePermissionKeyboard creates a keyboard for permission requests with Allow/Always/Deny
+
 func CreatePermissionKeyboard() map[string]interface{} {
 	return map[string]interface{}{
 		"inline": false,
@@ -758,9 +713,9 @@ func CreatePermissionKeyboard() map[string]interface{} {
 	}
 }
 
-	// CreateModelsKeyboard создаёт inline-клавиатуру для выбора модели.
-	// Кнопки типа callback — при нажатии VK шлёт message_event с payload,
-	// который обрабатывается в CheckUpdates и превращается в команду /r.
+	
+	
+	
 	func CreateModelsKeyboard(models []string, currentAlias string) map[string]interface{} {
 		const buttonsPerRow = 2
 		var rows [][]map[string]interface{}

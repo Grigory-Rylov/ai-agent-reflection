@@ -15,12 +15,9 @@ import (
 	"time"
 )
 
-// ============================================================
-// File globals & helpers for all tools
-// ============================================================
 
 var (
-	// WorkingDir — рабочая директория для относительных путей
+	
 	WorkingDir string
 )
 
@@ -31,15 +28,14 @@ func init() {
 	}
 }
 
-// SetWorkingDir изменяет рабочую директорию для инструментов
+
 func SetWorkingDir(dir string) {
 	if dir != "" {
 		WorkingDir = dir
 	}
 }
 
-// resolvePath приводит путь к абсолютному, защищая от path traversal
-// и проверяя доступ к файловой системе.
+
 func resolvePath(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("path is empty")
@@ -47,14 +43,14 @@ func resolvePath(path string) (string, error) {
 
 	cleaned := filepath.Clean(path)
 
-	// Если путь относительный, делаем его абсолютным относительно WorkingDir
+	
 	if !filepath.IsAbs(cleaned) {
 		cleaned = filepath.Join(WorkingDir, cleaned)
 	}
 
 	cleaned = filepath.Clean(cleaned)
 
-	// Проверяем доступ к файлу через глобальный контроллер доступа
+	
 	if err := CheckPathAllowed(cleaned); err != nil {
 		return "", err
 	}
@@ -62,16 +58,13 @@ func resolvePath(path string) (string, error) {
 	return cleaned, nil
 }
 
-// parseIntParam парсит строковый параметр в int
+
 func parseIntParam(s string) (int, error) {
 	var result int
 	_, err := fmt.Sscanf(s, "%d", &result)
 	return result, err
 }
 
-// ============================================================
-// File Read Tool
-// ============================================================
 
 type FileReadTool struct{}
 
@@ -106,9 +99,9 @@ func (t *FileReadTool) Execute(ctx context.Context, inputs map[string]string) (T
 		return ToolResult{Success: false, Error: fmt.Sprintf("Invalid path: %v", err)}, nil
 	}
 
-	// Парсим offset и limit
+	
 	offset := 0
-	limit := 1000 // дефолт
+	limit := 1000 
 
 	if offsetStr, ok := inputs["offset"]; ok && offsetStr != "" {
 		if o, err := parseIntParam(offsetStr); err == nil && o >= 0 {
@@ -118,13 +111,13 @@ func (t *FileReadTool) Execute(ctx context.Context, inputs map[string]string) (T
 	if limitStr, ok := inputs["limit"]; ok && limitStr != "" {
 		if l, err := parseIntParam(limitStr); err == nil && l > 0 {
 			if l > 5000 {
-				l = 5000 // максимум
+				l = 5000 
 			}
 			limit = l
 		}
 	}
 
-	// Открываем файл
+	
 	file, err := os.Open(resolvedPath)
 	if err != nil {
 		return ToolResult{
@@ -134,7 +127,7 @@ func (t *FileReadTool) Execute(ctx context.Context, inputs map[string]string) (T
 	}
 	defer file.Close()
 
-	// Получаем размер файла
+	
 	stat, err := file.Stat()
 	if err != nil {
 		return ToolResult{
@@ -144,7 +137,7 @@ func (t *FileReadTool) Execute(ctx context.Context, inputs map[string]string) (T
 	}
 	totalSize := stat.Size()
 
-	// Читаем по строкам с offset
+	
 	scanner := bufio.NewScanner(file)
 	var lines []string
 	lineNum := 0
@@ -157,7 +150,7 @@ func (t *FileReadTool) Execute(ctx context.Context, inputs map[string]string) (T
 		}
 		lineNum++
 		if lineNum >= offset+limit {
-			// Продолжаем сканировать чтобы подсчитать totalLines
+			
 			for scanner.Scan() {
 				totalLines++
 			}
@@ -188,9 +181,6 @@ func (t *FileReadTool) Execute(ctx context.Context, inputs map[string]string) (T
 	}, nil
 }
 
-// ============================================================
-// File Write Tool
-// ============================================================
 
 type FileWriteTool struct{}
 
@@ -262,9 +252,6 @@ func (t *FileWriteTool) Execute(ctx context.Context, inputs map[string]string) (
 	}, nil
 }
 
-// ============================================================
-// Shell Execute Tool
-// ============================================================
 
 type ShellExecuteTool struct{}
 
@@ -308,12 +295,12 @@ func (t *ShellExecuteTool) Execute(ctx context.Context, inputs map[string]string
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	// Устанавливаем рабочую директорию для команды (синхронизируется из сессии)
+	
 	if WorkingDir != "" {
 		cmd.Dir = WorkingDir
 	}
 
-	// Создаём process group, чтобы убивать дочерние процессы вместе с sh
+	
 	if runtime.GOOS != "windows" {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
@@ -338,11 +325,11 @@ func (t *ShellExecuteTool) Execute(ctx context.Context, inputs map[string]string
 			}
 		}
 	case <-execCtx.Done():
-		// Таймаут — убиваем всю process group (sh + дочерние процессы)
+		
 		if cmd.Process != nil {
 			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // nolint: errcheck
 		}
-		<-done // ждём фактического завершения
+		<-done 
 		return ToolResult{
 			Success: false,
 			Error:   fmt.Sprintf("Command timed out after %d seconds", timeout),
@@ -361,9 +348,6 @@ func (t *ShellExecuteTool) Execute(ctx context.Context, inputs map[string]string
 	}, nil
 }
 
-// ============================================================
-// Time Get Tool
-// ============================================================
 
 type TimeGetTool struct{}
 
@@ -396,9 +380,6 @@ func (t *TimeGetTool) Execute(ctx context.Context, inputs map[string]string) (To
 	}, nil
 }
 
-// ============================================================
-// Directory List Tool
-// ============================================================
 
 type DirListTool struct{}
 
@@ -467,9 +448,6 @@ func (t *DirListTool) Execute(ctx context.Context, inputs map[string]string) (To
 	}, nil
 }
 
-// ============================================================
-// Web Fetch Tool
-// ============================================================
 
 type WebFetchTool struct{}
 
@@ -503,7 +481,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, inputs map[string]string) (T
 		method = m
 	}
 
-	// Для GitHub URL пытаемся получить raw-контент
+	
 	fetchURL := githubToRawURL(urlStr)
 	if fetchURL != urlStr {
 		req, err := NewHTTPRequest(ctx, "GET", fetchURL)
@@ -533,16 +511,13 @@ func (t *WebFetchTool) Execute(ctx context.Context, inputs map[string]string) (T
 	}, nil
 }
 
-// githubToRawURL конвертирует github.com URL в raw.githubusercontent.com
-// https://github.com/user/repo → https://raw.githubusercontent.com/user/repo/master/README.md
-// https://github.com/user/repo/tree/master → https://raw.githubusercontent.com/user/repo/master/README.md
-// https://github.com/user/repo/blob/master/path/file.md → https://raw.githubusercontent.com/user/repo/master/path/file.md
+
 func githubToRawURL(url string) string {
 	if !strings.Contains(url, "github.com/") {
 		return url
 	}
 
-	// Убираем протокол и домен
+	
 	url = strings.TrimPrefix(url, "https://")
 	url = strings.TrimPrefix(url, "http://")
 	url = strings.TrimPrefix(url, "github.com/")
@@ -557,11 +532,11 @@ func githubToRawURL(url string) string {
 	repo = strings.TrimSuffix(repo, ".git")
 
 	if len(parts) == 2 {
-		// Просто /user/repo → /master/README.md
+		
 		return fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/master/README.md", user, repo)
 	}
 
-	// /user/repo/tree/branch  или /user/repo/blob/branch/path
+	
 	branch := "master"
 	path := "README.md"
 	if len(parts) >= 4 {
@@ -577,9 +552,6 @@ func githubToRawURL(url string) string {
 	return url
 }
 
-// ============================================================
-// Web Search Tool
-// ============================================================
 
 type WebSearchTool struct{}
 
@@ -639,7 +611,7 @@ func urlQueryEscape(s string) string {
 func parseDuckDuckGoResults(html string) []map[string]string {
 	var results []map[string]string
 
-	// DuckDuckGo HTML results use class="result" divs
+	
 	resultMarkers := strings.Split(html, `<div class="result"`)
 	for i := 1; i < len(resultMarkers); i++ {
 		block := resultMarkers[i]
@@ -654,13 +626,13 @@ func parseDuckDuckGoResults(html string) []map[string]string {
 		}
 
 		result["snippet"] = extractBetween(block, `class="result__snippet">`, `</`) + extractBetween(block, `class="result__snippet"`, `</`)
-		// try different snippet pattern
+		
 		if result["snippet"] == "" {
 			result["snippet"] = extractBetween(block, `result__snippet">`, `</a>`)
 		}
 		result["snippet"] = stripHTMLTags(result["snippet"])
 
-		// Skip if completely empty
+		
 		if result["title"] == "" && result["snippet"] == "" {
 			continue
 		}
@@ -716,9 +688,6 @@ func htmlUnescape(s string) string {
 	return s
 }
 
-// ============================================================
-// Glob Tool — find files by pattern
-// ============================================================
 
 type GlobTool struct{}
 
@@ -777,9 +746,6 @@ func (t *GlobTool) Execute(ctx context.Context, inputs map[string]string) (ToolR
 	}, nil
 }
 
-// ============================================================
-// Grep Tool — search content in files
-// ============================================================
 
 type GrepTool struct{}
 
@@ -877,9 +843,6 @@ func (t *GrepTool) Execute(ctx context.Context, inputs map[string]string) (ToolR
 	}, nil
 }
 
-// ============================================================
-// Calc Tool — evaluate math expressions
-// ============================================================
 
 type CalcTool struct{}
 
@@ -924,9 +887,6 @@ func (t *CalcTool) Execute(ctx context.Context, inputs map[string]string) (ToolR
 	}, nil
 }
 
-// ============================================================
-// Edit Tool — edit file content with search/replace
-// ============================================================
 
 type EditTool struct{}
 

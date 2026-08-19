@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// ============================================================
-// Тесты ContextSize
-// ============================================================
 
 func TestContextSizeAddCompletion(t *testing.T) {
 	t.Run("adds completion tokens correctly", func(t *testing.T) {
@@ -112,9 +109,6 @@ func TestMessageString(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Mock для тестирования
-// ============================================================
 
 type mockTokenizer struct {
 	count int

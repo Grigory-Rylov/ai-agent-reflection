@@ -12,16 +12,10 @@ import (
 	"time"
 )
 
-// TestStreamingCancellationInterruptsRead проверяет, что отмена контекста во
-// время стриминга реально прерывает чтение ответа LLM и ProcessMessage
-// возвращается, а не «висит» на зависшем стриме.
-//
-// Сценарий: LLM-сервер шлёт неполную SSE-строку (без финального \n) и
-// замолкает — bufio.ReadSlice блокируется в ожидании конца строки. Отмена
-// контекста (как это делает /clear) должна прервать чтение и вернуть ошибку.
+
 func TestStreamingCancellationInterruptsRead(t *testing.T) {
-	// started закрывается, когда сервер получил запрос и отправил неполную
-	// строку — значит клиент уже заблокирован в ReadSlice.
+	
+	
 	started := make(chan struct{})
 	release := make(chan struct{})
 
@@ -32,11 +26,11 @@ func TestStreamingCancellationInterruptsRead(t *testing.T) {
 			t.Error("expected http.Flusher")
 			return
 		}
-		// Неполная data-строка без \n — ReadSlice будет ждать конец строки.
+		
 		io.WriteString(w, `data: {"choices":[{"delta":{"content":"partial`)
 		flusher.Flush()
 		close(started)
-		<-release // зависаем, пока тест не отпустит
+		<-release 
 	}))
 	defer func() {
 		close(release)
@@ -63,13 +57,13 @@ func TestStreamingCancellationInterruptsRead(t *testing.T) {
 		done <- err
 	}()
 
-	// Ждём, пока запрос дойдёт до зависшего чтения.
+	
 	select {
 	case <-started:
 	case <-time.After(2 * time.Second):
 		t.Fatal("server did not receive the streaming request")
 	}
-	// Даём ReadSlice заблокироваться.
+	
 	time.Sleep(50 * time.Millisecond)
 
 	cancel()
@@ -84,10 +78,7 @@ func TestStreamingCancellationInterruptsRead(t *testing.T) {
 	}
 }
 
-// TestStreamAndCollectCancelNotRetryableNoMislabel проверяет, что отмена
-// контекста при отправке запроса (как это делает /clear) НЕ маскируется под
-// «LLM server was shutdown or unreachable» и НЕ считается retryable-ошибкой:
-// возвращается исходный context.Canceled без повторных попыток.
+
 func TestStreamAndCollectCancelNotRetryableNoMislabel(t *testing.T) {
 	var calls int32
 	started := make(chan struct{})
@@ -96,7 +87,7 @@ func TestStreamAndCollectCancelNotRetryableNoMislabel(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&calls, 1)
 		close(started)
-		<-release // держим соединение: клиент заблокирован в Do()
+		<-release 
 	}))
 	defer func() {
 		close(release)
@@ -121,7 +112,7 @@ func TestStreamAndCollectCancelNotRetryableNoMislabel(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("server did not receive the request")
 	}
-	cancel() // отмена в полёте — как при /clear
+	cancel() 
 
 	var err error
 	select {
@@ -143,9 +134,7 @@ func TestStreamAndCollectCancelNotRetryableNoMislabel(t *testing.T) {
 	}
 }
 
-// TestStreamAndCollectCancelDuringRetryDelayReturnsCanceled проверяет, что если
-// контекст отменён во время паузы перед ретраем серверной ошибки, возвращается
-// сам context.Canceled, а не «LLM request exhausted: <server err>».
+
 func TestStreamAndCollectCancelDuringRetryDelayReturnsCanceled(t *testing.T) {
 	var calls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -167,7 +156,7 @@ func TestStreamAndCollectCancelDuringRetryDelayReturnsCanceled(t *testing.T) {
 		done <- err
 	}()
 
-	// Ждём первой попытки — дальше цикл уходит в паузу RetryDelay.
+	
 	deadline := time.Now().Add(2 * time.Second)
 	for atomic.LoadInt32(&calls) < 1 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
@@ -188,9 +177,7 @@ func TestStreamAndCollectCancelDuringRetryDelayReturnsCanceled(t *testing.T) {
 	}
 }
 
-// TestStreamAndCollectCancelMidStreamPartialContent проверяет, что отмена в
-// середине стрима после получения частичного контента (без finish_reason)
-// возвращает context.Canceled, а не «успех» с обрезанным ответом.
+
 func TestStreamAndCollectCancelMidStreamPartialContent(t *testing.T) {
 	var calls int32
 	started := make(chan struct{})
@@ -207,7 +194,7 @@ func TestStreamAndCollectCancelMidStreamPartialContent(t *testing.T) {
 		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"part\"}}]}\n\n")
 		flusher.Flush()
 		close(started)
-		<-release // молчим без finish_reason — клиент ждёт продолжение
+		<-release 
 	}))
 	defer func() {
 		close(release)
@@ -240,7 +227,7 @@ func TestStreamAndCollectCancelMidStreamPartialContent(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("server did not start streaming")
 	}
-	time.Sleep(50 * time.Millisecond) // даём клиенту прочитать частичный контент
+	time.Sleep(50 * time.Millisecond) 
 	cancel()
 
 	var got struct {

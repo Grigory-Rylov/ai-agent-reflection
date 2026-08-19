@@ -8,10 +8,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-// TestConvertHistoryToAPIMessages_TruncatesLargeToolOutput (п.11) проверяет,
-// что при рендере истории в API-сообщения большой tool-вывод обрезается до
-// TOOL_OUTPUT_MAX_CHARS (opencode: toModelMessagesEffect с toolOutputMaxChars),
-// а короткие tool-выводы и не-tool сообщения не трогаются.
+
 func TestConvertHistoryToAPIMessages_TruncatesLargeToolOutput(t *testing.T) {
 	large := strings.Repeat("DATA", 5000)
 	short := "ok"

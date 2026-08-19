@@ -12,12 +12,7 @@ import (
 	"time"
 )
 
-// ============================================================
-// Attachment download and formatting
-// ============================================================
 
-// GetAttachmentDownloadURL extracts download URL and filename from a VK attachment.
-// Supports types: photo, doc, audio, audio_message, sticker.
 func GetAttachmentDownloadURL(attachment map[string]interface{}) (string, string, bool) {
 	attType, _ := attachment["type"].(string)
 	if attType == "" {
@@ -45,7 +40,7 @@ func GetAttachmentDownloadURL(attachment map[string]interface{}) (string, string
 	}
 }
 
-// extractPhotoURL picks the largest photo size from sizes[] array.
+
 func extractPhotoURL(attData map[string]interface{}) (string, string, bool) {
 	sizes, _ := attData["sizes"].([]interface{})
 	if len(sizes) == 0 {
@@ -65,7 +60,7 @@ func extractPhotoURL(attData map[string]interface{}) (string, string, bool) {
 	return url, filename, url != ""
 }
 
-// sortPhotoSizes sorts photo sizes by priority: w > z > y > x > m > s.
+
 func sortPhotoSizes(sizes []interface{}) []interface{} {
 	priority := map[string]int{"s": 1, "m": 2, "x": 3, "y": 4, "z": 5, "w": 6}
 
@@ -80,7 +75,7 @@ func sortPhotoSizes(sizes []interface{}) []interface{} {
 	return sizes
 }
 
-// extractDocURL gets the document download URL and title.
+
 func extractDocURL(attData map[string]interface{}) (string, string, bool) {
 	url, _ := attData["url"].(string)
 	title, _ := attData["title"].(string)
@@ -94,7 +89,7 @@ func extractDocURL(attData map[string]interface{}) (string, string, bool) {
 	return url, filename, url != ""
 }
 
-// extractAudioMessageURL gets the voice message download URL.
+
 func extractAudioMessageURL(attData map[string]interface{}) (string, string, bool) {
 	url, _ := attData["link_mp3"].(string)
 	ext := "mp3"
@@ -109,7 +104,7 @@ func extractAudioMessageURL(attData map[string]interface{}) (string, string, boo
 	return url, filename, url != ""
 }
 
-// extractAudioURL gets the audio track download URL.
+
 func extractAudioURL(attData map[string]interface{}) (string, string, bool) {
 	url, _ := attData["url"].(string)
 	if url == "" {
@@ -128,7 +123,7 @@ func extractAudioURL(attData map[string]interface{}) (string, string, bool) {
 	return url, filename, true
 }
 
-// extractStickerURL gets the sticker image URL (last element of images[]).
+
 func extractStickerURL(attData map[string]interface{}) (string, string, bool) {
 	images, _ := attData["images"].([]interface{})
 	if len(images) == 0 {
@@ -147,15 +142,7 @@ func extractStickerURL(attData map[string]interface{}) (string, string, bool) {
 	return url, filename, url != ""
 }
 
-// ============================================================
-// Download
-// ============================================================
 
-// DownloadAttachments downloads all attachments to saveDir.
-// Creates saveDir if it doesn't exist.
-// Prepends timestamp (YYYYMMDD_HHmmSS) to each filename.
-// On individual download failure returns already-downloaded files plus
-// the error, so callers can still use the partial results.
 func DownloadAttachments(attachments []map[string]interface{}, saveDir string) ([]DownloadedAttachment, error) {
 	absDir, err := filepath.Abs(saveDir)
 	if err != nil {
@@ -194,7 +181,7 @@ func DownloadAttachments(attachments []map[string]interface{}, saveDir string) (
 	return results, firstErr
 }
 
-// downloadSingle fetches a URL and saves it to the given path.
+
 func downloadSingle(urlStr, destPath string) (DownloadedAttachment, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 
@@ -223,7 +210,7 @@ func downloadSingle(urlStr, destPath string) (DownloadedAttachment, error) {
 	}, nil
 }
 
-// splitFileName separates a filename into name and extension parts.
+
 func splitFileName(filename string) (string, string) {
 	idx := strings.LastIndex(filename, ".")
 	if idx <= 0 {
@@ -232,17 +219,13 @@ func splitFileName(filename string) (string, string) {
 	return filename[:idx], filename[idx:]
 }
 
-// sanitizeFilename keeps only safe characters in the filename.
+
 func sanitizeFilename(name string) string {
 	re := regexp.MustCompile(`[^a-zA-Z0-9._\-]`)
 	return re.ReplaceAllString(name, "_")
 }
 
-// ============================================================
-// Formatting
-// ============================================================
 
-// FormatAttachmentInfo returns a formatted summary of downloaded files.
 func FormatAttachmentInfo(downloaded []DownloadedAttachment) string {
 	if len(downloaded) == 0 {
 		return ""

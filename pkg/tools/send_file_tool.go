@@ -7,12 +7,7 @@ import (
 	"sync"
 )
 
-// ============================================================
-// send-files — отправляет файл пользователю через VK (документ)
-// ============================================================
 
-// FileSender отправляет файл peer'у и возвращает ID сообщения.
-// Реализация — vk.BotClient.UploadAndSendDocument.
 type FileSender interface {
 	UploadAndSendDocument(filePath string, peerID int64, message string) (int64, error)
 }
@@ -23,8 +18,7 @@ var (
 	sendFilePeer  int64
 )
 
-// SetSendFileDependencies устанавливает зависимости для send-files инструмента.
-// sender — реализация отправки (vk.BotClient), defaultPeerID — peer по умолчанию.
+
 func SetSendFileDependencies(sender FileSender, defaultPeerID int64) {
 	sendFileMu.Lock()
 	defer sendFileMu.Unlock()
@@ -38,7 +32,7 @@ func getSendFileDep() (FileSender, int64) {
 	return sendFileDep, sendFilePeer
 }
 
-// SendFileTool отправляет файл пользователю через VK.
+
 type SendFileTool struct{}
 
 func (t *SendFileTool) Name() string {

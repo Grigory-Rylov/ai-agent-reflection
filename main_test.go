@@ -175,7 +175,7 @@ func TestLoadConfigFileWithAgents(t *testing.T) {
 	if len(cfg.Agents) != 3 {
 		t.Errorf("expected 3 agents, got %d", len(cfg.Agents))
 	}
-	// Verify reviewer permission loaded
+	
 	reviewer := cfg.Agents["reviewer"]
 	if reviewer.Permission.GetAction("file_write") != "deny" {
 		t.Errorf("file_write: got %q, want deny", reviewer.Permission.GetAction("file_write"))
@@ -190,7 +190,7 @@ func TestInitAgentManagerWithPrompts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create test .md prompts (without frontmatter — already stripped)
+	
 	leadPrompt := filepath.Join(agentsDir, "lead.md")
 	if err := os.WriteFile(leadPrompt, []byte("You are a Lead Agent. Delegate tasks."), 0644); err != nil {
 		t.Fatal(err)
@@ -289,7 +289,7 @@ func TestInitAgentManagerWithFrontmatter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create .md with frontmatter — should be stripped by LoadMDPrompt
+	
 	mdPath := filepath.Join(agentsDir, "sample.md")
 	content := `---
 description: Sample agent
@@ -332,7 +332,7 @@ func TestInitAgentManagerMissingPromptFile(t *testing.T) {
 	log := &testLogger{}
 	am := initAgentManager(agents, "/tmp", log)
 
-	// Agent with missing prompt file should be skipped (not registered)
+	
 	_, err := am.GetAgent("missing")
 	if err == nil {
 		t.Error("expected error for agent with missing prompt file")
@@ -345,7 +345,7 @@ func TestInitAgentManagerNilAgents(t *testing.T) {
 	if am == nil {
 		t.Fatal("AgentManager should not be nil")
 	}
-	// Should still have default agents
+	
 	_, err := am.GetAgent("build")
 	if err != nil {
 		t.Errorf("default agent 'build' should exist: %v", err)
@@ -355,7 +355,7 @@ func TestInitAgentManagerNilAgents(t *testing.T) {
 type testLogger struct{}
 
 func (l *testLogger) InfoLogf(format string, args ...interface{}) {
-	// silent logger for tests
+	
 }
 
 func TestBuildQuestionTextKeepsOptions(t *testing.T) {

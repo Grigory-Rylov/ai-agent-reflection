@@ -12,13 +12,10 @@ import (
 	"unicode"
 )
 
-// ============================================================
-// HTTP Helper
-// ============================================================
 
 const maxResponseBytes = 8192
 
-// NewHTTPRequest выполняет HTTP запрос и возвращает тело ответа (макс 8KB)
+
 func NewHTTPRequest(ctx context.Context, method, url string) (string, error) {
 	client := &http.Client{
 		Timeout: 30 * time.Second,
@@ -55,17 +52,13 @@ func NewHTTPRequest(ctx context.Context, method, url string) (string, error) {
 }
 
 
-
-
-// EvaluateExpression evaluates a simple arithmetic expression
-// Supports: +, -, *, /, %, ** (power), ( ), pi, e, sin, cos, tan, sqrt, abs, round, floor, ceil
 func EvaluateExpression(expr string) (float64, error) {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return 0, fmt.Errorf("empty expression")
 	}
 
-	// Replace constants
+	
 	expr = strings.ReplaceAll(expr, "pi", fmt.Sprintf("%.15f", math.Pi))
 	expr = strings.ReplaceAll(expr, "e", fmt.Sprintf("%.15f", math.E))
 
@@ -179,13 +172,6 @@ func tokenize(expr string) ([]token, error) {
 	return tokens, nil
 }
 
-// Recursive descent parser
-// Grammar:
-//   expression = term (("+" | "-") term)*
-//   term = factor (("*" | "/" | "%") factor)*
-//   factor = unary ("**" factor)?
-//   unary = ("-" | "+") unary | primary
-//   primary = number | "(" expression ")" | func "(" expression ")"
 
 func parseExpression(tokens []token) (float64, error) {
 	result, tokens, err := parseAddSub(tokens, 0)

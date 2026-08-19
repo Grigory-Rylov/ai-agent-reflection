@@ -6,12 +6,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 )
 
-// TestRegisterTools_MergesSchemasAcrossCalls — регрессионный тест на баг:
-// RegisterTools затирал toolSchemas схемами только последнего реестра, поэтому
-// агент, которому инструменты регистрируют двумя вызовами (основные инструменты
-// + subagent/task-инструмент — как воркеру в multi-agent режиме), видел в LLM
-// только последний набор. Воркер терял shell/file и не мог ни реализовать
-// задачу, ни дойти до reviewer'а.
+
 func TestRegisterTools_MergesSchemasAcrossCalls(t *testing.T) {
 	a := NewAgent(Config{EnableTools: false})
 
@@ -20,8 +15,8 @@ func TestRegisterTools_MergesSchemasAcrossCalls(t *testing.T) {
 	mainReg.Register(&tools.FileWriteTool{})
 
 	taskReg := tools.NewRegistry()
-	// SubAgentTool требует много контекста — используем простой инструмент,
-	// чтобы проверить именно логику слияния schema в RegisterTools.
+	
+	
 	taskReg.Register(&tools.TimeGetTool{})
 
 	a.RegisterTools(mainReg)

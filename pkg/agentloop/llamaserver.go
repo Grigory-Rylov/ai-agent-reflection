@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// TestLlamaServerResult содержит результат теста llama-server
+
 type TestLlamaServerResult struct {
 	Model        string
 	ResponseTime time.Duration
@@ -18,7 +18,7 @@ type TestLlamaServerResult struct {
 	Error        error
 }
 
-// TestLlamaServer тестирует соединение с llama-server
+
 func TestLlamaServer(ctx context.Context, serverURL, model string) TestLlamaServerResult {
 	reqBody := map[string]interface{}{
 		"model": model,

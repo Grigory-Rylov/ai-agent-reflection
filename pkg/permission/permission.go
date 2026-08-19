@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Action — результат оценки правила разрешения.
+
 type Action string
 
 const (
@@ -15,22 +15,17 @@ const (
 	Ask   Action = "ask"
 )
 
-// Rule — одно правило разрешения: для какого инструмента (permission),
-// для какого паттерна (pattern) и какое действие (action) применяется.
+
 type Rule struct {
 	Permission string
 	Pattern    string
 	Action     Action
 }
 
-// Ruleset — упорядоченный набор правил. Порядок важен:
-// при оценке выигрывает последнее подходящее правило.
+
 type Ruleset []Rule
 
-// Evaluate возвращает подходящее правило для (permission, pattern).
-// Проходит по всем rulesets в порядке передачи и возвращает последнее
-// совпавшее правило (как opencode: findLast). Если ни одно правило
-// не совпало — возвращает действие "ask".
+
 func Evaluate(permission, pattern string, rulesets ...Ruleset) Rule {
 	flat := Merge(rulesets...)
 	for i := len(flat) - 1; i >= 0; i-- {
@@ -42,7 +37,7 @@ func Evaluate(permission, pattern string, rulesets ...Ruleset) Rule {
 	return Rule{Permission: permission, Pattern: "*", Action: Ask}
 }
 
-// Merge объединяет несколько rulesets в один, сохраняя порядок.
+
 func Merge(rulesets ...Ruleset) Ruleset {
 	var out Ruleset
 	for _, rs := range rulesets {
@@ -51,14 +46,7 @@ func Merge(rulesets ...Ruleset) Ruleset {
 	return out
 }
 
-// FromConfig преобразует конфигурацию вида
-//
-//	{"tool": "action"}                -> {permission: tool, pattern: "*", action}
-//	{"tool": {"pattern": "action"}}   -> правила с конкретными паттернами
-//
-// Паттерны "~" и "$HOME" раскрываются в домашнюю директорию.
-// Ключи сортируются для детерминированного порядка правил; "~" и "*"
-// при сортировке идут первыми, поэтому специфичные паттерны выигрывают.
+
 func FromConfig(cfg map[string]any) Ruleset {
 	keys := make([]string, 0, len(cfg))
 	for key := range cfg {
@@ -89,7 +77,7 @@ func FromConfig(cfg map[string]any) Ruleset {
 	return rules
 }
 
-// expand раскрывает "~/..." и "$HOME..." в абсолютный путь домашней директории.
+
 func expand(pattern string) string {
 	if pattern == "~" {
 		return os.Getenv("HOME")
@@ -106,9 +94,7 @@ func expand(pattern string) string {
 	return pattern
 }
 
-// Disabled возвращает множество инструментов, которые полностью запрещены
-// правилом deny с паттерном "*". Для edit/write/apply_patch используется
-// общее разрешение "edit", как в opencode.
+
 func Disabled(tools []string, ruleset Ruleset) map[string]bool {
 	edits := map[string]bool{"edit": true, "write": true, "apply_patch": true}
 	out := make(map[string]bool)
@@ -124,8 +110,7 @@ func Disabled(tools []string, ruleset Ruleset) map[string]bool {
 	return out
 }
 
-// lastForPermission возвращает последнее правило, чей permission-паттерн
-// совпадает с указанным инструментом (без учёта pattern).
+
 func lastForPermission(permission string, ruleset Ruleset) *Rule {
 	for i := len(ruleset) - 1; i >= 0; i-- {
 		if Match(permission, ruleset[i].Permission) {

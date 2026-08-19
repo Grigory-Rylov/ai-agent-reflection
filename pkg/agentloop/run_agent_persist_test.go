@@ -56,7 +56,7 @@ func TestRunAgentNoStoreIsNoop(t *testing.T) {
 	if id := orchestrator.beginRootSession("lead", "sys", "t", 1, "root-uuid"); id != "" {
 		t.Errorf("expected empty root ID without store, got %q", id)
 	}
-	orchestrator.endRootSession(1, "") // must not panic
+	orchestrator.endRootSession(1, "") 
 }
 
 func TestRunAgentWiresRootIntoSubAgentTool(t *testing.T) {
@@ -102,9 +102,7 @@ func TestRunAgentWiresRootIntoSubAgentTool(t *testing.T) {
 	}
 }
 
-// hangingWorkerLLM имитирует LLM, у которого первый запрос (лид) возвращает
-// XML tool call на воркера, а все последующие (воркер) «зависают» до отмены
-// контекста — так мы наблюдаем состояние БД посреди выполнения цепочки.
+
 func hangingWorkerLLM(t *testing.T) (*httptest.Server, func() int32) {
 	t.Helper()
 	var calls int32
@@ -123,10 +121,7 @@ func hangingWorkerLLM(t *testing.T) (*httptest.Server, func() int32) {
 	return server, func() int32 { return atomic.LoadInt32(&calls) }
 }
 
-// TestRunAgentPersistsRootChainWhileWorkerInFlight проверяет, что корневой агент
-// (lead) персистится: пока воркер ждёт ответа LLM, в БД лежит цепочка
-// [rootID, workerID] с ParentID воркера == rootID. После «краха» корень
-// сохраняется и восстанавливается ResumeActiveChains, отдавая результат юзеру.
+
 func TestRunAgentPersistsRootChainWhileWorkerInFlight(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"lead.txt", "worker.txt"} {

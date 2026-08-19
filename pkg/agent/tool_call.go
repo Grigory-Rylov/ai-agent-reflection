@@ -25,14 +25,7 @@ type ToolCallResult struct {
 	IsError    bool   `json:"is_error"`
 }
 
-// MergeToolCalls объединяет инкрементальные tool_calls из streaming дельт
-// OpenAI streaming format:
-//   chunk1: {"index":0,"id":"call_1","function":{"name":"file_write","arguments":""}}
-//   chunk2: {"index":0,"function":{"arguments":"{\"path\":"}}
-//   chunk3: {"index":0,"function":{"arguments":"\"test.txt\"}"}}
-//
-// arguments в каждом chunk — JSON-строка, а не сырой JSON-объект.
-// Конкатенировать их нужно на уровне распарсенных строк, а не байт.
+
 func MergeToolCalls(existing []ToolCall, delta []ToolCall) []ToolCall {
 	for _, tc := range delta {
 		found := false
@@ -65,14 +58,12 @@ func mergeToolCallDelta(existing *ToolCall, delta ToolCall) {
 	}
 }
 
-// mergeArguments конкатенирует два JSON-токена arguments на уровне строковых значений.
-// Каждый токен — JSON-строка (например, "{\"path\":\"test.txt\"}"),
-// нужно извлечь строку, сконкатенировать, и вернуть как JSON-строку.
+
 func mergeArguments(existing, delta json.RawMessage) json.RawMessage {
 	var existingStr string
 	if len(existing) > 0 {
 		if err := json.Unmarshal(existing, &existingStr); err != nil {
-			// Если не удалось распарсить — используем сырые байты (без кавычек)
+			
 			raw := string(existing)
 			if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
 				existingStr = raw[1 : len(raw)-1]
@@ -99,20 +90,20 @@ func mergeArguments(existing, delta json.RawMessage) json.RawMessage {
 	return result
 }
 
-// ToolCallName возвращает имя инструмента из tool_call
+
 func ToolCallName(tc ToolCall) string {
 	return tc.Function.Name
 }
 
-// ToolCallArgumentsStr возвращает аргументы как распарсенную строку
+
 func ToolCallArgumentsStr(tc ToolCall) string {
 	if len(tc.Function.Arguments) == 0 {
 		return ""
 	}
-	// Arguments — это JSON-строка, нужно извлечь значение
+	
 	var s string
 	if err := json.Unmarshal(tc.Function.Arguments, &s); err != nil {
-		// fallback: просто убираем кавычки
+		
 		raw := string(tc.Function.Arguments)
 		if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
 			return raw[1 : len(raw)-1]
@@ -141,8 +132,7 @@ func parseToolCalls(rawMessage map[string]interface{}) ([]ToolCall, error) {
 	return toolCalls, nil
 }
 
-// parseToolArguments распарсивает JSON-аргументы tool_call в map[string]string
-// Автоматически нормализует camelCase ключи в snake_case для совместимости
+
 func parseToolArguments(tc ToolCall) (map[string]string, error) {
 	argsStr := ToolCallArgumentsStr(tc)
 	if argsStr == "" {
@@ -157,8 +147,8 @@ func parseToolArguments(tc ToolCall) (map[string]string, error) {
 	args := make(map[string]string, len(rawArgs))
 	for k, v := range rawArgs {
 		normalized := k
-		// Пробуем snake_case сначала
-		// Если ключ в camelCase — конвертируем в snake_case
+		
+		
 		if _, hasSnake := rawArgs[toSnakeCase(k)]; !hasSnake && k != toSnakeCase(k) {
 			normalized = toSnakeCase(k)
 		}
@@ -183,7 +173,7 @@ func parseToolArguments(tc ToolCall) (map[string]string, error) {
 	return args, nil
 }
 
-// toSnakeCase конвертирует camelCase в snake_case
+
 func toSnakeCase(s string) string {
 	if s == "" {
 		return s

@@ -9,11 +9,7 @@ import (
 	"time"
 )
 
-// ============================================================
-// Типы и константы
-// ============================================================
 
-// Role определяет роль агента в workflow
 type Role string
 
 const (
@@ -22,57 +18,53 @@ const (
 	ReviewerRole    Role = "reviewer"
 )
 
-// WorkflowStatus определяет статус текущего workflow
+
 type WorkflowStatus string
 
 const (
-	WorkflowPending    WorkflowStatus = "pending"     // создан, но не запущен
-	WorkflowInProgress WorkflowStatus = "in_progress" // выполняется
-	WorkflowCompleted  WorkflowStatus = "completed"   // все задачи выполнены
-	WorkflowFailed     WorkflowStatus = "failed"      // произошла ошибка
-	WorkflowCancelled  WorkflowStatus = "cancelled"   // отменён
+	WorkflowPending    WorkflowStatus = "pending"     
+	WorkflowInProgress WorkflowStatus = "in_progress" 
+	WorkflowCompleted  WorkflowStatus = "completed"   
+	WorkflowFailed     WorkflowStatus = "failed"      
+	WorkflowCancelled  WorkflowStatus = "cancelled"   
 )
 
-// TaskStatus определяет статус конкретной задачи
+
 type TaskStatus string
 
 const (
-	TaskPending         TaskStatus = "pending"          // ожидает выполнения
-	TaskInProgress      TaskStatus = "in_progress"      // выполняется
-	TaskApproved        TaskStatus = "approved"         // одобрена ревьюером
-	TaskNeedsRevision   TaskStatus = "needs_revision"   // требует доработки
-	TaskCoordReview     TaskStatus = "coord_review"     // на проверке у координатора
+	TaskPending         TaskStatus = "pending"          
+	TaskInProgress      TaskStatus = "in_progress"      
+	TaskApproved        TaskStatus = "approved"         
+	TaskNeedsRevision   TaskStatus = "needs_revision"   
+	TaskCoordReview     TaskStatus = "coord_review"     
 )
 
-// ============================================================
-// Структуры данных
-// ============================================================
 
-// Workflow представляет полный цикл работы над задачей пользователя
 type Workflow struct {
 	ID             string         `json:"id"`
 	UserPeerID     int64          `json:"user_peer_id"`
-	UserOriginal   string         `json:"user_original"`       // исходный запрос пользователя
+	UserOriginal   string         `json:"user_original"`       
 	Status         WorkflowStatus `json:"status"`
 	CreatedAt      time.Time      `json:"created_at"`
 	UpdatedAt      time.Time      `json:"updated_at"`
-	CurrentTaskIdx int            `json:"current_task_idx"`  // индекс текущей задачи
+	CurrentTaskIdx int            `json:"current_task_idx"`  
 	TotalTasks     int            `json:"-"`
 	Tasks          []Task         `json:"tasks"`
 	Artifacts      []Artifact     `json:"artifacts"`
-	LastStatus     string         `json:"last_status"`    // для уведомления пользователя
-	Summary        string         `json:"summary"`        // финальная сводка
+	LastStatus     string         `json:"last_status"`    
+	Summary        string         `json:"summary"`        
 }
 
-// Task представляет отдельный этап работы
+
 type Task struct {
 	ID             string      `json:"id"`
 	Title          string      `json:"title"`
 	Description    string      `json:"description"`
 	Assignee       Role        `json:"assignee"`
 	Status         TaskStatus  `json:"status"`
-	Feedback       string      `json:"feedback,omitempty"` // замечания от ревьюера
-	Result         string      `json:"result,omitempty"`   // результат выполнения
+	Feedback       string      `json:"feedback,omitempty"` 
+	Result         string      `json:"result,omitempty"`   
 	Artifacts      []Artifact  `json:"artifacts,omitempty"`
 	ReviewedBy     string      `json:"reviewed_by,omitempty"`
 	ApprovedBy     string      `json:"approved_by,omitempty"`
@@ -82,28 +74,24 @@ type Task struct {
 	ApprovedAt     *time.Time  `json:"approved_at,omitempty"`
 }
 
-// Artifact представляет результат работы (файл/код)
+
 type Artifact struct {
 	Name    string `json:"name"`
-	Path    string `json:"path"`      // относительный путь внутри workflow dir
-	Type    string `json:"type"`      // code, doc, config
-	Content string `json:"content"`   // контент если небольшой
-	SHA256  string `json:"sha256"`    // хеш для отслеживания изменений
+	Path    string `json:"path"`      
+	Type    string `json:"type"`      
+	Content string `json:"content"`   
+	SHA256  string `json:"sha256"`    
 }
 
-// ============================================================
-// WorkflowManager — управляет жизненным циклом workflow
-// ============================================================
 
-// WorkflowManager — центральный компонент мульти-агентной системы
 type WorkflowManager struct {
 	mu        sync.RWMutex
-	workflows map[string]*Workflow // ID -> Workflow
-	peers     map[int64][]*Workflow // peerID -> список workflow'ов пользователя
-	baseDir   string                // где хранить файлы workflow'ов
+	workflows map[string]*Workflow 
+	peers     map[int64][]*Workflow 
+	baseDir   string                
 }
 
-// NewWorkflowManager создаёт новый менеджер workflow
+
 func NewWorkflowManager(baseDir string) *WorkflowManager {
 	if baseDir == "" {
 		baseDir = "./workflows"
@@ -115,7 +103,7 @@ func NewWorkflowManager(baseDir string) *WorkflowManager {
 	}
 }
 
-// CreateWorkflow создаёт новый workflow и возвращает его
+
 func (m *WorkflowManager) CreateWorkflow(peerID int64, userOriginal string) *Workflow {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -139,14 +127,14 @@ func (m *WorkflowManager) CreateWorkflow(peerID int64, userOriginal string) *Wor
 	return workflow
 }
 
-// GetWorkflow возвращает workflow по ID или nil
+
 func (m *WorkflowManager) GetWorkflow(id string) *Workflow {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.workflows[id]
 }
 
-// GetUserWorkflows возвращает все workflow'ы пользователя
+
 func (m *WorkflowManager) GetUserWorkflows(peerID int64) []*Workflow {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -155,7 +143,7 @@ func (m *WorkflowManager) GetUserWorkflows(peerID int64) []*Workflow {
 	return wfs
 }
 
-// StartWorkflow начинает выполнение workflow
+
 func (m *WorkflowManager) StartWorkflow(id string) error {
 	m.mu.Lock()
 	workflow, ok := m.workflows[id]
@@ -171,13 +159,13 @@ func (m *WorkflowManager) StartWorkflow(id string) error {
 	workflow.UpdatedAt = time.Now()
 	m.mu.Unlock()
 
-	// TODO: запустить координатора
-	// go m.runCoordinator(workflow)
+	
+	
 
 	return nil
 }
 
-// CancelWorkflow отменяет workflow
+
 func (m *WorkflowManager) CancelWorkflow(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -192,7 +180,7 @@ func (m *WorkflowManager) CancelWorkflow(id string) error {
 	return nil
 }
 
-// AddTask добавляет новую задачу в workflow
+
 func (m *WorkflowManager) AddTask(workflowID string, task Task) error {
 	m.mu.Lock()
 	workflow, ok := m.workflows[workflowID]
@@ -213,7 +201,7 @@ func (m *WorkflowManager) AddTask(workflowID string, task Task) error {
 	return nil
 }
 
-// UpdateTaskStatus обновляет статус задачи
+
 func (m *WorkflowManager) UpdateTaskStatus(workflowID, taskID string, status TaskStatus, feedback, result string) error {
 	m.mu.Lock()
 	workflow, ok := m.workflows[workflowID]
@@ -236,7 +224,7 @@ func (m *WorkflowManager) UpdateTaskStatus(workflowID, taskID string, status Tas
 			workflow.UpdatedAt = now
 
 			if status == TaskNeedsRevision {
-				workflow.CurrentTaskIdx = i // вернуться к этой задаче
+				workflow.CurrentTaskIdx = i 
 			}
 			m.mu.Unlock()
 			return nil
@@ -247,7 +235,7 @@ func (m *WorkflowManager) UpdateTaskStatus(workflowID, taskID string, status Tas
 	return fmt.Errorf("task not found: %s in workflow %s", taskID, workflowID)
 }
 
-// GetNextTaskToExecute возвращает следующую невыполненную задачу или nil
+
 func (m *WorkflowManager) GetNextTaskToExecute(workflowID string) (*Task, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -264,10 +252,10 @@ func (m *WorkflowManager) GetNextTaskToExecute(workflowID string) (*Task, error)
 		}
 	}
 
-	return nil, nil // все задачи выполнены
+	return nil, nil 
 }
 
-// GetAllApprovedTasks возвращает список одобренных задач
+
 func (m *WorkflowManager) GetAllApprovedTasks(workflowID string) []Task {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -286,7 +274,7 @@ func (m *WorkflowManager) GetAllApprovedTasks(workflowID string) []Task {
 	return approved
 }
 
-// CompleteWorkflow помечает workflow как завершённый
+
 func (m *WorkflowManager) CompleteWorkflow(workflowID, summary string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -302,16 +290,12 @@ func (m *WorkflowManager) CompleteWorkflow(workflowID, summary string) error {
 	return nil
 }
 
-// ============================================================
-// Работа с файлами workflow
-// ============================================================
 
-// GetWorkflowDir возвращает директорию workflow
 func (m *WorkflowManager) GetWorkflowDir(workflowID string) string {
 	return filepath.Join(m.baseDir, workflowID)
 }
 
-// SaveWorkflow сохраняет workflow в JSON
+
 func (m *WorkflowManager) SaveWorkflow(workflow *Workflow) error {
 	data, err := json.MarshalIndent(workflow, "", "  ")
 	if err != nil {
@@ -331,7 +315,7 @@ func (m *WorkflowManager) SaveWorkflow(workflow *Workflow) error {
 	return nil
 }
 
-// LoadWorkflow загружает workflow из JSON
+
 func (m *WorkflowManager) LoadWorkflow(workflowID string) (*Workflow, error) {
 	dir := m.GetWorkflowDir(workflowID)
 	file := filepath.Join(dir, "workflow.json")
@@ -349,7 +333,7 @@ func (m *WorkflowManager) LoadWorkflow(workflowID string) (*Workflow, error) {
 	return &workflow, nil
 }
 
-// SaveArtifact сохраняет артефакт в директорию workflow
+
 func (m *WorkflowManager) SaveArtifact(workflowID, name, content, taskID string) error {
 	dir := m.GetWorkflowDir(workflowID)
 	subdir := filepath.Join(dir, "artifacts", taskID)
@@ -365,7 +349,7 @@ func (m *WorkflowManager) SaveArtifact(workflowID, name, content, taskID string)
 	return nil
 }
 
-// ReadArtifact загружает артефакт из директории workflow
+
 func (m *WorkflowManager) ReadArtifact(workflowID, taskID, filename string) (string, error) {
 	dir := m.GetWorkflowDir(workflowID)
 	path := filepath.Join(dir, "artifacts", taskID, sanitizeFilename(filename))
@@ -378,7 +362,7 @@ func (m *WorkflowManager) ReadArtifact(workflowID, taskID, filename string) (str
 	return string(content), nil
 }
 
-// ListWorkflowArtifacts возвращает список файлов артефактов для задачи
+
 func (m *WorkflowManager) ListWorkflowArtifacts(workflowID, taskID string) ([]string, error) {
 	dir := m.GetWorkflowDir(workflowID)
 	path := filepath.Join(dir, "artifacts", taskID)
@@ -400,9 +384,6 @@ func (m *WorkflowManager) ListWorkflowArtifacts(workflowID, taskID string) ([]st
 	return files, nil
 }
 
-// ============================================================
-// Вспомогательные функции
-// ============================================================
 
 func generateID() string {
 	return fmt.Sprintf("wf_%d_%d", time.Now().UnixNano(), time.Now().Nanosecond())

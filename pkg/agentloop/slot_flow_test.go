@@ -12,9 +12,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
 )
 
-// slotAndLLMServer имитирует llama-server с поддержкой slot-save:
-// GET /slots, POST /slots/{id}?action=save|restore и /v1/chat/completions.
-// Записывает последовательность обработанных путей запросов.
+
 func slotAndLLMServer(t *testing.T) (*httptest.Server, func() []string) {
 	t.Helper()
 	var mu sync.Mutex
@@ -152,7 +150,7 @@ func TestProcessPromptSlotSaveRestoreFailureDoesNotFailRequest(t *testing.T) {
 	}
 	al := loop.(*agentLoop)
 
-	// Первый запрос: restore упадёт (файла ещё нет), но запрос должен пройти.
+	
 	if _, err := al.ProcessPrompt(context.Background(), "hi", 780); err != nil {
 		t.Fatalf("ProcessPrompt should not fail on restore error: %v", err)
 	}

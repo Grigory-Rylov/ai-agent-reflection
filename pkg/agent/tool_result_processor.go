@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"context"
-	"fmt"
+		"context"
+		"fmt"
 	"strings"
 
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/compress"
@@ -15,20 +15,14 @@ type contextKey string
 
 const toolCallDepthKey contextKey = "tool_call_depth"
 
-// processToolResults отправляет результат выполнения инструментов обратно в AI
-// Поддерживает как NATIVE (OpenAI format), так и XML/JSON tool calls в ответе
-// executed — карта сигнатур уже выполненных инструментов (для дедупликации между рекурсиями)
-//
-// Умышленно БЕЗ лимита на количество tool-call'ов: агент работает столько, сколько
-// нужно для завершения задачи (хоть всю ночь). Глубина рекурсии в context только
-// трекается для логирования, но не обрезает выполнение.
+
 func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []Message, assistantContent string, toolCalls []ToolCall, toolResults []ToolCallResult, session *sess.Session, executed map[string]bool) (string, error) {
 	depth, _ := ctx.Value(toolCallDepthKey).(int)
 	if a.config.LlamaServerURL == "" {
 		return "", nil
 	}
 
-	// Сохраняем сообщение ассистента с tool_calls в историю сессии
+	
 	sessionToolCalls := make([]sess.MsgToolCall, len(toolCalls))
 	for i, tc := range toolCalls {
 		sessionToolCalls[i] = sess.MsgToolCall{
@@ -42,20 +36,20 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	}
 	session.AddAssistantMessageWithToolCalls(assistantContent, sessionToolCalls)
 
-	// Сохраняем результаты инструментов в историю сессии (полные данные, как в opencode)
+	
 	for _, tr := range toolResults {
 		session.AddToolMessage(tr.ToolCallID, tr.ToolName, tr.Content)
 	}
 
-	// Формируем сообщения для API
+	
 	messages := a.buildToolResultMessages(originalMessages, assistantContent, toolCalls, toolResults)
 
-	// Проверяем переполнение ДО отправки в LLM (как в opencode — перед каждым запросом)
+	
 	if a.compactor != nil {
 		messages = a.compactIfNeededBeforeLLM(ctx, session, messages, assistantContent, toolCalls, toolResults)
 	}
 
-	// Отправляем запрос в LLM (с инструментами, чтобы модель могла продолжить)
+	
 	streamConfig := StreamingConfig{
 		Model:       a.config.Model,
 		MaxTokens:   a.config.MaxTokens,
@@ -64,10 +58,10 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		Stream:      true,
 	}
 
-	// Собираем ответ с проверкой на tool_calls (с бесконечным ретраем серверных ошибок)
+	
 	responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.streamAndCollect(ctx, streamConfig, messages)
 	if err != nil {
-		// Реактивная компакция при переполнении контекста (как compactAfterOverflow в opencode)
+		
 		if IsContextOverflowError(err) && a.compactor != nil {
 			prefix := a.agentPrefix()
 			fmt.Printf(prefix+"[OPENCODE-COMPACT] Reactive overflow recovery for peer %d\n", session.GetPeerID())
@@ -75,8 +69,8 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 
 			a.compactIfNeeded(ctx, session, false)
 
-			// Восстанавливаем tool calls/results после компактизации, если они
-			// не сохранились в сохранённом хвосте (проверяем видимый контекст).
+			
+			
 			if !a.sessionHasToolResults(session, toolResults) {
 				sessionToolCalls := make([]sess.MsgToolCall, len(toolCalls))
 				for i, tc := range toolCalls {
@@ -95,19 +89,19 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 				}
 			}
 
-			// Авто-продолжение после реактивной компактизации при переполнении.
+			
 			if shouldAddAutoContinue(session) {
 				session.AddUserMessage(tokenizers.CompactionOverflowContinueText)
 			}
 
 			messages = a.buildToolResultMessagesFromSession(session)
 
-			// Повторный запрос после компактизации
+			
 			responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err = a.streamAndCollect(ctx, streamConfig, messages)
 			if err != nil {
 				err = a.handleOverflowAfterCompaction(ctx, session, streamConfig, &messages, &err, &responseText, &reasoningText, &finishReason, &streamToolCalls, &promptTokens, &completionTokens)
 				if err != nil {
-					// Терминальная ошибка — даже pruning не помог
+					
 					prefix := a.agentPrefix()
 					fmt.Printf(prefix+"[ERROR] Context overflow after reactive compaction: %v\n", err)
 					return "", fmt.Errorf("context overflow after compaction: %w", err)
@@ -118,7 +112,7 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		}
 	}
 
-	// Если модель вернула пустой ответ без tool_calls и без reasoning — ретраим
+	
 	if !isTerminalResponse(responseText, len(streamToolCalls) > 0, reasoningText != "") {
 		responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err = a.retryEmptyResponse(ctx, streamConfig, messages, session)
 		if err != nil {
@@ -126,11 +120,15 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		}
 	}
 
-	// Отправляем reasoning в thinking чат сразу после получения,
-	// чтобы он не терялся при рекурсивных вызовах инструментов
+	
+	loopRepeats := a.checkResponseLoop(session.GetPeerID(), responseText, reasoningText, streamToolCalls)
+	if loopRepeats > 0 {
+		a.injectLoopCorrection(session, loopRepeats)
+	}
+
 	a.sendThinkingIfNeeded(session, reasoningText)
 
-	// Отправляем количество токенов после ответа LLM
+	
 	a.sendThinkingTokens(session.GetPeerID(), promptTokens, completionTokens)
 
 	prefix := a.agentPrefix()
@@ -146,20 +144,51 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	}
 	logger.DebugToFile("\n====================================================")
 
-	// Если модель вернула новые NATIVE tool_calls — выполняем их рекурсивно
+	
 	if len(streamToolCalls) > 0 {
 		a.debugLog.Debug("NATIVE format: detected %d tool calls in tool results response", len(streamToolCalls))
+
+		var uniqueCalls []ToolCall
+		var sawDuplicate bool
 		for _, tc := range streamToolCalls {
-			executed[toolCallSignature(tc)] = true
+			sig := toolCallSignature(tc)
+			if executed[sig] {
+				sawDuplicate = true
+				a.debugLog.Debug("NATIVE duplicate skipped in tool results: %s", tc.Function.Name)
+				continue
+			}
+			executed[sig] = true
+			uniqueCalls = append(uniqueCalls, tc)
 		}
-		result := a.executeAllTools(ctx, streamToolCalls, session.GetPeerID())
+
+		if len(uniqueCalls) == 0 && sawDuplicate {
+			repeats := a.checkResponseLoop(session.GetPeerID(), responseText, reasoningText, streamToolCalls)
+			if repeats > 0 {
+				a.injectLoopCorrection(session, repeats)
+			}
+		}
+		if len(uniqueCalls) == 0 {
+			a.debugLog.Debug("All native tool calls are duplicates, returning existing response without execution")
+			if responseText == "" {
+				hist := session.GetHistory()
+				if len(hist) > 0 {
+					last := hist[len(hist)-1]
+					if last.Role == sess.AssistantRole && last.Content != "" {
+						return last.Content, nil
+					}
+				}
+			}
+			return responseText, nil
+		}
+
+		result := a.executeAllTools(ctx, uniqueCalls, session.GetPeerID())
 		if len(result.ToolCalls) > 0 {
 			recursiveCtx := context.WithValue(ctx, toolCallDepthKey, depth+1)
-			return a.processToolResults(recursiveCtx, messages, "", streamToolCalls, result.ToolCalls, session, executed)
+			return a.processToolResults(recursiveCtx, messages, "", uniqueCalls, result.ToolCalls, session, executed)
 		}
 	}
 
-	// Проверяем на XML/JSON tool calls в responseText и reasoningText
+	
 	textToCheck := responseText
 	if len(reasoningText) > len(textToCheck) {
 		textToCheck = reasoningText
@@ -182,7 +211,7 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	if len(parsed.ToolCalls) > 0 {
 		a.debugLog.Debug("XML fallback: detected %d tool calls in tool results response", len(parsed.ToolCalls))
 		toolCalls := convertXMLToolCalls(parsed.ToolCalls)
-		// Фильтруем дубли уже выполненных
+		
 		var uniqueCalls []ToolCall
 		for _, tc := range toolCalls {
 			sig := toolCallSignature(tc)
@@ -202,7 +231,7 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		}
 	}
 
-	// JSON fallback в tool results response
+	
 	jsonParsed := ParseJSONToolCalls(responseText)
 	if len(jsonParsed.ToolCalls) > 0 {
 		a.debugLog.Debug("JSON fallback: detected %d tool calls in tool results response", len(jsonParsed.ToolCalls))
@@ -228,14 +257,14 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		}
 	}
 
-	// Safety net: вырезаем <tool_call> блоки из responseText перед сохранением
+	
 	if responseText != "" {
 		parsedResp := ParseXMLToolCalls(responseText)
 		responseText = parsedResp.Content
 		responseText = a.stripThinkingTags(responseText, session.GetPeerID())
 	}
 
-	// Если модель не вернула content — пробуем последнее сообщение сессии
+	
 	if responseText == "" {
 		hist := session.GetHistory()
 		if len(hist) > 0 {
@@ -251,9 +280,7 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	return responseText, nil
 }
 
-// handleInvalidXMLToolCall обрабатывает случай когда модель отправила
-// невалидный XML tool call. Создаёт виртуальный tool call с ошибкой
-// и отправляет модели через processToolResults.
+
 func (a *agentImpl) handleInvalidXMLToolCall(ctx context.Context, messages []Message, session *sess.Session, executed map[string]bool) (FunctionCallResult, error) {
 	a.sendThinking(session.GetPeerID(), "[TOOL] Error: Invalid XML tool call format. Send the model a corrective message.")
 	logger.DebugToFile("%s[TOOL] Invalid XML: sending format error to model", a.agentPrefix())
@@ -286,18 +313,18 @@ func (a *agentImpl) handleInvalidXMLToolCall(ctx context.Context, messages []Mes
 	return FunctionCallResult{Success: true, Response: finalResponse}, nil
 }
 
-// isTerminalResponse возвращает true, если ответ модели — финальный и не стоит ретраить.
+
 func isTerminalResponse(responseText string, hasToolCalls, hasReasoning bool) bool {
 	if len(strings.TrimSpace(responseText)) > 0 {
 		return true
 	}
-	// Reasoning-only ответ тоже терминальный: reasoning уходит в thinking-канал.
+	
 	return hasToolCalls || hasReasoning
 }
 
 const maxEmptyRetries = 3
 
-// retryEmptyResponse делает повторный запрос, когда модель вернула пустой ответ.
+
 func (a *agentImpl) retryEmptyResponse(ctx context.Context, streamConfig StreamingConfig, messages []Message, session *sess.Session) (string, string, string, []ToolCall, int, int, error) {
 	for attempt := 0; attempt < maxEmptyRetries; attempt++ {
 		prefix := a.agentPrefix()
@@ -322,7 +349,7 @@ func (a *agentImpl) retryEmptyResponse(ctx context.Context, streamConfig Streami
 	return "", "", "stop", nil, 0, 0, nil
 }
 
-// buildToolResultMessages собирает список сообщений для API из оригинальных + assistant + tool results.
+
 func (a *agentImpl) buildToolResultMessages(originalMessages []Message, assistantContent string, toolCalls []ToolCall, toolResults []ToolCallResult) []Message {
 	messages := make([]Message, len(originalMessages))
 	copy(messages, originalMessages)
@@ -349,13 +376,12 @@ func (a *agentImpl) buildToolResultMessages(originalMessages []Message, assistan
 	return messages
 }
 
-// compactIfNeededBeforeLLM проверяет, не переполнит ли текущий набор сообщений контекст.
-// Если да — компактирует сессию и пересобирает messages (сохраняя tool calls/results).
+
 func (a *agentImpl) compactIfNeededBeforeLLM(ctx context.Context, session *sess.Session, messages []Message, assistantContent string, toolCalls []ToolCall, toolResults []ToolCallResult) []Message {
 	tokenMessages := make([]tokenizers.Message, len(messages))
 	for i, m := range messages {
 		content := m.Content
-		// Tool call аргументы учитываются в оценке (как в opencode — полный request)
+		
 		for _, tc := range m.ToolCalls {
 			content += string(tc.Function.Arguments)
 		}
@@ -375,15 +401,15 @@ func (a *agentImpl) compactIfNeededBeforeLLM(ctx context.Context, session *sess.
 	logger.DebugToFile(prefix+"[OPENCODE-COMPACT] Peer %d: Tool results overflow (%d/%d), compacting",
 		session.GetPeerID(), tokens, a.config.MaxTokens)
 
-	// Компактируем сессию — она уже содержит tool calls/results (добавлены выше)
+	
 	a.compactIfNeeded(ctx, session, false)
 
-	// После компактизации tool calls/results, добавленные до compactIfNeeded,
-	// сохраняются в хвосте (tailTurns), но если не попали — их нужно добавить
-	// заново. Проверяем видимый контекст (GetContextMessages).
+	
+	
+	
 	hasLastToolResult := a.sessionHasToolResults(session, toolResults)
 
-	// Если tool results утеряны — добавляем их заново
+	
 	if !hasLastToolResult {
 		sessionToolCalls := make([]sess.MsgToolCall, len(toolCalls))
 		for i, tc := range toolCalls {
@@ -403,12 +429,11 @@ func (a *agentImpl) compactIfNeededBeforeLLM(ctx context.Context, session *sess.
 		}
 	}
 
-	// Пересобираем messages из обновлённой сессии
+	
 	return a.buildToolResultMessagesFromSession(session)
 }
 
-// sessionHasToolResults возвращает true, если все указанные tool results уже
-// присутствуют в видимом контексте сессии (после компактизации).
+
 func (a *agentImpl) sessionHasToolResults(session *sess.Session, toolResults []ToolCallResult) bool {
 	if len(toolResults) == 0 {
 		return true
@@ -429,12 +454,11 @@ func (a *agentImpl) sessionHasToolResults(session *sess.Session, toolResults []T
 	return true
 }
 
-// shouldAddAutoContinue возвращает true, если в последних сообщениях сессии
-// нет auto-continue (защита от дублирования при повторной компактизации).
+
 func shouldAddAutoContinue(session *sess.Session) bool {
 	history := session.GetHistory()
 
-	// Find last auto-continue message
+	
 	autoContinueIdx := -1
 	for i := len(history) - 1; i >= 0; i-- {
 		m := history[i]
@@ -445,13 +469,13 @@ func shouldAddAutoContinue(session *sess.Session) bool {
 		}
 	}
 
-	// No auto-continue in history → safe to add
+	
 	if autoContinueIdx < 0 {
 		return true
 	}
 
-	// Check for any non-summary assistant response after the auto-continue.
-	// If model responded, it's safe to add a new one. Otherwise — duplicate.
+	
+	
 	for j := autoContinueIdx + 1; j < len(history); j++ {
 		m := history[j]
 		if m.Role == sess.AssistantRole && !m.Summary {
@@ -462,16 +486,12 @@ func shouldAddAutoContinue(session *sess.Session) bool {
 	return false
 }
 
-// buildToolResultMessagesFromSession пересобирает messages из истории сессии
-// после компактизации.
+
 func (a *agentImpl) buildToolResultMessagesFromSession(session *sess.Session) []Message {
 	return a.convertHistoryToAPIMessages(session.GetContextMessages())
 }
 
-// handleOverflowAfterCompaction обрабатывает повторный overflow после
-// реактивной компактизации: применяет агрессивный pruning и делает retry.
-// Возвращает nil, если retry удался (результат записан в указатели).
-// Возвращает ошибку, если терминальная ситуация.
+
 func (a *agentImpl) handleOverflowAfterCompaction(
 	ctx context.Context,
 	session *sess.Session,
@@ -495,14 +515,14 @@ func (a *agentImpl) handleOverflowAfterCompaction(
 
 	prunedCount := a.applyAggressivePruning(session)
 	if prunedCount == 0 {
-		// Если pruning ничего не обрезал — терминальная ошибка
+		
 		fmt.Printf("%s[ERROR] Context overflow after reactive compaction and pruning: %v\n", prefix, err)
 		return fmt.Errorf("context overflow after compaction and aggressive pruning: %w", err)
 	}
 
 	fmt.Printf("%s[OPENCODE-COMPACT] Pruned %d tool outputs, retrying\n", prefix, prunedCount)
 
-	// Пересобираем messages и пробуем ещё раз
+	
 	*messages = a.buildToolResultMessagesFromSession(session)
 	*responseText, *reasoningText, *finishReason, *toolCalls, *promptTokens, *completionTokens, err = a.streamAndCollect(ctx, config, *messages)
 	if err != nil {
@@ -513,8 +533,7 @@ func (a *agentImpl) handleOverflowAfterCompaction(
 	return nil
 }
 
-// applyAggressivePruning применяет pruning к истории сессии.
-// Возвращает количество обрезанных сообщений.
+
 func (a *agentImpl) applyAggressivePruning(session *sess.Session) int {
 	history := session.GetHistory()
 	raw := make([]tokenizers.Message, len(history))

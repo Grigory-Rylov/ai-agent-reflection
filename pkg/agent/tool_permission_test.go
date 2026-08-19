@@ -24,7 +24,7 @@ func (m *mockPermissionChecker) Evaluate(permission, pattern string) string {
 
 func (m *mockPermissionChecker) Approve(permission, pattern string) {}
 
-// mockToolPermissionChecker returns different decisions based on tool name
+
 type mockToolPermissionChecker struct {
 	decisions map[string]string
 }

@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// ============================================================
-// Тесты парсинга одной строки
-// ============================================================
 
 func TestParseSSELine(t *testing.T) {
 	t.Run("parses delta event", func(t *testing.T) {
@@ -75,9 +72,6 @@ func TestParseSSELine(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Тесты EventType
-// ============================================================
 
 func TestSSEChunkEventType(t *testing.T) {
 	t.Run("delta event type", func(t *testing.T) {
@@ -145,9 +139,6 @@ func TestSSEChunkIsStopReason(t *testing.T) {
 	})
 }
 
-// ============================================================
-// Тесты CountChunksByType
-// ============================================================
 
 func TestCountChunksByType(t *testing.T) {
 	chunks := []SSEChunk{
@@ -161,7 +152,7 @@ func TestCountChunksByType(t *testing.T) {
 
 	delta, reasoning, stop := CountChunksByType(chunks)
 
-	// 4 delta (Go, is, a, .) + 2 reasoning (thinking, language)
+	
 	if delta != 4 {
 		t.Errorf("expected 4 deltas, got %d", delta)
 	}
@@ -173,9 +164,6 @@ func TestCountChunksByType(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Тесты ExtractContent и ExtractReasoning
-// ============================================================
 
 func TestExtractContent(t *testing.T) {
 	chunks := []SSEChunk{
@@ -205,12 +193,9 @@ func TestExtractReasoning(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Тесты с реальными данными от llama-server
-// ============================================================
 
 func TestParseRealSSEStream(t *testing.T) {
-	// Читаем сохранённый SSE-поток
+	
 	file, err := os.Open("../test_data/llama_sse_stream.txt")
 	if err != nil {
 		t.Fatalf("failed to open test data: %v", err)
@@ -222,12 +207,12 @@ func TestParseRealSSEStream(t *testing.T) {
 		t.Fatalf("failed to parse stream: %v", err)
 	}
 
-	// Проверяем что поток завершён
+	
 	if finalEvent != EventDone {
 		t.Errorf("expected final event EventDone, got %s", finalEvent)
 	}
 
-	// Считаем по типам
+	
 	delta, reasoning, stop := CountChunksByType(chunks)
 
 	t.Logf("Total chunks: %d", len(chunks))
@@ -235,17 +220,17 @@ func TestParseRealSSEStream(t *testing.T) {
 	t.Logf("Reasoning events: %d", reasoning)
 	t.Logf("Stop events: %d", stop)
 
-	// Проверяем что есть чанки
+	
 	if len(chunks) == 0 {
 		t.Error("expected non-empty chunk list")
 	}
 
-	// Проверяем что есть stop-событие в конце
+	
 	if stop == 0 {
 		t.Error("expected at least one stop event")
 	}
 
-	// Проверяем что есть контент
+	
 	content := ExtractContent(chunks)
 	if content == "" {
 		t.Error("expected non-empty content")
@@ -259,7 +244,7 @@ func TestParseRealSSEStream(t *testing.T) {
 }
 
 func TestParseSSELineFromRealStream(t *testing.T) {
-	// Читаем первые несколько строк из реального потока
+	
 	file, err := os.Open("../test_data/llama_sse_stream.txt")
 	if err != nil {
 		t.Fatalf("failed to open test data: %v", err)
@@ -281,7 +266,7 @@ func TestParseSSELineFromRealStream(t *testing.T) {
 		}
 		
 		if strings.HasPrefix(line, "data: ") {
-			// Пропускаем [DONE]
+			
 			if strings.Contains(line, "[DONE]") {
 				continue
 			}

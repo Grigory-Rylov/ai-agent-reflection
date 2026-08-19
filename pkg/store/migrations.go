@@ -32,8 +32,8 @@ func runMigrations(db *sql.DB) error {
 		}
 	}
 
-	// Метаданные компактизации в messages (opencode-модель: маркеры переживают
-	// перезагрузку сессии).
+	
+	
 	for _, col := range []struct{ name, ddl string }{
 		{"summary", "INTEGER DEFAULT 0"},
 		{"compacted", "INTEGER DEFAULT 0"},
@@ -47,13 +47,12 @@ func runMigrations(db *sql.DB) error {
 	return nil
 }
 
-// ensureColumn добавляет текстовую колонку в таблицу, если её ещё нет
-// (SQLite не поддерживает ADD COLUMN IF NOT EXISTS).
+
 func ensureColumn(db *sql.DB, table, column string) error {
 	return ensureColumnTyped(db, table, column, "TEXT DEFAULT ''")
 }
 
-// ensureColumnTyped добавляет колонку с произвольным DDL, если её ещё нет.
+
 func ensureColumnTyped(db *sql.DB, table, column, ddl string) error {
 	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
 	if err != nil {
@@ -127,7 +126,7 @@ const messagesIndex = `CREATE INDEX IF NOT EXISTS idx_messages_peer_id ON messag
 const todosIndex = `CREATE INDEX IF NOT EXISTS idx_todos_session ON todos(session_id)`
 const permissionsIndex = `CREATE INDEX IF NOT EXISTS idx_permissions_session ON permissions(session_id)`
 
-// agent_sessions — сессии сабагентов с UUID
+
 const agentSessionsTable = `CREATE TABLE IF NOT EXISTS agent_sessions (
 	id TEXT PRIMARY KEY,
 	parent_id TEXT DEFAULT '',
@@ -142,7 +141,7 @@ const agentSessionsTable = `CREATE TABLE IF NOT EXISTS agent_sessions (
 	messages TEXT DEFAULT ''
 )`
 
-// active_agent_chain — активные цепочки вызовов агентов
+
 const agentChainTable = `CREATE TABLE IF NOT EXISTS active_agent_chain (
 	peer_id INTEGER PRIMARY KEY,
 	chain TEXT NOT NULL DEFAULT '',

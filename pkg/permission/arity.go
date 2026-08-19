@@ -2,8 +2,7 @@ package permission
 
 import "strings"
 
-// arityMap maps command prefixes to the number of tokens that identify the
-// "human-understandable command". Flags never count as tokens.
+
 var arityMap = map[string]int{
 	"cat": 1, "cd": 1, "chmod": 1, "chown": 1, "cp": 1, "echo": 1,
 	"env": 1, "export": 1, "grep": 1, "kill": 1, "killall": 1, "ln": 1,
@@ -37,9 +36,7 @@ var arityMap = map[string]int{
 	"volta": 2, "wp": 2, "yarn": 2, "yarn dlx": 3, "yarn run": 3,
 }
 
-// Prefix returns the tokens identifying the command for arity purposes.
-// The longest matching prefix in arityMap wins; unknown commands default
-// to the first token.
+
 func Prefix(tokens []string) []string {
 	for length := len(tokens); length > 0; length-- {
 		prefix := strings.Join(tokens[:length], " ")

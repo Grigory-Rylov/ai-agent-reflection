@@ -10,7 +10,7 @@ import (
 type TodoItem struct {
 	ID      int
 	Task    string
-	Status  string // pending, in_progress, completed, failed
+	Status  string 
 	Agent   string
 }
 

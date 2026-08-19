@@ -3,7 +3,10 @@ package agent
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 )
 
 func (a *agentImpl) collectStreamResponseWithToolCalls(chunkChan <-chan StreamChunkEvent) (string, string, string, []ToolCall, int, int, error) {
@@ -17,9 +20,9 @@ func (a *agentImpl) collectStreamResponseWithToolCalls(chunkChan <-chan StreamCh
 		if event.IsError {
 			return "", "", "", nil, 0, 0, fmt.Errorf("API error: %s (code: %s)", event.Content, event.ErrorCode)
 		}
-		// Контент/reasoning/tool_calls обрабатываем ДО проверки IsDone: модель
-		// может прислать финальный фрагмент контента вместе с finish_reason,
-		// иначе он был бы потерян.
+		
+		
+		
 		if event.Content != "" {
 			fullResponse.WriteString(event.Content)
 		}
@@ -66,9 +69,11 @@ func (a *agentImpl) saveDebugResponse(content, reasoning, finishReason string, t
 		sb.WriteString(fmt.Sprintf("  %d. %s: %s\n", i+1, tc.Function.Name, ToolCallArgumentsStr(tc)))
 	}
 
-	os.MkdirAll("debug", 0755)
-	if err := os.WriteFile("debug/debug_response.txt", []byte(sb.String()), 0644); err != nil {
-		a.debugLog.Debug("Failed to write debug/debug_response.txt: %v", err)
+	debugDir := filepath.Join(tools.WorkingDir, "debug")
+	responsePath := filepath.Join(debugDir, "debug_response.txt")
+	os.MkdirAll(debugDir, 0755)
+	if err := os.WriteFile(responsePath, []byte(sb.String()), 0644); err != nil {
+		a.debugLog.Debug("Failed to write %s: %v", responsePath, err)
 	}
 }
 

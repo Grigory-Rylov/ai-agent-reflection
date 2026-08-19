@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"context"
-	"fmt"
+		"context"
+		"fmt"
 	"strings"
 
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
@@ -10,34 +10,25 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util/stringutil"
 )
 
-// ============================================================
-// Function Calling — оркестрация вызовов инструментов
-// ============================================================
 
-// maxReasoningLength — максимальная длина reasoningText после обрезки.
-// Предотвращает передачу зацикленного/мусорного reasoning (50k+ chars).
 const maxReasoningLength = 5000
 
-// FunctionCallResult представляет результат function calling
+
 type FunctionCallResult struct {
 	Success   bool
 	Response  string
 	ToolCalls []ToolCallResult
 }
 
-// processWithTools обрабатывает ответ AI с поддержкой инструментов.
-// Без лимита на количество tool-call'ов — агент работает до завершения задачи.
+
 func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, session *sess.Session) (FunctionCallResult, error) {
 	responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.collectStreamAndLog(ctx, messages)
 	if err != nil {
 		return FunctionCallResult{}, err
 	}
 
-	// Отправляем reasoning в thinking чат сразу после получения,
-	// чтобы он не терялся при обработке tool_calls
 	a.sendThinkingIfNeeded(session, reasoningText)
-
-	// Отправляем количество токенов после ответа LLM
+	
 	a.sendThinkingTokens(session.GetPeerID(), promptTokens, completionTokens)
 
 	executedToolCalls := make(map[string]bool)
@@ -78,7 +69,7 @@ func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, se
 	return a.makeTextResponse(responseText, session), nil
 }
 
-// collectStreamAndLog отправляет streaming запрос, собирает ответ и логирует
+
 func (a *agentImpl) collectStreamAndLog(ctx context.Context, messages []Message) (string, string, string, []ToolCall, int, int, error) {
 	toolsSchema := a.toolsRegistry.ToOpenAISchema()
 	streamConfig := a.buildToolsStreamConfig(toolsSchema)
@@ -109,8 +100,7 @@ func (a *agentImpl) collectStreamAndLog(ctx context.Context, messages []Message)
 	return responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, nil
 }
 
-// handleNativeToolCalls обрабатывает NATIVE tool_calls из streaming ответа
-// Возвращает nil если нет нативных tool_calls или их не удалось выполнить
+
 func (a *agentImpl) handleNativeToolCalls(ctx context.Context, messages []Message, session *sess.Session,
 	responseText, reasoningText, finishReason string, streamToolCalls []ToolCall, executedToolCalls map[string]bool) (*FunctionCallResult, error) {
 
@@ -122,7 +112,7 @@ func (a *agentImpl) handleNativeToolCalls(ctx context.Context, messages []Messag
 	toolCalls := streamToolCalls
 	logger.DebugToFile("[FLOW] Entering tool_calls branch: finishReason=%q, len(streamToolCalls)=%d", finishReason, len(streamToolCalls))
 
-	// Предупреждение: finish="" с tool_calls — возможна обрезка стрима
+	
 	if finishReason == "" && len(toolCalls) > 0 {
 		fmt.Printf("%s[TOOL] WARNING: finish_reason is empty, tool calls may be truncated/incomplete\n", prefix)
 		logger.DebugToFile("[TOOL] WARNING: finish_reason is empty (stream may be truncated)")
@@ -163,8 +153,7 @@ func (a *agentImpl) handleNativeToolCalls(ctx context.Context, messages []Messag
 	return nil, nil
 }
 
-// handleXMLInReasoning проверяет reasoningText на наличие XML tool calls
-// Возвращает результат если нашли и выполнили, иначе nil
+
 func (a *agentImpl) handleXMLInReasoning(ctx context.Context, messages []Message, session *sess.Session, reasoningText string, executedToolCalls map[string]bool) *FunctionCallResult {
 	prefix := a.agentPrefix()
 	if reasoningText == "" {
@@ -209,9 +198,7 @@ func (a *agentImpl) handleXMLInReasoning(ctx context.Context, messages []Message
 	return &FunctionCallResult{Success: true, Response: finalResponse}
 }
 
-// hasPartialToolCall проверяет, содержит ли текст фрагменты tool call XML
-// без валидной структуры (напр. </tool_call> без открывающего, <parameter=...> вне контекста)
-// Возвращает false для полностью валидных <tool_call><function=...>...</function></tool_call>
+
 func hasPartialToolCall(text string) bool {
 	if text == "" {
 		return false
@@ -225,7 +212,7 @@ func hasPartialToolCall(text string) bool {
 	if strings.Contains(text, "<tool_call") && !strings.Contains(text, "<tool_call>") {
 		return true
 	}
-	// <tool_call> без </tool_call> или больше открывающих чем закрывающих — unclosed, partial
+	
 	if strings.Contains(text, "<tool_call>") {
 		openCount := strings.Count(text, "<tool_call>")
 		closeCount := strings.Count(text, "</tool_call>")
@@ -233,27 +220,25 @@ func hasPartialToolCall(text string) bool {
 			return true
 		}
 	}
-	// <parameter=...> или <parameter ...> вне контекста tool_call — partial
+	
 	if (strings.Contains(text, "<parameter=") || strings.Contains(text, "<parameter ")) && !strings.Contains(text, "<tool_call>") {
 		return true
 	}
-	// <function=...> без полного tool_call контекста
+	
 	if strings.Contains(text, "<function=") && !strings.Contains(text, "<tool_call>") {
 		return true
 	}
 	return false
 }
 
-// stripPartialToolCall удаляет только фрагменты tool call XML тегов из текста,
-// не затрагивая окружающий текст. Работает на тексте, уже очищенном ParseXMLToolCalls.
-// Удаляет: </tool_call>, </function>, </parameter>, <parameter=...>, <function=...>
+
 func stripPartialToolCall(text string) string {
 	result := text
-	// Удаляем закрывающие теги
+	
 	for _, tag := range []string{"</tool_call>", "</function>", "</parameter>"} {
 		result = strings.ReplaceAll(result, tag, "")
 	}
-	// Удаляем <parameter=...> целиком (до >)
+	
 	for {
 		start := strings.Index(result, "<parameter=")
 		if start < 0 {
@@ -266,7 +251,7 @@ func stripPartialToolCall(text string) string {
 		}
 		result = result[:start] + result[start+end+1:]
 	}
-	// Удаляем <function=...> целиком (до >)
+	
 	for {
 		start := strings.Index(result, "<function=")
 		if start < 0 {
@@ -279,13 +264,13 @@ func stripPartialToolCall(text string) string {
 		}
 		result = result[:start] + result[start+end+1:]
 	}
-	// Удаляем пустые строки от удалённых строк
+	
 	result = strings.ReplaceAll(result, "\n\n", "\n")
 	result = strings.ReplaceAll(result, "\n\n", "\n")
 	return strings.TrimSpace(result)
 }
 
-// sendThinkingIfNeeded отправляет очищенный reasoning в thinking чат
+
 func (a *agentImpl) sendThinkingIfNeeded(session *sess.Session, reasoningText string) {
 	if a.thinkingCallback == nil {
 		return
@@ -296,7 +281,7 @@ func (a *agentImpl) sendThinkingIfNeeded(session *sess.Session, reasoningText st
 		return
 	}
 
-	// Дополнительно очищаем от partial tool call фрагментов
+	
 	if hasPartialToolCall(cleanedReasoning) {
 		prefix := a.agentPrefix()
 		fmt.Print(prefix + "[TOOL] Stripped partial/malformed tool call fragments from reasoning\n")
@@ -314,7 +299,7 @@ func (a *agentImpl) sendThinkingIfNeeded(session *sess.Session, reasoningText st
 	}
 }
 
-// handleXMLFallback ищет XML tool calls в responseText и reasoningText
+
 func (a *agentImpl) handleXMLFallback(ctx context.Context, responseText, reasoningText string, messages []Message, session *sess.Session, executedToolCalls map[string]bool) (*FunctionCallResult, error) {
 	textToCheck := responseText
 	if len(reasoningText) > len(textToCheck) {
@@ -329,7 +314,7 @@ func (a *agentImpl) handleXMLFallback(ctx context.Context, responseText, reasoni
 		}
 		return &xmlResult, nil
 	}
-	// Если проверяли reasoningText и не нашли — пробуем responseText
+	
 	if !xmlUsed && textToCheck != responseText {
 		xmlResult, xmlUsed, err = a.xmlFallbackFiltered(ctx, responseText, messages, session, executedToolCalls)
 		if xmlUsed {
@@ -343,7 +328,7 @@ func (a *agentImpl) handleXMLFallback(ctx context.Context, responseText, reasoni
 	return nil, nil
 }
 
-// handleJSONFallback ищет JSON tool calls в responseText
+
 func (a *agentImpl) handleJSONFallback(ctx context.Context, responseText string, messages []Message, session *sess.Session) (*FunctionCallResult, error) {
 	if result, used, err := a.jsonFallback(ctx, responseText, messages, session); used {
 		if err != nil {
@@ -354,7 +339,7 @@ func (a *agentImpl) handleJSONFallback(ctx context.Context, responseText string,
 	return nil, nil
 }
 
-// handleInvalidOrTextResponse обрабатывает финальный текстовый ответ или ошибки формата
+
 func (a *agentImpl) handleInvalidOrTextResponse(ctx context.Context, messages []Message, responseText, reasoningText, finishReason string, session *sess.Session, executedToolCalls map[string]bool) (*FunctionCallResult, error) {
 	if responseText == "" && reasoningText != "" && strings.Contains(reasoningText, "<tool_call>") && finishReason != "" {
 		reasoningSnippet := stringutil.Truncate(reasoningText, 300, "...")
@@ -367,7 +352,7 @@ func (a *agentImpl) handleInvalidOrTextResponse(ctx context.Context, messages []
 		return &result, nil
 	}
 
-	// Проверяем reasoning на partial/fragmented tool call XML (</tool_call>, <parameter=...> и т.п.)
+	
 	if responseText == "" && reasoningText != "" && hasPartialToolCall(reasoningText) && !strings.Contains(reasoningText, "<tool_call>") && finishReason != "" {
 		prefix := a.agentPrefix()
 		snippet := stringutil.Truncate(reasoningText, 200, "...")
@@ -376,7 +361,7 @@ func (a *agentImpl) handleInvalidOrTextResponse(ctx context.Context, messages []
 		a.debugLog.Error("[TOOL] Partial/malformed tool call fragments in reasoning")
 		a.sendThinking(session.GetPeerID(), "[TOOL] Error: partial/incomplete tool call in reasoning, sending corrective feedback")
 
-		// Очищаем reasoning от фрагментов и отправляем как thinking
+		
 		cleanedReasoning := stripPartialToolCall(reasoningText)
 		if cleanedReasoning != "" {
 			logger.DebugToFile("%s[THINKING] Sending cleaned reasoning (stripped partial fragments)", prefix)
@@ -392,8 +377,8 @@ func (a *agentImpl) handleInvalidOrTextResponse(ctx context.Context, messages []
 		return &result, nil
 	}
 
-	// Если текст содержит битый <tool_call> без валидных инструментов
-	// — модель сгенерировала неверный XML, отправляем ошибку формата
+	
+	
 	if strings.Contains(responseText, "<tool_call") {
 		stripped := ParseXMLToolCalls(responseText)
 		if len(stripped.ToolCalls) == 0 {
@@ -428,7 +413,7 @@ func (a *agentImpl) handleInvalidOrTextResponse(ctx context.Context, messages []
 	return &FunctionCallResult{Success: true, Response: cleanText}, nil
 }
 
-// makeTextResponse создаёт текстовый ответ с очисткой XML тегов
+
 func (a *agentImpl) makeTextResponse(responseText string, session *sess.Session) FunctionCallResult {
 	parsedResp := ParseXMLToolCalls(responseText)
 	responseText = parsedResp.Content
@@ -439,7 +424,7 @@ func (a *agentImpl) makeTextResponse(responseText string, session *sess.Session)
 	return FunctionCallResult{Success: true, Response: responseText}
 }
 
-// buildToolsStreamConfig создаёт конфигурацию для streaming с инструментами
+
 func (a *agentImpl) buildToolsStreamConfig(toolsSchema []map[string]interface{}) StreamingConfig {
 	schema := toolsSchema
 	if schema == nil && len(a.toolSchemas) > 0 {
@@ -454,8 +439,7 @@ func (a *agentImpl) buildToolsStreamConfig(toolsSchema []map[string]interface{})
 	}
 }
 
-// xmlFallbackFiltered проверяет responseText на наличие XML tool calls,
-// фильтрует дубли уже выполненных инструментов, выполняет оставшиеся
+
 func (a *agentImpl) xmlFallbackFiltered(ctx context.Context, responseText string, messages []Message, session *sess.Session, executed map[string]bool) (FunctionCallResult, bool, error) {
 	parsed := ParseXMLToolCalls(responseText)
 	prefix := a.agentPrefix()
@@ -496,8 +480,7 @@ func (a *agentImpl) xmlFallbackFiltered(ctx context.Context, responseText string
 	return FunctionCallResult{}, false, nil
 }
 
-// xmlFallback проверяет responseText на наличие XML tool calls,
-// выполняет их и обрабатывает результаты
+
 func (a *agentImpl) xmlFallback(ctx context.Context, responseText string, messages []Message, session *sess.Session) (FunctionCallResult, bool, error) {
 	prefix := a.agentPrefix()
 	parsed := ParseXMLToolCalls(responseText)
@@ -536,8 +519,7 @@ func (a *agentImpl) xmlFallback(ctx context.Context, responseText string, messag
 	return FunctionCallResult{}, false, nil
 }
 
-// jsonFallback проверяет responseText на наличие JSON tool calls,
-// выполняет их и обрабатывает результаты
+
 func (a *agentImpl) jsonFallback(ctx context.Context, responseText string, messages []Message, session *sess.Session) (FunctionCallResult, bool, error) {
 	prefix := a.agentPrefix()
 	parsed := ParseJSONToolCalls(responseText)

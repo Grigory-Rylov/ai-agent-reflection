@@ -69,7 +69,7 @@ func TestStripPartialToolCall_CloseFunction(t *testing.T) {
 
 func TestStripPartialToolCall_ParameterTag(t *testing.T) {
 	input := "text <parameter=path>/tmp</parameter> end"
-	// </parameter> is removed, <parameter=path> is removed along with >
+	
 	expected := "text /tmp end"
 	result := stripPartialToolCall(input)
 	if result != expected {
@@ -110,7 +110,7 @@ func TestStripPartialToolCall_OnlyFragments(t *testing.T) {
 }
 
 func TestHasPartialToolCall_ValidFullToolCall(t *testing.T) {
-	// Valid full tool call has both opening and closing tags — should NOT be flagged as partial
+	
 	input := `<tool_call>
 <function=write_file>
 <parameter=path>/tmp/test</parameter>
@@ -122,7 +122,7 @@ func TestHasPartialToolCall_ValidFullToolCall(t *testing.T) {
 }
 
 func TestHasPartialToolCall_CloseWithoutOpen(t *testing.T) {
-	// </tool_call> without <tool_call> — partial
+	
 	input := "some text\n</tool_call>\nmore text"
 	if !hasPartialToolCall(input) {
 		t.Error("expected true for </tool_call> without <tool_call>")
@@ -130,7 +130,7 @@ func TestHasPartialToolCall_CloseWithoutOpen(t *testing.T) {
 }
 
 func TestHasPartialToolCall_FunctionParamOutsideContext(t *testing.T) {
-	// <parameter=...> without <tool_call> context — partial
+	
 	input := "let me write carefully.\n<parameter=path>\n/home/test\n</parameter>"
 	if !hasPartialToolCall(input) {
 		t.Error("expected true for <parameter=...> outside tool_call context")
@@ -138,7 +138,7 @@ func TestHasPartialToolCall_FunctionParamOutsideContext(t *testing.T) {
 }
 
 func TestHasPartialToolCall_UnclosedToolCall(t *testing.T) {
-	// <tool_call> without </tool_call> — unclosed, partial
+	
 	input := "some thinking\n<tool_call>\n<function=write_file>\n<parameter=path>/tmp/test.txt</parameter>"
 	if !hasPartialToolCall(input) {
 		t.Error("expected true for <tool_call> without </tool_call>")
@@ -146,7 +146,7 @@ func TestHasPartialToolCall_UnclosedToolCall(t *testing.T) {
 }
 
 func TestHasPartialToolCall_ValidWithUnclosed(t *testing.T) {
-	// valid <tool_call>...</tool_call> plus a second unclosed — partial
+	
 	input := "<tool_call>\n<function=read_file>\n<parameter=path>/tmp/x</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=write_file>"
 	if !hasPartialToolCall(input) {
 		t.Error("expected true for valid + unclosed <tool_call>")
@@ -154,10 +154,9 @@ func TestHasPartialToolCall_ValidWithUnclosed(t *testing.T) {
 }
 
 
-
 func TestParseToolArguments_ArrayOptions(t *testing.T) {
-	// Simulate how the model sends options as a JSON array in tool call arguments.
-	// The outer quotes are the JSON-string encoding from the streaming protocol.
+	
+	
 	raw := json.RawMessage(`"{"question":"Pick color","options":[{"label":"Red"},{"label":"Blue"}]}"`)
 	tc := ToolCall{ID: "call_1", Function: ToolCallFunction{Name: "question", Arguments: raw}}
 	args, err := parseToolArguments(tc)

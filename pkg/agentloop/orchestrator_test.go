@@ -39,8 +39,8 @@ func TestOrchestratorSendsUserMessageToLLM(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(bytes.NewBuffer(body))
 
-		// Запросы /tokenize (подсчёт токенов контекста) не являются
-		// чат-запросами LLM — их не записываем.
+		
+		
 		if r.URL.Path == "/v1/chat/completions" {
 			var req loggedRequest
 			if err := json.Unmarshal(body, &req); err == nil {
@@ -168,7 +168,7 @@ func TestOrchestratorClearActiveSessions_CancelsRegisteredContexts(t *testing.T)
 
 	select {
 	case <-ctx1.Done():
-		// session-1 для peer 123 — должна быть отменена
+		
 	default:
 		t.Error("expected session-1 context to be cancelled after ClearActiveSessions(123)")
 	}
@@ -177,7 +177,7 @@ func TestOrchestratorClearActiveSessions_CancelsRegisteredContexts(t *testing.T)
 	case <-ctx2.Done():
 		t.Error("session-2 for peer 456 should NOT be cancelled by ClearActiveSessions(123)")
 	default:
-		// session-2 для peer 456 — не должна быть затронута
+		
 	}
 
 	cancel2()
@@ -249,7 +249,7 @@ func TestOrchestratorClearActiveSessions_CancelsRunningAgent(t *testing.T) {
 	go func() { wg.Wait(); close(doneCh) }()
 	select {
 	case <-doneCh:
-		// Agent finished after cancel — OK.
+		
 	case <-time.After(5 * time.Second):
 		t.Fatal("agent did not stop after ClearActiveSessions")
 	}

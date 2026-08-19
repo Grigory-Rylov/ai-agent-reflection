@@ -83,8 +83,8 @@ func (s *Scenario) MockServer() *httptest.Server {
 	callIndex := 0
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Запросы к /tokenize (подсчёт токенов контекста) не должны
-		// потреблять шаги сценария — иначе чат-запросы съезжают со своих шагов.
+		
+		
 		if r.URL.Path == "/tokenize" {
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprint(w, `{"tokens":[1]}`)
@@ -102,7 +102,7 @@ func (s *Scenario) MockServer() *httptest.Server {
 		if idx < len(s.Steps) {
 			content = s.Steps[idx].Content
 		} else if len(s.Steps) > 0 {
-			// Повторяем последний шаг для continuation/loop
+			
 			content = s.Steps[len(s.Steps)-1].Content
 		} else {
 			content = "Done."
@@ -115,9 +115,7 @@ func (s *Scenario) MockServer() *httptest.Server {
 	}))
 }
 
-// AssertResult проверяет результат по assert.txt:
-// строки вида "contains: text" — result должен содержать text
-// строки вида "not_contains: text" — result не должен содержать text
+
 func (s *Scenario) AssertResult(t testing.TB, result string) {
 	t.Helper()
 	if s.AssertContent == "" {

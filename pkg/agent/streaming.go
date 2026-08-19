@@ -10,19 +10,21 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/compress"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 )
 
 type Message struct {
 	Role       string     `json:"role"`
 	Content    string     `json:"content"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"` // ID инструмента для сообщений с role=tool
-	Name       string     `json:"name,omitempty"`         // Имя инструмента для сообщений с role=tool
+	ToolCallID string     `json:"tool_call_id,omitempty"` 
+	Name       string     `json:"name,omitempty"`         
 }
 
 type StreamingConfig struct {
@@ -64,10 +66,10 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 	resp, err := a.client.Do(req)
 	if err != nil {
 		logger.DebugToFile("%s[LLM REQUEST] Failed to send: %v", a.agentPrefix(), err)
-		// Контекст отменён пользователем (/clear) — это НЕ серверная ошибка:
-		// возвращаем как есть, чтобы верхние слои распознали context.Canceled
-		// и не ретраили. DeadlineExceeded трактуем по-старому (таймаут ожидания
-		// недоступного во время рестарта llama-server).
+		
+		
+		
+		
 		if errors.Is(err, context.Canceled) {
 			return nil, err
 		}
@@ -79,14 +81,14 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		// Читаем тело ответа для логирования ошибки
+		
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		a.debugLog.Error("API ERROR: Status %d, response: %s", resp.StatusCode, string(body))
 		logger.DebugToFile("%s[LLM REQUEST] API error: status %d", a.agentPrefix(), resp.StatusCode)
 		apiErr := fmt.Errorf("API error: status %d, body: %s", resp.StatusCode, string(body))
-		// HTTP 5xx (сервер перезагружается/модель грузится) — ретрабильная ошибка.
-		// HTTP 4xx (клиентская ошибка) — не ретраим.
+		
+		
 		if resp.StatusCode >= 500 {
 			return nil, &retryableError{err: apiErr}
 		}
@@ -108,7 +110,7 @@ func (a *agentImpl) buildRequestJSON(config StreamingConfig, messages []Message)
 
 	jsonData, _ := json.Marshal(reqBody)
 
-	// В режиме отладки сохраняем промпт в файл
+	
 	if a.config.Debug {
 		a.saveDebugPrompt(jsonData)
 	}
@@ -116,9 +118,9 @@ func (a *agentImpl) buildRequestJSON(config StreamingConfig, messages []Message)
 	return jsonData
 }
 
-// buildBaseRequestJSON формирует базовый JSON запрос для llama-server API
+
 func (a *agentImpl) buildBaseRequestJSON(model string, messages []Message, stream bool) map[string]interface{} {
-	// max_tokens для output: OUTPUT_TOKEN_MAX, но не больше контекста модели
+	
 	maxOutput := compress.OUTPUT_TOKEN_MAX
 	if a.config.MaxTokens > 0 && a.config.MaxTokens < maxOutput {
 		maxOutput = a.config.MaxTokens
@@ -130,24 +132,25 @@ func (a *agentImpl) buildBaseRequestJSON(model string, messages []Message, strea
 		"max_tokens":  maxOutput,
 		"stream":      stream,
 	}
-	// Pin to specific slot for KV-cache continuity (multi-agent support)
+	
 	if a.config.SlotID >= 0 {
 		req["slot_id"] = a.config.SlotID
 	}
 	return req
 }
 
-// saveDebugPrompt сохраняет промпт в debug/debug_prompt.txt
+
 func (a *agentImpl) saveDebugPrompt(jsonData []byte) {
+	debugDir := filepath.Join(tools.WorkingDir, "debug")
+	promptPath := filepath.Join(debugDir, "debug_prompt.txt")
 	var prettyJSON bytes.Buffer
 	if err := json.Indent(&prettyJSON, jsonData, "", "  "); err != nil {
-		// Если не удалось форматировать - сохраняем как есть
-		os.MkdirAll("debug", 0755)
-		os.WriteFile("debug/debug_prompt.txt", jsonData, 0644)
+		os.MkdirAll(debugDir, 0755)
+		os.WriteFile(promptPath, jsonData, 0644)
 		return
 	}
-	os.MkdirAll("debug", 0755)
-	os.WriteFile("debug/debug_prompt.txt", prettyJSON.Bytes(), 0644)
+	os.MkdirAll(debugDir, 0755)
+	os.WriteFile(promptPath, prettyJSON.Bytes(), 0644)
 }
 
 func (a *agentImpl) createStreamingRequest(ctx context.Context, jsonData []byte) (*http.Request, error) {
@@ -237,7 +240,7 @@ func (a *agentImpl) processSSEData(lineStr string, chunkChan chan StreamChunkEve
 
 	event := a.parseSSEEvent(jsonData)
 
-	// Проверяем на ошибку (например, context_length_exceeded)
+	
 	if event != nil && event.Error != nil {
 		chunkChan <- StreamChunkEvent{
 			Content:      fmt.Sprintf("API Error: %s", event.Error.Message),
@@ -263,7 +266,7 @@ func (a *agentImpl) processSSEData(lineStr string, chunkChan chan StreamChunkEve
 	}
 
 	if finishReason != "" {
-		// ВАЖНО: отправляем finish_reason ВМЕСТЕ с tool_calls если они есть
+		
 		promptTokens, completionTokens := tokenCounts(event)
 		chunkChan <- StreamChunkEvent{
 			Content:          content,
@@ -306,21 +309,20 @@ type SSEEvent struct {
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
-	// Usage — стандартное поле OpenAI (не-стриминг).
+	
 	Usage *struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`
 	} `json:"usage"`
-	// Timings — llama.cpp-специфичное поле в финальном чанке стрима.
+	
 	Timings *struct {
 		PromptN    int `json:"prompt_n"`
 		PredictedN int `json:"predicted_n"`
 	} `json:"timings"`
 }
 
-// tokenCounts возвращает токены (подано, ответ) из события.
-// Приоритет: usage (OpenAI), затем timings (llama.cpp).
+
 func tokenCounts(event *SSEEvent) (int, int) {
 	if event == nil {
 		return 0, 0

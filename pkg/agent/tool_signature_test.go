@@ -35,7 +35,7 @@ func TestXMLToolCallSignature(t *testing.T) {
 }
 
 func TestToolCallSignature_Matching(t *testing.T) {
-	// NATIVE tool call
+	
 	nativeTC := ToolCall{
 		ID:   "call_1",
 		Type: "function",
@@ -45,7 +45,7 @@ func TestToolCallSignature_Matching(t *testing.T) {
 		},
 	}
 
-	// XML tool call с теми же аргументами
+	
 	xmlTC := XMLToolCall{
 		Name: "file_read",
 		Args: map[string]string{"path": "/tmp/test.txt"},
@@ -60,7 +60,7 @@ func TestToolCallSignature_Matching(t *testing.T) {
 }
 
 func TestToolCallSignature_Different(t *testing.T) {
-	// NATIVE tool call
+	
 	nativeTC := ToolCall{
 		ID:   "call_1",
 		Type: "function",
@@ -70,7 +70,7 @@ func TestToolCallSignature_Different(t *testing.T) {
 		},
 	}
 
-	// XML tool call с другими аргументами
+	
 	xmlTC := XMLToolCall{
 		Name: "file_read",
 		Args: map[string]string{"path": "/tmp/other.txt"},
@@ -85,7 +85,7 @@ func TestToolCallSignature_Different(t *testing.T) {
 }
 
 func TestToolCallSignature_DifferentTools(t *testing.T) {
-	// NATIVE tool call - file_read
+	
 	nativeTC := ToolCall{
 		ID:   "call_1",
 		Type: "function",
@@ -95,7 +95,7 @@ func TestToolCallSignature_DifferentTools(t *testing.T) {
 		},
 	}
 
-	// XML tool call - file_write (другой инструмент)
+	
 	xmlTC := XMLToolCall{
 		Name: "file_write",
 		Args: map[string]string{"path": "/tmp/test.txt"},

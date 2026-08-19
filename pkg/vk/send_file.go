@@ -13,17 +13,14 @@ import (
 	"time"
 )
 
-// vkBlockedExtensions — расширения, которые VK upload-сервер отвергает
-// (405 / wrong_file / no_file). Для них файл переименовывается в <base>.txt.
+
 var vkBlockedExtensions = map[string]bool{
 	"html": true, "htm": true, "svg": true, "js": true, "mjs": true,
 	"php": true, "asp": true, "aspx": true, "jsp": true, "exe": true,
 	"bat": true, "cmd": true, "sh": true, "py": true,
 }
 
-// SafeUploadName возвращает имя файла, безопасное для VK upload: если
-// расширение в чёрном списке, добавляет суффикс .txt (index.html ->
-// index.html.txt). Содержимое файла не меняется.
+
 func SafeUploadName(filename string) string {
 	if filename == "" {
 		return filename
@@ -36,8 +33,7 @@ func SafeUploadName(filename string) string {
 	return filename
 }
 
-// UploadAndSendDocument загружает документ в VK и отправляет его пользователю.
-// Возвращает ID отправленного сообщения.
+
 func (c *BotClient) UploadAndSendDocument(filePath string, peerID int64, message string) (int64, error) {
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		return 0, fmt.Errorf("file not found: %s", filePath)
@@ -65,7 +61,7 @@ func (c *BotClient) UploadAndSendDocument(filePath string, peerID int64, message
 	return c.sendMessageWithAttachment(peerID, attachment, message)
 }
 
-// getDocUploadURL запрашивает URL upload-сервера для документа peer-сообщения.
+
 func (c *BotClient) getDocUploadURL(peerID int64) (string, error) {
 	resp, err := c.doRequestGET("docs.getMessagesUploadServer", map[string]interface{}{
 		"type":    "doc",
@@ -89,11 +85,7 @@ func (c *BotClient) getDocUploadURL(peerID int64) (string, error) {
 	return out.Response.UploadURL, nil
 }
 
-// uploadDoc загружает файл на VK upload-сервер вручную собранным multipart
-// (VK отвергает стандартный Go multipart) и возвращает поле "file" из ответа.
-// VK upload-сервер нестабилен: иногда отвечает no_file / 405 на валидный
-// multipart. Поэтому при таких ответах запрашиваем свежий upload URL и
-// повторяем (до 3 раз).
+
 func (c *BotClient) uploadDoc(peerID int64, fileData []byte, filename string) (string, error) {
 	uploadURL, err := c.getDocUploadURL(peerID)
 	if err != nil {
@@ -111,7 +103,7 @@ func (c *BotClient) uploadDoc(peerID int64, fileData []byte, filename string) (s
 		if !retryable || attempt == maxAttempts {
 			break
 		}
-		// VK отказался (no_file/405) — берём свежий upload URL и повторяем.
+		
 		if fresh, uerr := c.getDocUploadURL(peerID); uerr == nil {
 			uploadURL = fresh
 		}
@@ -119,8 +111,7 @@ func (c *BotClient) uploadDoc(peerID int64, fileData []byte, filename string) (s
 	return "", lastErr
 }
 
-// tryUploadOnce выполняет одну попытку upload. Возвращает поле "file" при
-// успехе; при отказе VK (no_file/405) — retryable=true.
+
 func (c *BotClient) tryUploadOnce(uploadURL string, fileData []byte, filename string) (string, bool, error) {
 	boundary := fmt.Sprintf("----WebKitFormBoundary%d", rand.Int63n(1000000000000))
 	var buf bytes.Buffer
@@ -148,7 +139,7 @@ func (c *BotClient) tryUploadOnce(uploadURL string, fileData []byte, filename st
 		return "", false, fmt.Errorf("read upload response: %w", err)
 	}
 	if resp.StatusCode == http.StatusMethodNotAllowed {
-		// 405 — VK временами отвергает multipart; стоит повторить.
+		
 		return "", true, fmt.Errorf("upload rejected (405): %s", truncateBody(body))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -166,15 +157,14 @@ func (c *BotClient) tryUploadOnce(uploadURL string, fileData []byte, filename st
 	if out.File != "" {
 		return out.File, false, nil
 	}
-	// no_file / wrong_file — VK не принял multipart; повторяем со свежим URL.
+	
 	if out.Error == "no_file" || out.Error == "wrong_file" {
 		return "", true, fmt.Errorf("upload rejected by VK (%s): %s", out.Error, truncateBody(body))
 	}
 	return "", false, fmt.Errorf("no file field in upload response: %s", truncateBody(body))
 }
 
-// saveDoc сохраняет загруженный документ через docs.save и возвращает
-// owner_id и id документа.
+
 func (c *BotClient) saveDoc(fileField, title string) (ownerID, docID int64, err error) {
 	resp, err := c.doRequestPOST("docs.save", map[string]interface{}{
 		"file":         fileField,
@@ -203,7 +193,7 @@ func (c *BotClient) saveDoc(fileField, title string) (ownerID, docID int64, err 
 	return out.Response.Doc.OwnerID, out.Response.Doc.ID, nil
 }
 
-// sendMessageWithAttachment отправляет сообщение с вложением пользователю.
+
 func (c *BotClient) sendMessageWithAttachment(peerID int64, attachment, message string) (int64, error) {
 	params := map[string]interface{}{
 		"peer_id":      peerID,
@@ -230,7 +220,7 @@ func (c *BotClient) sendMessageWithAttachment(peerID int64, attachment, message 
 	return extractMessageID(out.Response)
 }
 
-// truncateBody обрезает тело ответа для логирования.
+
 func truncateBody(b []byte) string {
 	const max = 300
 	if len(b) <= max {

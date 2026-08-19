@@ -10,7 +10,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 )
 
-// rulesetChecker implements permissionChecker backed by a real Ruleset.
+
 type rulesetChecker struct {
 	P *permission.Ruleset
 }

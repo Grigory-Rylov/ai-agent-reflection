@@ -10,8 +10,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-// Тестовые сообщения большого размера (переполнение с MaxTokens=1000) с
-// уникальным идентификатором оборота.
+
 func bigUserMsg(i int) string {
 	return fmt.Sprintf("%d-%s", i, strings.Repeat("u", 490))
 }
@@ -20,7 +19,7 @@ func bigAssistantMsg(i int) string {
 	return fmt.Sprintf("%d-%s", i, strings.Repeat("a", 490))
 }
 
-// findLastSummaryIndex возвращает индекс последнего summary-маркера компактизации.
+
 func findLastSummaryIndex(t *testing.T, hist []session.Message) int {
 	t.Helper()
 	for i := len(hist) - 1; i >= 0; i-- {
@@ -31,8 +30,7 @@ func findLastSummaryIndex(t *testing.T, hist []session.Message) int {
 	return -1
 }
 
-// assertNoOldHeadInContext проверяет, что обороты 0..headTurns-1 скрыты из
-// видимого контекста после повторной компактизации.
+
 func assertNoOldHeadInContext(t *testing.T, visible []session.Message, headTurns int) {
 	t.Helper()
 	for i := 0; i < headTurns; i++ {
@@ -45,10 +43,7 @@ func assertNoOldHeadInContext(t *testing.T, visible []session.Message, headTurns
 	}
 }
 
-// assertTailInOrder проверяет, что видимый контекст заканчивается хвостом
-// hist[tsid:], сохранённым в исходном порядке. Маркер+summary текущей
-// компактизации лежат в конце сырой истории, но переносятся в начало
-// видимого контекста — их исключаем из сравнения.
+
 func assertTailInOrder(t *testing.T, hist []session.Message, tsid int, visible []session.Message) {
 	t.Helper()
 	var tail []session.Message
@@ -70,15 +65,12 @@ func assertTailInOrder(t *testing.T, hist []session.Message, tsid int, visible [
 	}
 }
 
-// TestRepeatedCompaction_TailStartIDAlignment проверяет, что при повторной
-// компактизации TailStartID из CompactWithOpenCode указывает на индекс внутри
-// СЫРОЙ истории сессии (не отфильтрованной через FilterCompacted), иначе
-// MarkCompaction сдвигал бы границу хвоста и портил контекст.
+
 func TestRepeatedCompaction_TailStartIDAlignment(t *testing.T) {
 	agent := newPinnedTestAgent(t)
 	s := session.NewSession(session.DefaultConfig())
 
-	// Первая компактизация: 8 оборотов
+	
 	for i := 0; i < 8; i++ {
 		s.AddUserMessage(bigUserMsg(i))
 		s.AddAssistantMessage(bigAssistantMsg(i))
@@ -96,18 +88,18 @@ func TestRepeatedCompaction_TailStartIDAlignment(t *testing.T) {
 		t.Fatalf("expected tail_start_id > 0 after first compaction, got %d", firstTailStart)
 	}
 
-	// Добавляем новые обороты
+	
 	for i := 8; i < 14; i++ {
 		s.AddUserMessage(bigUserMsg(i))
 		s.AddAssistantMessage(bigAssistantMsg(i))
 	}
 
-	// Повторная компактизация
+	
 	agent.compactIfNeeded(ctx, s, false)
 
 	hist := s.GetHistory()
 
-	// История не должна сбрасываться (модель opencode — без Reset)
+	
 	if len(hist) <= len(histAfterFirst) {
 		t.Errorf("history should grow across compactions (no Reset), %d -> %d", len(histAfterFirst), len(hist))
 	}
@@ -136,14 +128,12 @@ func TestRepeatedCompaction_TailStartIDAlignment(t *testing.T) {
 		t.Errorf("second context message should be the compaction marker, got %q", visible[1].Content)
 	}
 
-	// Старые обороты (0..7) скрыты, хвост (12,13) сохранён по порядку
+	
 	assertNoOldHeadInContext(t, visible, 8)
 	assertTailInOrder(t, hist, tsid, visible)
 }
 
-// TestRepeatedCompaction_RawIndexAlignment проверяет, что convertSessionHistoryRaw
-// конвертирует историю 1:1 (без FilterCompacted) — индексы совпадают с
-// session.messages и TailStartID после повторной компактизации валиден.
+
 func TestRepeatedCompaction_RawIndexAlignment(t *testing.T) {
 	agent := newPinnedTestAgent(t)
 	s := session.NewSession(session.DefaultConfig())

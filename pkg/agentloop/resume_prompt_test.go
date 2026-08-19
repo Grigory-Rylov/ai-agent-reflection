@@ -10,9 +10,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-// TestOrchestratorLeafSessionPersistsAndCleans проверяет, что beginLeafSession
-// персистит сессию worker/qa и цепочку, а endLeafSession — удаляет их после
-// успешного завершения.
+
 func TestOrchestratorLeafSessionPersistsAndCleans(t *testing.T) {
 	st := newSubAgentToolTestStore(t)
 	orchestrator := NewOrchestrator(OrchestratorConfig{Store: st})
@@ -43,8 +41,7 @@ func TestOrchestratorLeafSessionPersistsAndCleans(t *testing.T) {
 	}
 }
 
-// TestOrchestratorSaveAgentHistory проверяет, что saveAgentHistory персистит
-// историю сообщений сессии в БД, чтобы ResumeActiveChains восстановил контекст.
+
 func TestOrchestratorSaveAgentHistory(t *testing.T) {
 	st := newSubAgentToolTestStore(t)
 	server, _, _, _ := scriptedLLM(t)
@@ -92,8 +89,7 @@ func TestOrchestratorSaveAgentHistory(t *testing.T) {
 	}
 }
 
-// TestAgentLoopResumeInterruptedTask проверяет, что ResumeInterruptedTask
-// продолжает незавершённую задачу главного агента и снимает resume_prompt.
+
 func TestAgentLoopResumeInterruptedTask(t *testing.T) {
 	st := newSubAgentToolTestStore(t)
 	peerID := int64(1)
@@ -142,8 +138,7 @@ func TestAgentLoopResumeInterruptedTask(t *testing.T) {
 	}
 }
 
-// TestAgentLoopResumeInterruptedTaskNoop проверяет, что без resume_prompt
-// продолжение не запускается.
+
 func TestAgentLoopResumeInterruptedTaskNoop(t *testing.T) {
 	server, _, _, chatCount := scriptedLLM(t)
 	defer server.Close()
@@ -157,8 +152,8 @@ func TestAgentLoopResumeInterruptedTaskNoop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// NewAgentLoop инициализирует токенизатор и обращается к серверу,
-	// поэтому фиксируем счётчик вызовов после создания цикла.
+	
+	
 	before := chatCount()
 	loop.EnsureSession(7)
 	loop.ResumeInterruptedTask(context.Background(), 7)

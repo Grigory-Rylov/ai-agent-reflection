@@ -169,7 +169,7 @@ func TestTodoToolUnknownOperation(t *testing.T) {
 func TestTodoToolFullPipeline(t *testing.T) {
 	tool := &TodoTool{}
 
-	// Add tasks
+	
 	r1, _ := tool.Execute(context.Background(), map[string]string{
 		"operation": "add",
 		"task":      "Write code",
@@ -197,21 +197,21 @@ func TestTodoToolFullPipeline(t *testing.T) {
 		t.Fatal("add 3 failed")
 	}
 
-	// Mark first as in_progress
+	
 	tool.Execute(context.Background(), map[string]string{
 		"operation": "update",
 		"id":        "1",
 		"status":    "in_progress",
 	})
 
-	// Complete first
+	
 	tool.Execute(context.Background(), map[string]string{
 		"operation": "update",
 		"id":        "1",
 		"status":    "completed",
 	})
 
-	// List and verify
+	
 	listResult, _ := tool.Execute(context.Background(), map[string]string{
 		"operation": "list",
 	})
@@ -254,7 +254,7 @@ func TestTodoToolReset(t *testing.T) {
 		"task":      "Task 2",
 	})
 
-	// Verify items exist
+	
 	listResult, _ := tool.Execute(context.Background(), map[string]string{"operation": "list"})
 	if listResult.Data.(map[string]interface{})["count"].(int) != 2 {
 		t.Fatal("expected 2 tasks before reset")
@@ -262,14 +262,14 @@ func TestTodoToolReset(t *testing.T) {
 
 	tool.Reset()
 
-	// Verify items are gone
+	
 	listResult, _ = tool.Execute(context.Background(), map[string]string{"operation": "list"})
 	data := listResult.Data.(map[string]interface{})
 	if data["count"].(int) != 0 {
 		t.Errorf("expected 0 tasks after reset, got %d", data["count"])
 	}
 
-	// New add should start from id=1 again
+	
 	addResult, _ := tool.Execute(context.Background(), map[string]string{
 		"operation": "add",
 		"task":      "New task after reset",

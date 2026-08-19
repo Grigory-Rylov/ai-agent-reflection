@@ -215,7 +215,7 @@ content
 func TestParseXMLToolCalls_PartialToolCall(t *testing.T) {
 	input := `<tool_call>
 <function=time_get`
-	// Malformed — no closing tags, should return content as-is
+	
 	result := ParseXMLToolCalls(input)
 	if len(result.ToolCalls) != 0 {
 		t.Errorf("expected 0 tool calls, got %d", len(result.ToolCalls))
@@ -228,8 +228,8 @@ func TestParseXMLToolCalls_PartialToolCall(t *testing.T) {
 func TestParseXMLToolCalls_MissingCloseToolCall(t *testing.T) {
 	input := `<tool_call<function=time_get>
 </function>`
-	// Has <tool_call< opening but missing </tool_call< closing
-	// Parser should still find the tool call via fallback to no-wrapper format
+	
+	
 	result := ParseXMLToolCalls(input)
 	if len(result.ToolCalls) != 1 {
 		t.Errorf("expected 1 tool call, got %d", len(result.ToolCalls))
@@ -240,7 +240,7 @@ func TestParseXMLToolCalls_MissingCloseToolCall(t *testing.T) {
 }
 
 func TestParseXMLToolCalls_TextBetweenParams(t *testing.T) {
-	// If there's text between <parameter> and </parameter> that looks like XML
+	
 	input := `<tool_call>
 <function=file_write>
 <parameter=content>Hello <world> text</parameter>
@@ -554,9 +554,6 @@ func TestParseXMLToolCalls_ExtraSpacesInTags(t *testing.T) {
 	assertParse(t, input, expected)
 }
 
-// ============================================================
-// Тесты для формата БЕЗ ิ обёртки
-// ============================================================
 
 func TestParseXMLToolCalls_NoWrapper_FileRead(t *testing.T) {
 	input := `<function=read_file>
@@ -644,7 +641,7 @@ Here is the result.`
 	if result.ToolCalls[0].Name != "read_file" {
 		t.Errorf("expected read_file, got %q", result.ToolCalls[0].Name)
 	}
-	// Content должен содержать текст до и после
+	
 	if !strings.Contains(result.Content, "Let me read the file") {
 		t.Errorf("content should contain 'Let me read the file', got %q", result.Content)
 	}
@@ -685,9 +682,6 @@ func TestParseXMLToolCalls_NoWrapper_NestedTags(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Тесты для игнорирования XML в code blocks
-// ============================================================
 
 func TestParseXMLToolCalls_CodeBlockIgnored(t *testing.T) {
 	input := "Here is an example:\n```xml\n<function=time_get>\n</function>\n```\nNo tool calls here."
@@ -730,11 +724,7 @@ func TestParseXMLToolCalls_MultipleCodeBlocks(t *testing.T) {
 	}
 }
 
-// TestParseXMLToolCalls_CodeBlockInParamValue — регрессионный тест для бага,
-// когда внутри <parameter=task> есть секция ```\n```go\n...\n``` с нечётным
-// количеством backtick-последовательностей. Это заставляло isInCodeBlock()
-// блокировать matchCloseTag для </parameter>, из-за чего парсер застревал
-// в stateParam до EOF и возвращал 0 tool calls.
+
 func TestParseXMLToolCalls_CodeBlockInParamValue(t *testing.T) {
 	bt := "\x60\x60\x60"
 	input := "<tool_call>\n<function=subagent>\n<parameter=name>\nworker\n</parameter>\n<parameter=task>\nСоздать Go приложение\n\nНапишите код:\n" + bt + "\n" + bt + "go\n<код>\n" + bt + "\n</parameter>\n</function>\n</tool_call>"
@@ -760,8 +750,7 @@ func TestParseXMLToolCalls_CodeBlockInParamValue(t *testing.T) {
 	}
 }
 
-// TestParseXMLToolCalls_CodeBlockInParamValue_EvenCount — проверка,
-// что нормальный code block (с чётным count) по-прежнему работает.
+
 func TestParseXMLToolCalls_CodeBlockInParamValue_EvenCount(t *testing.T) {
 	bt := "\x60\x60\x60"
 	input := "<tool_call>\n<function=subagent>\n<parameter=name>\nqa\n</parameter>\n<parameter=task>\n" + bt + "go\npackage main\nimport \"fmt\"\n" + bt + "\n</parameter>\n</function>\n</tool_call>"
@@ -781,7 +770,7 @@ func TestParseXMLToolCalls_CodeBlockInParamValue_EvenCount(t *testing.T) {
 	}
 }
 
-// Тест формата который модель реально выдаёт с префиксом
+
 func TestParseXMLToolCalls_NoWrapper_WithContentStartPrefix(t *testing.T) {
 	input := `_CONTENT_START__
 <function=read_file>
@@ -800,10 +789,6 @@ ___`
 	}
 }
 
-// ============================================================
-// Тесты для упрощённого формата параметров <path>value</path>
-// (без parameter= префикса)
-// ============================================================
 
 func TestParseXMLToolCalls_SimplifiedParams_SingleParam(t *testing.T) {
 	input := `<function=read_file>
@@ -844,9 +829,9 @@ func TestParseXMLToolCalls_SimplifiedParams_MultipleParams(t *testing.T) {
 }
 
 func TestParseXMLToolCalls_SimplifiedParams_MultipleValuesForSameParam(t *testing.T) {
-	// Модель может сгенерировать несколько параметров с одинаковым именем
-	// (например, несколько path для read_file)
-	// В этом случае значения должны быть объединены или взято последнее
+	
+	
+	
 	input := `<function=read_file>
 <path>/tmp/file1.txt</path>
 <path>/tmp/file2.txt</path>
@@ -860,7 +845,7 @@ func TestParseXMLToolCalls_SimplifiedParams_MultipleValuesForSameParam(t *testin
 	if tc.Name != "read_file" {
 		t.Errorf("expected read_file, got %q", tc.Name)
 	}
-	// Проверяем, что путь был распарсен (последнее значение или все объединены)
+	
 	if tc.Args["path"] == "" {
 		t.Errorf("expected non-empty path, got empty")
 	}
@@ -884,7 +869,7 @@ Line 3</content>
 }
 
 func TestParseXMLToolCalls_SimplifiedParams_RealWorldExample(t *testing.T) {
-	// Реальный пример из баг-репорта
+	
 	input := `<function=read_file>
 <path>/Users/g.rylov/Documents/projects/go/confluence_exporter/out/Разработка_ Документация.html</path>
 <path>/Users/g.rylov/Documents/projects/go/confluence_exporter/out/Сервис TestData.html</path>
@@ -900,9 +885,7 @@ func TestParseXMLToolCalls_SimplifiedParams_RealWorldExample(t *testing.T) {
 	}
 }
 
-// TestParseXMLToolCalls_FunctionTagContentFormat — тест для формата,
-// который реально выдаёт модель: <function>name</function> (значение как содержимое тега).
-// Параметры могут быть внутри <function>...</function>.
+
 func TestParseXMLToolCalls_FunctionTagContentFormat(t *testing.T) {
 	input := `<tool_call>
 <function>read_file_text<parameter=path>
@@ -922,8 +905,7 @@ func TestParseXMLToolCalls_FunctionTagContentFormat(t *testing.T) {
 	assertParse(t, input, expected)
 }
 
-// TestParseXMLToolCalls_FunctionTagContentFormat_Malformed — тест для формата,
-// где модель пишет <function>read_file_text> (без закрывающего тега, с > в конце содержимого).
+
 func TestParseXMLToolCalls_FunctionTagContentFormat_Malformed(t *testing.T) {
 	input := `<tool_call>
 <function>read_file_text>
@@ -945,7 +927,7 @@ func TestParseXMLToolCalls_FunctionTagContentFormat_Malformed(t *testing.T) {
 	}
 }
 
-// TestParseXMLToolCalls_FunctionTagContentFormat_NoWrapper — упрощённый формат без <tool_call>
+
 func TestParseXMLToolCalls_FunctionTagContentFormat_NoWrapper(t *testing.T) {
 	input := `<function>time_get</function>`
 	result := ParseXMLToolCalls(input)
@@ -957,9 +939,7 @@ func TestParseXMLToolCalls_FunctionTagContentFormat_NoWrapper(t *testing.T) {
 	}
 }
 
-// TestParseXMLToolCalls_MalformedCloseTagInFunction проверяет, что парсер
-// корректно обрабатывает malformed XML: <tool_call><function=name></parameter></task></tool_call>
-// (LLM закрывает </parameter> и </task> вместо </function>).
+
 func TestParseXMLToolCalls_MalformedCloseTagInFunction(t *testing.T) {
 	input := "<tool_call>\n<function=review_approve>\n</parameter>\n</task>\n</tool_call>"
 	result := ParseXMLToolCalls(input)
@@ -971,8 +951,7 @@ func TestParseXMLToolCalls_MalformedCloseTagInFunction(t *testing.T) {
 	}
 }
 
-// TestParseXMLToolCalls_SubagentAttrParam тестирует формат:
-// <tool_call><function=subagent><parameter name="subagent_type">worker</parameter><parameter name="prompt">Create HTTP server</parameter></function></tool_call>
+
 func TestParseXMLToolCalls_SubagentAttrParam(t *testing.T) {
 	input := `<tool_call><function=subagent><parameter name="subagent_type">worker</parameter><parameter name="prompt">Create a simple HTTP server in Go</parameter></function></tool_call>`
 	expected := XMLParseResult{
@@ -989,8 +968,7 @@ func TestParseXMLToolCalls_SubagentAttrParam(t *testing.T) {
 	assertParse(t, input, expected)
 }
 
-// TestParseXMLToolCalls_SubagentAttrParamNoWrapper тестирует формат без <tool_call> обёртки:
-// <function=subagent><parameter name="subagent_type">worker</parameter><parameter name="prompt">Create HTTP server</parameter></function>
+
 func TestParseXMLToolCalls_SubagentAttrParamNoWrapper(t *testing.T) {
 	input := `<function=subagent><parameter name="subagent_type">worker</parameter><parameter name="prompt">Create a simple HTTP server in Go</parameter></function>`
 	expected := XMLParseResult{
@@ -1007,8 +985,7 @@ func TestParseXMLToolCalls_SubagentAttrParamNoWrapper(t *testing.T) {
 	assertParse(t, input, expected)
 }
 
-// TestParseXMLToolCalls_SubagentSimpleTags тестирует упрощённый формат:
-// <function=subagent><subagent_type>worker</subagent_type><prompt>Create</prompt></function>
+
 func TestParseXMLToolCalls_SubagentSimpleTags(t *testing.T) {
 	input := `<function=subagent><subagent_type>worker</subagent_type><prompt>Create HTTP server</prompt></function>`
 	expected := XMLParseResult{
@@ -1025,8 +1002,7 @@ func TestParseXMLToolCalls_SubagentSimpleTags(t *testing.T) {
 	assertParse(t, input, expected)
 }
 
-// TestParseXMLToolCalls_SubagentMixedFormats тестирует смешанный формат:
-// <function=subagent><parameter=subagent_type>worker</parameter><parameter name="prompt">Create</parameter></function>
+
 func TestParseXMLToolCalls_SubagentMixedFormats(t *testing.T) {
 	input := `<function=subagent><parameter=type>worker</parameter><parameter name="prompt">Create HTTP server</parameter></function>`
 	expected := XMLParseResult{
@@ -1046,8 +1022,7 @@ func TestParseXMLToolCalls_SubagentMixedFormats(t *testing.T) {
 	}
 }
 
-// TestParseXMLToolCalls_SubagentStandardFormat тестирует стандартный XML формат:
-// <tool_call><function=subagent><parameter name="subagent_type">worker</parameter><parameter name="prompt">task</parameter><parameter name="description">desc</parameter></function></tool_call>
+
 func TestParseXMLToolCalls_SubagentStandardFormat(t *testing.T) {
 	input := `<tool_call>
 <function=subagent>
@@ -1071,11 +1046,11 @@ func TestParseXMLToolCalls_SubagentStandardFormat(t *testing.T) {
 	assertParse(t, input, expected)
 }
 
-// TestParseXMLToolCalls_AttrParamInReasoning тестирует формат с аттрибутами в reasoning тексте
+
 func TestParseXMLToolCalls_AttrParamInReasoning(t *testing.T) {
 	input := "I'll create the HTTP server for you.\n\n<function=subagent>\n<parameter name=\"subagent_type\">worker</parameter>\n<parameter name=\"prompt\">Create a simple HTTP server in Go that serves GET /hello returning {\"message\":\"hello\"}. Use only stdlib. Listen on :8080.</parameter>\n</function>"
 	result := ParseXMLToolCalls(input)
-	// Check tool calls first
+	
 	if len(result.ToolCalls) != 1 {
 		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
 	}
@@ -1093,7 +1068,7 @@ func TestParseXMLToolCalls_AttrParamInReasoning(t *testing.T) {
 	}
 }
 
-// TestParseXMLToolCalls_EmptyAttrParam тестирует пустые значения в attr параметрах
+
 func TestParseXMLToolCalls_EmptyAttrParam(t *testing.T) {
 	input := `<function=subagent><parameter name="name"></parameter><parameter name="prompt">task</parameter></function>`
 	result := ParseXMLToolCalls(input)
@@ -1105,12 +1080,12 @@ func TestParseXMLToolCalls_EmptyAttrParam(t *testing.T) {
 	}
 }
 
-// TestParseXMLToolCalls_SubagentAllAliases тестирует что все алиасы имён параметров работают
+
 func TestParseXMLToolCalls_SubagentAllAliases(t *testing.T) {
 	tests := []struct {
 		name     string
 		xml      string
-		expected string // expected value for the "name" equivalent
+		expected string 
 	}{
 		{
 			"parameter=subagent_type",
@@ -1155,7 +1130,7 @@ func TestParseXMLToolCalls_SubagentAllAliases(t *testing.T) {
 			if len(result.ToolCalls) != 1 {
 				t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
 			}
-			// Check that at least one of the name aliases has the expected value
+			
 			args := result.ToolCalls[0].Args
 			found := args["subagent_type"] == tt.expected ||
 				args["name"] == tt.expected ||
@@ -1164,7 +1139,7 @@ func TestParseXMLToolCalls_SubagentAllAliases(t *testing.T) {
 			if !found {
 				t.Errorf("no name alias found with value %q in args: %v", tt.expected, args)
 			}
-			// Check that prompt or task has content
+			
 			if args["prompt"] == "" && args["task"] == "" {
 				t.Errorf("no task/prompt found in args: %v", args)
 			}
