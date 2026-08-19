@@ -327,7 +327,7 @@ func (t *ShellExecuteTool) Execute(ctx context.Context, inputs map[string]string
 	case <-execCtx.Done():
 		
 		if cmd.Process != nil {
-			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // nolint: errcheck
+			killProcessGroup(cmd.Process.Pid)
 		}
 		<-done 
 		return ToolResult{
@@ -973,4 +973,9 @@ func (t *EditTool) Execute(ctx context.Context, inputs map[string]string) (ToolR
 			"new_length":   len(newString),
 		},
 	}, nil
+}
+
+
+func killProcessGroup(pid int) {
+	_ = syscall.Kill(-pid, syscall.SIGKILL)
 }

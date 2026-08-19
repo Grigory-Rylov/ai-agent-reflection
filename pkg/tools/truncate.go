@@ -128,7 +128,12 @@ func cleanupTruncationDir(dir string) {
 			continue
 		}
 		if info.ModTime().Before(cutoff) {
-			os.Remove(filepath.Join(dir, entry.Name())) // nolint: errcheck
+			removeStaleToolOutput(filepath.Join(dir, entry.Name()))
 		}
 	}
+}
+
+
+func removeStaleToolOutput(path string) {
+	_ = os.Remove(path)
 }
