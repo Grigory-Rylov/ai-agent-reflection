@@ -10,19 +10,15 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/permission"
 )
 
-
 var globalAccessController *access.Controller
-
 
 func SetAccessController(ctrl *access.Controller) {
 	globalAccessController = ctrl
 }
 
-
 func GetAccessController() *access.Controller {
 	return globalAccessController
 }
-
 
 func CheckPathAllowed(resolvedPath string) error {
 	if globalAccessController == nil {
@@ -42,7 +38,6 @@ func CheckPathAllowed(resolvedPath string) error {
 	return nil
 }
 
-
 func formatDirs(dirs []string) string {
 	if len(dirs) == 0 {
 		return "none"
@@ -54,14 +49,12 @@ func formatDirs(dirs []string) string {
 	return strings.Join(quoted, ", ")
 }
 
-
 type FileToolKind int
 
 const (
-	ToolRead  FileToolKind = iota 
-	ToolWrite                     
+	ToolRead  FileToolKind = iota
+	ToolWrite
 )
-
 
 func FileToolPaths(toolName string, args map[string]string) []string {
 	switch toolName {
@@ -97,11 +90,10 @@ func FileToolPaths(toolName string, args map[string]string) []string {
 		}
 		return []string{"."}
 	case "shell_execute", "shell":
-		return nil 
+		return nil
 	}
 	return nil
 }
-
 
 var fileCommands = map[string]bool{
 	"cat": true, "less": true, "more": true, "head": true, "tail": true,
@@ -113,11 +105,9 @@ var fileCommands = map[string]bool{
 	"git": true,
 }
 
-
 func isAbsolutePath(s string) bool {
 	return len(s) > 0 && s[0] == '/'
 }
-
 
 func looksLikePath(token string) bool {
 	if strings.HasPrefix(token, "-") {
@@ -126,7 +116,7 @@ func looksLikePath(token string) bool {
 	if len(token) > 0 && (token[0] == '\'' || token[0] == '"' || token[0] == '`') {
 		return false
 	}
-	
+
 	if strings.ContainsAny(token, "?*[]!") {
 		return false
 	}
@@ -169,7 +159,6 @@ func looksLikePath(token string) bool {
 	return false
 }
 
-
 func ExtractShellPaths(command string) []string {
 	if command == "" {
 		return nil
@@ -197,7 +186,6 @@ func ExtractShellPaths(command string) []string {
 	return paths
 }
 
-
 func PathsAllAllowed(paths []string) bool {
 	ctrl := GetAccessController()
 	if ctrl == nil {
@@ -215,16 +203,13 @@ func PathsAllAllowed(paths []string) bool {
 	return true
 }
 
-
 func ShellPathsAllAllowed(paths []string) bool {
 	return PathsAllAllowed(paths)
 }
 
-
 var cwdShellCommands = map[string]bool{
 	"cd": true, "chdir": true, "popd": true, "pushd": true,
 }
-
 
 func ShellCommandPathsAllowed(command string) bool {
 	if command == "" {
@@ -239,7 +224,6 @@ func ShellCommandPathsAllowed(command string) bool {
 	}
 	return true
 }
-
 
 func shellSubcommandPathsAllowed(sub string, devPaths map[string]bool) bool {
 	parts := permission.Tokenize(sub)
@@ -257,7 +241,6 @@ func shellSubcommandPathsAllowed(sub string, devPaths map[string]bool) bool {
 	return fileCommands[cmd]
 }
 
-
 func commandParts(parts []string) ([]string, string) {
 	i := 0
 	for i < len(parts) && isEnvAssignment(parts[i]) {
@@ -274,7 +257,6 @@ func commandParts(parts []string) ([]string, string) {
 	return rest, cmd
 }
 
-
 func isEnvAssignment(token string) bool {
 	eq := strings.IndexByte(token, '=')
 	if eq <= 0 || strings.HasPrefix(token, "-") {
@@ -283,13 +265,11 @@ func isEnvAssignment(token string) bool {
 	return !strings.Contains(token[:eq], "/")
 }
 
-
 var wrapperCommands = map[string]bool{
 	"nohup": true, "time": true, "env": true, "sudo": true,
 	"xargs": true, "nice": true, "ionice": true, "stdbuf": true,
 	"setsid": true, "timeout": true, "command": true, "exec": true,
 }
-
 
 func wrapperInterpreterToken(rest []string, cmd string) string {
 	if !wrapperCommands[cmd] {
@@ -309,13 +289,11 @@ func wrapperInterpreterToken(rest []string, cmd string) string {
 	return ""
 }
 
-
 var knownInterpreterBasenames = map[string]bool{
 	"bash": true, "sh": true, "dash": true, "zsh": true, "ksh": true,
 	"python": true, "python2": true, "python3": true, "perl": true,
 	"ruby": true, "node": true, "php": true, "lua": true, "pwsh": true,
 }
-
 
 func isKnownInterpreter(token string) bool {
 	name := token
@@ -325,7 +303,6 @@ func isKnownInterpreter(token string) bool {
 	return knownInterpreterBasenames[name]
 }
 
-
 func isExplicitPathToken(token string) bool {
 	if strings.HasPrefix(token, "-") {
 		return false
@@ -333,14 +310,10 @@ func isExplicitPathToken(token string) bool {
 	return isAbsolutePath(token) || strings.HasPrefix(token, "~") || token == ".."
 }
 
-
 func isDiscardPath(p string) bool {
 	return p == "/dev/null"
 }
 
-
-// nestedSubRe matches $(...) command substitutions so file operations inside
-// them are treated as file accesses too (e.g. "echo $(cat /etc/passwd)").
 var nestedSubRe = regexp.MustCompile(`\$\(([^)]+)\)`)
 
 func collectFilePaths(sub string, devPaths map[string]bool) []string {
@@ -378,7 +351,6 @@ func collectFilePaths(sub string, devPaths map[string]bool) []string {
 		}
 	}
 
-	// File paths referenced inside $(...) subcommands are file accesses too.
 	for _, m := range nestedSubRe.FindAllStringSubmatch(sub, -1) {
 		inner := m[1]
 		innerDev := collectDevicePaths(permission.SplitCommands(inner))
@@ -390,7 +362,6 @@ func collectFilePaths(sub string, devPaths map[string]bool) []string {
 	}
 	return paths
 }
-
 
 func remoteHostPaths(sub string) ([]string, bool) {
 	parts := permission.Tokenize(sub)
@@ -412,7 +383,6 @@ func remoteHostPaths(sub string) ([]string, bool) {
 	return nil, false
 }
 
-
 func adbVerbIndex(parts []string) (int, []string) {
 	for i := 1; i < len(parts); i++ {
 		switch parts[i] {
@@ -427,7 +397,6 @@ func adbVerbIndex(parts []string) (int, []string) {
 	}
 	return -1, nil
 }
-
 
 func adbHostPaths(parts []string) []string {
 	verbIdx, rest := adbVerbIndex(parts)
@@ -448,7 +417,6 @@ func adbHostPaths(parts []string) []string {
 	return []string{}
 }
 
-
 func isPathArgToken(tok string) bool {
 	if isShellOperatorToken(tok) {
 		return false
@@ -458,7 +426,6 @@ func isPathArgToken(tok string) bool {
 	}
 	return looksLikePath(tok) || isExplicitPathToken(tok)
 }
-
 
 func sshHostPaths(parts []string) []string {
 	var host []string
@@ -478,7 +445,6 @@ func sshHostPaths(parts []string) []string {
 	return host
 }
 
-
 func scpHostPaths(parts []string) []string {
 	var local []string
 	for _, tok := range parts[1:] {
@@ -492,7 +458,6 @@ func scpHostPaths(parts []string) []string {
 	return local
 }
 
-
 func isRemoteSCPToken(tok string) bool {
 	idx := strings.IndexByte(tok, ':')
 	if idx <= 0 {
@@ -501,7 +466,6 @@ func isRemoteSCPToken(tok string) bool {
 	slash := strings.IndexByte(tok, '/')
 	return slash < 0 || idx < slash
 }
-
 
 func collectDevicePaths(subs []string) map[string]bool {
 	dev := make(map[string]bool)
@@ -512,7 +476,6 @@ func collectDevicePaths(subs []string) map[string]bool {
 	}
 	return dev
 }
-
 
 func devicePathsIn(sub string) []string {
 	parts := permission.Tokenize(sub)
@@ -534,7 +497,6 @@ func devicePathsIn(sub string) []string {
 	return nil
 }
 
-
 func adbDevicePaths(parts []string) []string {
 	verbIdx, rest := adbVerbIndex(parts)
 	if verbIdx < 0 {
@@ -555,7 +517,6 @@ func adbDevicePaths(parts []string) []string {
 	return nil
 }
 
-
 func sshRemotePaths(parts []string) []string {
 	var out []string
 	for i := 1; i < len(parts); i++ {
@@ -573,7 +534,6 @@ func sshRemotePaths(parts []string) []string {
 	return out
 }
 
-
 func scpRemotePaths(parts []string) []string {
 	var out []string
 	for _, tok := range parts[1:] {
@@ -588,7 +548,6 @@ func scpRemotePaths(parts []string) []string {
 	}
 	return out
 }
-
 
 func pathLikeTokens(tokens []string) []string {
 	var out []string
@@ -606,7 +565,6 @@ func pathLikeTokens(tokens []string) []string {
 	return out
 }
 
-
 func isShellOperatorToken(tok string) bool {
 	if strings.HasPrefix(tok, ">") || strings.HasPrefix(tok, "<") {
 		return true
@@ -618,7 +576,6 @@ func isShellOperatorToken(tok string) bool {
 	return false
 }
 
-
 func cwdTargetAllowed(parts []string) bool {
 	if parts[0] == "popd" {
 		return false
@@ -628,7 +585,6 @@ func cwdTargetAllowed(parts []string) bool {
 	}
 	return PathsAllAllowed(parts[1:2])
 }
-
 
 func redirectionTargets(sub string) []string {
 	var targets []string
@@ -651,7 +607,6 @@ func redirectionTargets(sub string) []string {
 	return targets
 }
 
-
 func ShellCommandHasFilePaths(command string) bool {
 	if command == "" {
 		return false
@@ -666,11 +621,9 @@ func ShellCommandHasFilePaths(command string) bool {
 	return false
 }
 
-
 func shellSubcommandHasFilePaths(sub string, devPaths map[string]bool) bool {
 	return len(collectFilePaths(sub, devPaths)) > 0
 }
-
 
 func ShellCommandFilesystemSafe(command string) bool {
 	if command == "" {
@@ -687,7 +640,6 @@ func ShellCommandFilesystemSafe(command string) bool {
 	return true
 }
 
-
 func CheckToolArgs(toolName string, args map[string]string) error {
 	paths := FileToolPaths(toolName, args)
 	for _, p := range paths {
@@ -698,7 +650,7 @@ func CheckToolArgs(toolName string, args map[string]string) error {
 		if err := CheckPathAllowed(resolved); err != nil {
 			return err
 		}
-		
+
 		if toolName == "glob" || toolName == "find_files" {
 			if pattern, ok := args["pattern"]; ok && pattern != "" {
 				matchPath := filepath.Join(resolved, pattern)

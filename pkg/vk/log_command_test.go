@@ -8,14 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 )
 
-// newLogVKServer mocks the VK API endpoints used by UploadAndSendDocument:
-// docs.getMessagesUploadServer -> upload -> docs.save -> messages.send.
-func newLogVKServer(t *testing.T, wantPeer int64) *httptest.Server {
+func newLogVKServer(t *testing.T, wantPeer int64, savedDocs *atomic.Int32) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -29,6 +28,7 @@ func newLogVKServer(t *testing.T, wantPeer int64) *httptest.Server {
 		case "/upload":
 			json.NewEncoder(w).Encode(map[string]interface{}{"file": "uploaded_file_data"})
 		case "/method/docs.save":
+			savedDocs.Add(1)
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"response": map[string]interface{}{
 					"doc": map[string]interface{}{"id": float64(1), "owner_id": float64(-1)},
@@ -48,8 +48,6 @@ func newLogVKServer(t *testing.T, wantPeer int64) *httptest.Server {
 	}))
 }
 
-// newLogHandler builds a BotHandler with a mock VK client that verifies the
-// file is delivered to wantPeer. mainPeerID configures the reply redirection.
 func newLogHandler(t *testing.T, logPath string, mainPeerID, wantPeer int64) (*BotHandler, *mockAgentLoop) {
 	t.Helper()
 
@@ -62,7 +60,8 @@ func newLogHandler(t *testing.T, logPath string, mainPeerID, wantPeer int64) (*B
 		t.Fatal(err)
 	}
 
-	server := newLogVKServer(t, wantPeer)
+	var savedDocs atomic.Int32
+	server := newLogVKServer(t, wantPeer, &savedDocs)
 	t.Cleanup(server.Close)
 
 	client := NewBotClient("test_token")
@@ -113,7 +112,6 @@ func TestLogCommandRoutesToMainPeer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// mainPeerID=999: the file must be delivered there, not to the source peer.
 	handler, _ := newLogHandler(t, tmp, 999, 999)
 
 	response := handler.ProcessMessage("/log", 12345)
@@ -123,8 +121,7 @@ func TestLogCommandRoutesToMainPeer(t *testing.T) {
 }
 
 func TestLogCommandMissingFile(t *testing.T) {
-	// logger.New creates the file (O_CREATE); remove it so handleLogCommand
-	// sees a missing file and returns an error instead of trying to send.
+
 	missing := filepath.Join(t.TempDir(), "nope.log")
 	logCfg := logger.DefaultConfig()
 	logCfg.File = missing

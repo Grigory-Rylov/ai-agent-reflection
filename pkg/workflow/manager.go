@@ -10,7 +10,6 @@ import (
 	"time"
 )
 
-
 type Role string
 
 const (
@@ -19,44 +18,40 @@ const (
 	ReviewerRole    Role = "reviewer"
 )
 
-
 type WorkflowStatus string
 
 const (
-	WorkflowPending    WorkflowStatus = "pending"     
-	WorkflowInProgress WorkflowStatus = "in_progress" 
-	WorkflowCompleted  WorkflowStatus = "completed"   
-	WorkflowFailed     WorkflowStatus = "failed"      
-	WorkflowCancelled  WorkflowStatus = "cancelled"   
+	WorkflowPending    WorkflowStatus = "pending"
+	WorkflowInProgress WorkflowStatus = "in_progress"
+	WorkflowCompleted  WorkflowStatus = "completed"
+	WorkflowFailed     WorkflowStatus = "failed"
+	WorkflowCancelled  WorkflowStatus = "cancelled"
 )
-
 
 type TaskStatus string
 
 const (
-	TaskPending         TaskStatus = "pending"          
-	TaskInProgress      TaskStatus = "in_progress"      
-	TaskApproved        TaskStatus = "approved"         
-	TaskNeedsRevision   TaskStatus = "needs_revision"   
-	TaskCoordReview     TaskStatus = "coord_review"     
+	TaskPending         TaskStatus = "pending"
+	TaskInProgress      TaskStatus = "in_progress"
+	TaskApproved        TaskStatus = "approved"
+	TaskNeedsRevision   TaskStatus = "needs_revision"
+	TaskCoordReview     TaskStatus = "coord_review"
 )
-
 
 type Workflow struct {
 	ID             string         `json:"id"`
 	UserPeerID     int64          `json:"user_peer_id"`
-	UserOriginal   string         `json:"user_original"`       
+	UserOriginal   string         `json:"user_original"`
 	Status         WorkflowStatus `json:"status"`
 	CreatedAt      time.Time      `json:"created_at"`
 	UpdatedAt      time.Time      `json:"updated_at"`
-	CurrentTaskIdx int            `json:"current_task_idx"`  
+	CurrentTaskIdx int            `json:"current_task_idx"`
 	TotalTasks     int            `json:"-"`
 	Tasks          []Task         `json:"tasks"`
 	Artifacts      []Artifact     `json:"artifacts"`
-	LastStatus     string         `json:"last_status"`    
-	Summary        string         `json:"summary"`        
+	LastStatus     string         `json:"last_status"`
+	Summary        string         `json:"summary"`
 }
-
 
 type Task struct {
 	ID             string      `json:"id"`
@@ -64,8 +59,8 @@ type Task struct {
 	Description    string      `json:"description"`
 	Assignee       Role        `json:"assignee"`
 	Status         TaskStatus  `json:"status"`
-	Feedback       string      `json:"feedback,omitempty"` 
-	Result         string      `json:"result,omitempty"`   
+	Feedback       string      `json:"feedback,omitempty"`
+	Result         string      `json:"result,omitempty"`
 	Artifacts      []Artifact  `json:"artifacts,omitempty"`
 	ReviewedBy     string      `json:"reviewed_by,omitempty"`
 	ApprovedBy     string      `json:"approved_by,omitempty"`
@@ -75,23 +70,20 @@ type Task struct {
 	ApprovedAt     *time.Time  `json:"approved_at,omitempty"`
 }
 
-
 type Artifact struct {
 	Name    string `json:"name"`
-	Path    string `json:"path"`      
-	Type    string `json:"type"`      
-	Content string `json:"content"`   
-	SHA256  string `json:"sha256"`    
+	Path    string `json:"path"`
+	Type    string `json:"type"`
+	Content string `json:"content"`
+	SHA256  string `json:"sha256"`
 }
-
 
 type WorkflowManager struct {
 	mu        sync.RWMutex
-	workflows map[string]*Workflow 
-	peers     map[int64][]*Workflow 
-	baseDir   string                
+	workflows map[string]*Workflow
+	peers     map[int64][]*Workflow
+	baseDir   string
 }
-
 
 func NewWorkflowManager(baseDir string) *WorkflowManager {
 	if baseDir == "" {
@@ -103,7 +95,6 @@ func NewWorkflowManager(baseDir string) *WorkflowManager {
 		baseDir:   baseDir,
 	}
 }
-
 
 func (m *WorkflowManager) CreateWorkflow(peerID int64, userOriginal string) *Workflow {
 	m.mu.Lock()
@@ -128,13 +119,11 @@ func (m *WorkflowManager) CreateWorkflow(peerID int64, userOriginal string) *Wor
 	return workflow
 }
 
-
 func (m *WorkflowManager) GetWorkflow(id string) *Workflow {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.workflows[id]
 }
-
 
 func (m *WorkflowManager) GetUserWorkflows(peerID int64) []*Workflow {
 	m.mu.RLock()
@@ -143,7 +132,6 @@ func (m *WorkflowManager) GetUserWorkflows(peerID int64) []*Workflow {
 	copy(wfs, m.peers[peerID])
 	return wfs
 }
-
 
 func (m *WorkflowManager) StartWorkflow(id string) error {
 	m.mu.Lock()
@@ -160,12 +148,8 @@ func (m *WorkflowManager) StartWorkflow(id string) error {
 	workflow.UpdatedAt = time.Now()
 	m.mu.Unlock()
 
-	
-	
-
 	return nil
 }
-
 
 func (m *WorkflowManager) CancelWorkflow(id string) error {
 	m.mu.Lock()
@@ -180,7 +164,6 @@ func (m *WorkflowManager) CancelWorkflow(id string) error {
 	workflow.UpdatedAt = time.Now()
 	return nil
 }
-
 
 func (m *WorkflowManager) AddTask(workflowID string, task Task) error {
 	m.mu.Lock()
@@ -201,7 +184,6 @@ func (m *WorkflowManager) AddTask(workflowID string, task Task) error {
 	m.mu.Unlock()
 	return nil
 }
-
 
 func (m *WorkflowManager) UpdateTaskStatus(workflowID, taskID string, status TaskStatus, feedback, result string) error {
 	m.mu.Lock()
@@ -225,7 +207,7 @@ func (m *WorkflowManager) UpdateTaskStatus(workflowID, taskID string, status Tas
 			workflow.UpdatedAt = now
 
 			if status == TaskNeedsRevision {
-				workflow.CurrentTaskIdx = i 
+				workflow.CurrentTaskIdx = i
 			}
 			m.mu.Unlock()
 			return nil
@@ -235,7 +217,6 @@ func (m *WorkflowManager) UpdateTaskStatus(workflowID, taskID string, status Tas
 	m.mu.Unlock()
 	return fmt.Errorf("task not found: %s in workflow %s", taskID, workflowID)
 }
-
 
 func (m *WorkflowManager) GetNextTaskToExecute(workflowID string) (*Task, error) {
 	m.mu.RLock()
@@ -253,9 +234,8 @@ func (m *WorkflowManager) GetNextTaskToExecute(workflowID string) (*Task, error)
 		}
 	}
 
-	return nil, nil 
+	return nil, nil
 }
-
 
 func (m *WorkflowManager) GetAllApprovedTasks(workflowID string) []Task {
 	m.mu.RLock()
@@ -275,7 +255,6 @@ func (m *WorkflowManager) GetAllApprovedTasks(workflowID string) []Task {
 	return approved
 }
 
-
 func (m *WorkflowManager) CompleteWorkflow(workflowID, summary string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -291,11 +270,9 @@ func (m *WorkflowManager) CompleteWorkflow(workflowID, summary string) error {
 	return nil
 }
 
-
 func (m *WorkflowManager) GetWorkflowDir(workflowID string) string {
 	return filepath.Join(m.baseDir, workflowID)
 }
-
 
 func (m *WorkflowManager) SaveWorkflow(workflow *Workflow) error {
 	data, err := json.MarshalIndent(workflow, "", "  ")
@@ -316,7 +293,6 @@ func (m *WorkflowManager) SaveWorkflow(workflow *Workflow) error {
 	return nil
 }
 
-
 func (m *WorkflowManager) LoadWorkflow(workflowID string) (*Workflow, error) {
 	dir := m.GetWorkflowDir(workflowID)
 	file := filepath.Join(dir, "workflow.json")
@@ -334,7 +310,6 @@ func (m *WorkflowManager) LoadWorkflow(workflowID string) (*Workflow, error) {
 	return &workflow, nil
 }
 
-
 func (m *WorkflowManager) SaveArtifact(workflowID, name, content, taskID string) error {
 	dir := m.GetWorkflowDir(workflowID)
 	subdir := filepath.Join(dir, "artifacts", taskID)
@@ -350,7 +325,6 @@ func (m *WorkflowManager) SaveArtifact(workflowID, name, content, taskID string)
 	return nil
 }
 
-
 func (m *WorkflowManager) ReadArtifact(workflowID, taskID, filename string) (string, error) {
 	dir := m.GetWorkflowDir(workflowID)
 	path := filepath.Join(dir, "artifacts", taskID, sanitizeFilename(filename))
@@ -362,7 +336,6 @@ func (m *WorkflowManager) ReadArtifact(workflowID, taskID, filename string) (str
 
 	return string(content), nil
 }
-
 
 func (m *WorkflowManager) ListWorkflowArtifacts(workflowID, taskID string) ([]string, error) {
 	dir := m.GetWorkflowDir(workflowID)
@@ -385,9 +358,6 @@ func (m *WorkflowManager) ListWorkflowArtifacts(workflowID, taskID string) ([]st
 	return files, nil
 }
 
-
-// idCounter guarantees unique IDs even when the clock granularity is too coarse
-// to distinguish consecutive calls to time.Now().
 var idCounter uint64
 
 func generateID() string {

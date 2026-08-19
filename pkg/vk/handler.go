@@ -39,14 +39,11 @@ type AgentOrchestrator interface {
 	GetCurrentAgent() string
 	GetActiveAgentSessions(peerID int64) (string, error)
 	ClearActiveSessions(peerID int64)
-	
-	
-	
+
 	ClearRegisteredAgents(peerID int64) []string
-	
-	
+
 	IsPrimary(agentName string) bool
-	
+
 	GetSystemPrompt(agentName string) (string, error)
 }
 
@@ -63,23 +60,18 @@ type BotHandler struct {
 	cancelFuncs    map[int64]*cancelEntry
 	cancelMu       sync.RWMutex
 	attachmentsDir string
-	
-	
-	
+
 	peerProcessors     map[int64]*sync.Mutex
 	peerProcessorsMu   sync.RWMutex
-	
+
 	semaphore chan struct{}
-	
+
 	pendingKeyboards    map[int64]map[string]interface{}
 	pendingKeyboardMu   sync.RWMutex
-	
-	
-	
-	
+
 	queueMu       sync.Mutex
-	waitingCounts map[int64]int    
-	generations   map[int64]uint64 
+	waitingCounts map[int64]int
+	generations   map[int64]uint64
 }
 
 const maxConcurrentHandlers = 10
@@ -150,7 +142,6 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 
 	command := extractCommand(message)
 
-	
 	if strings.HasPrefix(command, "/") {
 		result := h.handleCommand(command, peerID)
 		if result != "" {
@@ -162,11 +153,6 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 		return fmt.Sprintf("Неизвестная команда: %s. Напишите /help для списка команд.", command)
 	}
 
-	
-	
-	
-	
-	
 	if tools.HasPendingQuestion(peerID) {
 		logger.DebugToFile("[ProcessMessage] HasPendingQuestion=true for peer %d, command=%s", peerID, stringutil.Truncate(command, 100, "..."))
 		if tools.ResolvePendingQuestion(peerID, command) {
@@ -176,27 +162,19 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 		logger.DebugToFile("[ProcessMessage] ResolvePendingQuestion returned false for peer %d, command=%s", peerID, stringutil.Truncate(command, 50, "..."))
 	}
 
-	// Hand the message to the peer's inbox before waiting for the run lock. If
-	// a run is already active, its loop will promote this message into the next
-	// LLM turn (opencode "steer") and our Claim below will fail, so we return
-	// without processing it separately.
 	h.admitPeerInput(peerID, message)
 
 	releaseQueueSlot, generationAtArrival := h.beginProcessingWait(peerID)
 	mu := h.getPeerMutex(peerID)
 	mu.Lock()
-	releaseQueueSlot() 
+	releaseQueueSlot()
 	defer mu.Unlock()
 
-	
-	
 	if h.peerGeneration(peerID) != generationAtArrival {
 		logger.DebugToFile("[ProcessMessage] peer %d: session was reset while message waited in queue, dropping stale message", peerID)
 		return ""
 	}
 
-	// If the running loop already promoted our message into the current turn,
-	// drop it here — it will be answered as part of that turn.
 	if !h.claimPeerInput(peerID, message) {
 		logger.DebugToFile("[ProcessMessage] peer %d: message already promoted into running turn, dropping", peerID)
 		return ""
@@ -204,8 +182,7 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
-	
+
 	cancelEntry := &cancelEntry{cancel: cancel}
 	h.setCancelFunc(peerID, cancelEntry.cancel)
 	defer h.clearCancelFunc(peerID, cancelEntry)
@@ -220,9 +197,7 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 		}
 
 		if h.orchestrator != nil && h.orchestrator.IsPrimary(agentName) {
-			
-			
-			
+
 			agentPrompt, err := h.orchestrator.GetSystemPrompt(agentName)
 			logger.DebugToFile("[#%s] GetSystemPrompt -> %d chars, err=%v", agentName, len(agentPrompt), err)
 			if err != nil {
@@ -294,7 +269,6 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 	}
 }
 
-
 func (h *BotHandler) getPeerMutex(peerID int64) *sync.Mutex {
 	h.peerProcessorsMu.RLock()
 	mu, ok := h.peerProcessors[peerID]
@@ -313,8 +287,6 @@ func (h *BotHandler) getPeerMutex(peerID int64) *sync.Mutex {
 	return mu
 }
 
-// admitPeerInput puts the message into the peer's inbox so a running agent loop
-// can promote it into the current turn at the next LLM boundary.
 func (h *BotHandler) admitPeerInput(peerID int64, message string) {
 	s := h.aiAgent.EnsureSession(peerID)
 	if s == nil {
@@ -325,9 +297,6 @@ func (h *BotHandler) admitPeerInput(peerID int64, message string) {
 	}
 }
 
-// claimPeerInput removes the message from the peer's inbox. It returns false if
-// the running loop already promoted (drained) the message into its turn — in
-// which case the caller must drop it instead of processing it again.
 func (h *BotHandler) claimPeerInput(peerID int64, message string) bool {
 	s := h.aiAgent.GetSession(peerID)
 	if s == nil {
@@ -370,8 +339,6 @@ func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, _ t
 		return fmt.Sprintf("Неизвестная команда: %s. Напишите /help для списка команд.", command)
 	}
 
-	
-	
 	if tools.HasPendingQuestion(peerID) {
 		logger.DebugToFile("[ProcessMessageWithTimeout] HasPendingQuestion=true for peer %d, command=%s", peerID, stringutil.Truncate(command, 100, "..."))
 		if tools.ResolvePendingQuestion(peerID, command) {
@@ -381,10 +348,9 @@ func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, _ t
 
 	releaseQueueSlot, generationAtArrival := h.beginProcessingWait(peerID)
 	mu.Lock()
-	releaseQueueSlot() 
+	releaseQueueSlot()
 	defer mu.Unlock()
 
-	
 	if h.peerGeneration(peerID) != generationAtArrival {
 		logger.DebugToFile("[ProcessMessageWithTimeout] peer %d: session was reset while message waited in queue, dropping stale message", peerID)
 		return ""
@@ -541,7 +507,6 @@ func (h *BotHandler) handleModelsList(peerID int64) string {
 	models := h.modelHolder.List()
 	currentAlias := h.modelHolder.GetDefaultAlias()
 
-	
 	aliases := make([]string, 0, len(models))
 	for alias := range models {
 		aliases = append(aliases, alias)
@@ -582,13 +547,11 @@ func (h *BotHandler) handleModelSwitch(input string) string {
 	return fmt.Sprintf("✓ Модель переключена на: %s\n  %s (%s)", alias2, modelName, host)
 }
 
-
 func (h *BotHandler) setPendingKeyboard(peerID int64, kb map[string]interface{}) {
 	h.pendingKeyboardMu.Lock()
 	h.pendingKeyboards[peerID] = kb
 	h.pendingKeyboardMu.Unlock()
 }
-
 
 func (h *BotHandler) popPendingKeyboard(peerID int64) map[string]interface{} {
 	h.pendingKeyboardMu.Lock()
@@ -597,7 +560,6 @@ func (h *BotHandler) popPendingKeyboard(peerID int64) map[string]interface{} {
 	h.pendingKeyboardMu.Unlock()
 	return kb
 }
-
 
 func (h *BotHandler) payloadToCommand(payloadJSON string) string {
 	var payload struct {
@@ -655,8 +617,7 @@ func (h *BotHandler) handlePinCommand(input string, peerID int64) string {
 		}
 
 		pinCtx, pinCancel := context.WithCancel(context.Background())
-		
-		
+
 		pinEntry := &cancelEntry{cancel: pinCancel}
 		h.setCancelFunc(peerID, pinEntry.cancel)
 		defer h.clearCancelFunc(peerID, pinEntry)
@@ -726,11 +687,6 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 		return fmt.Sprintf("Ошибка: не удалось получить абсолютный путь: %v", err)
 	}
 
-	
-	
-	
-	
-	
 	h.cancelActiveRequest(peerID)
 	if h.orchestrator != nil {
 		h.orchestrator.ClearActiveSessions(peerID)
@@ -738,25 +694,15 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 
 	tools.UnregisterPendingQuestion(peerID)
 
-	// Drop any messages sitting in the peer's inbox: they were admitted before
-	// the reset and must not leak into the fresh session.
 	if s := h.aiAgent.GetSession(peerID); s != nil {
 		if in := s.GetPeerInput(); in != nil {
 			in.Clear()
 		}
 	}
-	
-	
-	
-	
-	
+
 	h.aiAgent.ClearPeerSession(peerID)
 	tools.ClearGrants(peerID)
 
-	
-	
-	
-	
 	if st := h.aiAgent.GetStore(); st != nil {
 		if err := st.ClearPeerData(peerID); err != nil && h.log != nil {
 			h.log.WarnLogf("ClearPeerData for peer %d: %v", peerID, err)
@@ -779,8 +725,6 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 
 	h.clearHandlerSession(peerID)
 
-	
-	
 	h.bumpPeerGeneration(peerID)
 
 	if h.log != nil {
@@ -811,8 +755,6 @@ func (h *BotHandler) handleTestLlama() string {
 	return result
 }
 
-// handleLogCommand sends the debug log file (debug/debug.log) to the user as a
-// document, bypassing the LLM. Mirrors the /logs command in the opencode bot.
 func (h *BotHandler) handleLogCommand(peerID int64) string {
 	logPath := "debug/debug.log"
 	if h.log != nil {
@@ -839,7 +781,6 @@ func (h *BotHandler) handleLogCommand(peerID int64) string {
 		return "❌ VK client не настроен"
 	}
 
-	// Route the file to the same peer a text reply would go to.
 	targetPeer := peerID
 	if h.mainPeerID > 0 {
 		targetPeer = h.mainPeerID
@@ -861,7 +802,6 @@ func (h *BotHandler) clearHandlerSession(peerID int64) {
 	delete(h.sessions, peerID)
 }
 
-
 type cancelEntry struct {
 	cancel    context.CancelFunc
 	cancelled bool
@@ -881,9 +821,7 @@ func (h *BotHandler) cancelActiveRequest(peerID int64) {
 func (h *BotHandler) setCancelFunc(peerID int64, cancel context.CancelFunc) {
 	h.cancelMu.Lock()
 	defer h.cancelMu.Unlock()
-	
-	
-	
+
 	if prev, ok := h.cancelFuncs[peerID]; ok && !prev.cancelled {
 		prev.cancel()
 	}
@@ -893,14 +831,11 @@ func (h *BotHandler) setCancelFunc(peerID int64, cancel context.CancelFunc) {
 func (h *BotHandler) clearCancelFunc(peerID int64, entry *cancelEntry) {
 	h.cancelMu.Lock()
 	defer h.cancelMu.Unlock()
-	
-	
-	
+
 	if cur, ok := h.cancelFuncs[peerID]; ok && cur == entry {
 		delete(h.cancelFuncs, peerID)
 	}
 }
-
 
 func (h *BotHandler) beginProcessingWait(peerID int64) (release func(), generation uint64) {
 	h.queueMu.Lock()
@@ -921,20 +856,17 @@ func (h *BotHandler) beginProcessingWait(peerID int64) (release func(), generati
 	}, generation
 }
 
-
 func (h *BotHandler) bumpPeerGeneration(peerID int64) {
 	h.queueMu.Lock()
 	defer h.queueMu.Unlock()
 	h.generations[peerID]++
 }
 
-
 func (h *BotHandler) peerGeneration(peerID int64) uint64 {
 	h.queueMu.Lock()
 	defer h.queueMu.Unlock()
 	return h.generations[peerID]
 }
-
 
 func (h *BotHandler) waitingMessages(peerID int64) int {
 	h.queueMu.Lock()
@@ -1098,7 +1030,6 @@ func (h *BotHandler) handleIncomingMessage(
 	}
 }
 
-
 func (h *BotHandler) launchMessageHandler(
 	msg VKMessage,
 	replyPeerID int64,
@@ -1119,12 +1050,7 @@ func (h *BotHandler) launchMessageHandler(
 
 func (h *BotHandler) buildFullText(msg *VKMessage, fullMsgMap map[int64]VKMessage) string {
 	full, found := fullMsgMap[msg.ID]
-	
-	
-	
-	
-	
-	
+
 	atts := full.Attachments
 	attSource := "getById"
 	if !found || len(atts) == 0 {
@@ -1158,11 +1084,9 @@ func (h *BotHandler) buildFullText(msg *VKMessage, fullMsgMap map[int64]VKMessag
 	return msg.Text + "\n\n" + info
 }
 
-
 func (h *BotHandler) downloadAttachments(atts []VKAttachment) ([]DownloadedAttachment, error) {
 	return DownloadAttachments(toRawAttachments(atts), h.attachmentsDir)
 }
-
 
 func describeAttachments(atts []VKAttachment) string {
 	parts := make([]string, 0, len(atts))
@@ -1179,7 +1103,6 @@ func toRawAttachments(attachments []VKAttachment) []map[string]interface{} {
 	}
 	return result
 }
-
 
 func (h *BotHandler) writeSignalFile(name string, data string) {
 	if h.log != nil {

@@ -19,7 +19,8 @@
 ### No comments in code
 - Do **NOT** write comments in code
 - Instead of comments, prefer "talking" (self-explanatory) names for functions, variables, and types — the name should describe what the code does
-- Exception: build directive comments (`//go:build`, `//go:generate`, `//nolint`) are allowed
+- When editing existing code, do not reintroduce comments
+- Exception: build directive comments and linter pragmas (`//go:build`, `//go:generate`, `//nolint`, `// nolint:`) are allowed
 
 ## Testing (TDD)
 

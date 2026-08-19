@@ -15,14 +15,12 @@ type contextKey string
 
 const toolCallDepthKey contextKey = "tool_call_depth"
 
-
 func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []Message, assistantContent string, toolCalls []ToolCall, toolResults []ToolCallResult, session *sess.Session, executed map[string]bool) (string, error) {
 	depth, _ := ctx.Value(toolCallDepthKey).(int)
 	if a.config.LlamaServerURL == "" {
 		return "", nil
 	}
 
-	
 	sessionToolCalls := make([]sess.MsgToolCall, len(toolCalls))
 	for i, tc := range toolCalls {
 		sessionToolCalls[i] = sess.MsgToolCall{
@@ -36,15 +34,10 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	}
 	session.AddAssistantMessageWithToolCalls(assistantContent, sessionToolCalls)
 
-	
 	for _, tr := range toolResults {
 		session.AddToolMessage(tr.ToolCallID, tr.ToolName, tr.Content)
 	}
 
-	
-	// If user messages arrived while the previous step was executing, promote
-	// them into the session and rebuild the request from it, so the very next
-	// LLM call is the user's message (opencode "steer").
 	var messages []Message
 	if a.promoteSteers(ctx, session) {
 		messages = a.buildToolResultMessagesFromSession(session)
@@ -52,12 +45,10 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		messages = a.buildToolResultMessages(originalMessages, assistantContent, toolCalls, toolResults)
 	}
 
-	
 	if a.compactor != nil {
 		messages = a.compactIfNeededBeforeLLM(ctx, session, messages, assistantContent, toolCalls, toolResults)
 	}
 
-	
 	streamConfig := StreamingConfig{
 		Model:       a.config.Model,
 		MaxTokens:   a.config.MaxTokens,
@@ -66,10 +57,9 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		Stream:      true,
 	}
 
-	
 	responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.streamAndCollect(ctx, streamConfig, messages)
 	if err != nil {
-		
+
 		if IsContextOverflowError(err) && a.compactor != nil {
 			prefix := a.agentPrefix()
 			fmt.Printf(prefix+"[OPENCODE-COMPACT] Reactive overflow recovery for peer %d\n", session.GetPeerID())
@@ -77,8 +67,6 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 
 			a.compactIfNeeded(ctx, session, false)
 
-			
-			
 			if !a.sessionHasToolResults(session, toolResults) {
 				sessionToolCalls := make([]sess.MsgToolCall, len(toolCalls))
 				for i, tc := range toolCalls {
@@ -97,19 +85,17 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 				}
 			}
 
-			
 			if shouldAddAutoContinue(session) {
 				session.AddUserMessage(tokenizers.CompactionOverflowContinueText)
 			}
 
 			messages = a.buildToolResultMessagesFromSession(session)
 
-			
 			responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err = a.streamAndCollect(ctx, streamConfig, messages)
 			if err != nil {
 				err = a.handleOverflowAfterCompaction(ctx, session, streamConfig, &messages, &err, &responseText, &reasoningText, &finishReason, &streamToolCalls, &promptTokens, &completionTokens)
 				if err != nil {
-					
+
 					prefix := a.agentPrefix()
 					fmt.Printf(prefix+"[ERROR] Context overflow after reactive compaction: %v\n", err)
 					return "", fmt.Errorf("context overflow after compaction: %w", err)
@@ -120,7 +106,6 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		}
 	}
 
-	
 	if !isTerminalResponse(responseText, len(streamToolCalls) > 0, reasoningText != "") {
 		responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err = a.retryEmptyResponse(ctx, streamConfig, messages, session)
 		if err != nil {
@@ -128,7 +113,6 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		}
 	}
 
-	
 	loopRepeats := a.checkResponseLoop(session.GetPeerID(), responseText, reasoningText, streamToolCalls)
 	if loopRepeats > 0 {
 		a.injectLoopCorrection(session, loopRepeats)
@@ -136,7 +120,6 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 
 	a.sendThinkingIfNeeded(session, reasoningText)
 
-	
 	a.sendThinkingTokens(session.GetPeerID(), promptTokens, completionTokens)
 
 	prefix := a.agentPrefix()
@@ -152,7 +135,6 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	}
 	logger.DebugToFile("\n====================================================")
 
-	
 	if len(streamToolCalls) > 0 {
 		a.debugLog.Debug("NATIVE format: detected %d tool calls in tool results response", len(streamToolCalls))
 
@@ -196,7 +178,6 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		}
 	}
 
-	
 	textToCheck := responseText
 	if len(reasoningText) > len(textToCheck) {
 		textToCheck = reasoningText
@@ -219,7 +200,7 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	if len(parsed.ToolCalls) > 0 {
 		a.debugLog.Debug("XML fallback: detected %d tool calls in tool results response", len(parsed.ToolCalls))
 		toolCalls := convertXMLToolCalls(parsed.ToolCalls)
-		
+
 		var uniqueCalls []ToolCall
 		for _, tc := range toolCalls {
 			sig := toolCallSignature(tc)
@@ -239,7 +220,6 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		}
 	}
 
-	
 	jsonParsed := ParseJSONToolCalls(responseText)
 	if len(jsonParsed.ToolCalls) > 0 {
 		a.debugLog.Debug("JSON fallback: detected %d tool calls in tool results response", len(jsonParsed.ToolCalls))
@@ -265,14 +245,12 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		}
 	}
 
-	
 	if responseText != "" {
 		parsedResp := ParseXMLToolCalls(responseText)
 		responseText = parsedResp.Content
 		responseText = a.stripThinkingTags(responseText, session.GetPeerID())
 	}
 
-	
 	if responseText == "" {
 		hist := session.GetHistory()
 		if len(hist) > 0 {
@@ -287,7 +265,6 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	session.AddAssistantMessage(responseText)
 	return responseText, nil
 }
-
 
 func (a *agentImpl) handleInvalidXMLToolCall(ctx context.Context, messages []Message, session *sess.Session, executed map[string]bool) (FunctionCallResult, error) {
 	a.sendThinking(session.GetPeerID(), "[TOOL] Error: Invalid XML tool call format. Send the model a corrective message.")
@@ -321,17 +298,15 @@ func (a *agentImpl) handleInvalidXMLToolCall(ctx context.Context, messages []Mes
 	return FunctionCallResult{Success: true, Response: finalResponse}, nil
 }
 
-
 func isTerminalResponse(responseText string, hasToolCalls, hasReasoning bool) bool {
 	if len(strings.TrimSpace(responseText)) > 0 {
 		return true
 	}
-	
+
 	return hasToolCalls || hasReasoning
 }
 
 const maxEmptyRetries = 3
-
 
 func (a *agentImpl) retryEmptyResponse(ctx context.Context, streamConfig StreamingConfig, messages []Message, session *sess.Session) (string, string, string, []ToolCall, int, int, error) {
 	for attempt := 0; attempt < maxEmptyRetries; attempt++ {
@@ -356,7 +331,6 @@ func (a *agentImpl) retryEmptyResponse(ctx context.Context, streamConfig Streami
 	fmt.Printf(prefix+"[WARN] LLM returned empty response after %d retries\n", maxEmptyRetries)
 	return "", "", "stop", nil, 0, 0, nil
 }
-
 
 func (a *agentImpl) buildToolResultMessages(originalMessages []Message, assistantContent string, toolCalls []ToolCall, toolResults []ToolCallResult) []Message {
 	messages := make([]Message, len(originalMessages))
@@ -384,12 +358,11 @@ func (a *agentImpl) buildToolResultMessages(originalMessages []Message, assistan
 	return messages
 }
 
-
 func (a *agentImpl) compactIfNeededBeforeLLM(ctx context.Context, session *sess.Session, messages []Message, assistantContent string, toolCalls []ToolCall, toolResults []ToolCallResult) []Message {
 	tokenMessages := make([]tokenizers.Message, len(messages))
 	for i, m := range messages {
 		content := m.Content
-		
+
 		for _, tc := range m.ToolCalls {
 			content += string(tc.Function.Arguments)
 		}
@@ -409,15 +382,10 @@ func (a *agentImpl) compactIfNeededBeforeLLM(ctx context.Context, session *sess.
 	logger.DebugToFile(prefix+"[OPENCODE-COMPACT] Peer %d: Tool results overflow (%d/%d), compacting",
 		session.GetPeerID(), tokens, a.config.MaxTokens)
 
-	
 	a.compactIfNeeded(ctx, session, false)
 
-	
-	
-	
 	hasLastToolResult := a.sessionHasToolResults(session, toolResults)
 
-	
 	if !hasLastToolResult {
 		sessionToolCalls := make([]sess.MsgToolCall, len(toolCalls))
 		for i, tc := range toolCalls {
@@ -437,10 +405,8 @@ func (a *agentImpl) compactIfNeededBeforeLLM(ctx context.Context, session *sess.
 		}
 	}
 
-	
 	return a.buildToolResultMessagesFromSession(session)
 }
-
 
 func (a *agentImpl) sessionHasToolResults(session *sess.Session, toolResults []ToolCallResult) bool {
 	if len(toolResults) == 0 {
@@ -462,11 +428,9 @@ func (a *agentImpl) sessionHasToolResults(session *sess.Session, toolResults []T
 	return true
 }
 
-
 func shouldAddAutoContinue(session *sess.Session) bool {
 	history := session.GetHistory()
 
-	
 	autoContinueIdx := -1
 	for i := len(history) - 1; i >= 0; i-- {
 		m := history[i]
@@ -477,13 +441,10 @@ func shouldAddAutoContinue(session *sess.Session) bool {
 		}
 	}
 
-	
 	if autoContinueIdx < 0 {
 		return true
 	}
 
-	
-	
 	for j := autoContinueIdx + 1; j < len(history); j++ {
 		m := history[j]
 		if m.Role == sess.AssistantRole && !m.Summary {
@@ -494,11 +455,9 @@ func shouldAddAutoContinue(session *sess.Session) bool {
 	return false
 }
 
-
 func (a *agentImpl) buildToolResultMessagesFromSession(session *sess.Session) []Message {
 	return a.convertHistoryToAPIMessages(session.GetContextMessages())
 }
-
 
 func (a *agentImpl) handleOverflowAfterCompaction(
 	ctx context.Context,
@@ -523,14 +482,13 @@ func (a *agentImpl) handleOverflowAfterCompaction(
 
 	prunedCount := a.applyAggressivePruning(session)
 	if prunedCount == 0 {
-		
+
 		fmt.Printf("%s[ERROR] Context overflow after reactive compaction and pruning: %v\n", prefix, err)
 		return fmt.Errorf("context overflow after compaction and aggressive pruning: %w", err)
 	}
 
 	fmt.Printf("%s[OPENCODE-COMPACT] Pruned %d tool outputs, retrying\n", prefix, prunedCount)
 
-	
 	*messages = a.buildToolResultMessagesFromSession(session)
 	*responseText, *reasoningText, *finishReason, *toolCalls, *promptTokens, *completionTokens, err = a.streamAndCollect(ctx, config, *messages)
 	if err != nil {
@@ -540,7 +498,6 @@ func (a *agentImpl) handleOverflowAfterCompaction(
 	*errPtr = nil
 	return nil
 }
-
 
 func (a *agentImpl) applyAggressivePruning(session *sess.Session) int {
 	history := session.GetHistory()
