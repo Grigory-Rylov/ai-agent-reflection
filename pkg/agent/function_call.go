@@ -22,6 +22,12 @@ type FunctionCallResult struct {
 
 
 func (a *agentImpl) processWithTools(ctx context.Context, messages []Message, session *sess.Session) (FunctionCallResult, error) {
+	// Promote any messages that arrived while the previous step (compaction,
+	// a prior turn) was running, so the next LLM call is the user's message.
+	if a.promoteSteers(ctx, session) {
+		messages = a.buildToolResultMessagesFromSession(session)
+	}
+
 	responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.collectStreamAndLog(ctx, messages)
 	if err != nil {
 		return FunctionCallResult{}, err

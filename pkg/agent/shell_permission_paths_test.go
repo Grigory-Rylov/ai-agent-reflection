@@ -93,6 +93,42 @@ func TestShellPermissionPathOutsideAllowedAsks(t *testing.T) {
 	}
 }
 
+func TestShellPermissionGrepInsideCwdSkipsAsk(t *testing.T) {
+	dir := t.TempDir()
+	prevWD := tools.WorkingDir
+	tools.SetWorkingDir(dir)
+	tools.SetAccessController(access.NewController([]string{dir}))
+	t.Cleanup(func() {
+		tools.SetAccessController(nil)
+		tools.SetWorkingDir(prevWD)
+	})
+
+	askCalled := false
+	withQuestionCallback(t, func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+		askCalled = true
+		return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
+	})
+
+	a := newShellTestAgent(permission.Ruleset{
+		{Permission: "bash", Pattern: "*", Action: permission.Ask},
+	})
+	e := newAgentToolExecutor(a)
+
+	// "cat /etc/passwd" is a search pattern, not a file the command reads. The
+	// only real path (pkg/agent/) is inside the working dir, so everything is
+	// allowed and no permission prompt should fire.
+	cmd := `grep -rn '"cat /etc/passwd"' --include='*_test.go' pkg/agent/ && cut -d: -f1,2`
+	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		"command": cmd,
+	}, 12345)
+	if !result {
+		t.Error("expected allow for grep inside working dir")
+	}
+	if askCalled {
+		t.Error("expected NO permission ask: command only touches paths inside the working dir")
+	}
+}
+
 func TestShellPermissionRedirectOutsideAllowedAsks(t *testing.T) {
 	
 	dir := t.TempDir()

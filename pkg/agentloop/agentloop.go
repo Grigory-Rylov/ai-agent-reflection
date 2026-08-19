@@ -65,6 +65,7 @@ type AgentLoop interface {
 type agentLoop struct {
 	config           LoopConfig
 	sessionM         sync.Map
+	sessionCreateMu  sync.Mutex
 	vk               VKClient
 	registry         ToolRegistry
 	compactor        *compress.Compactor
@@ -521,6 +522,15 @@ func (al *agentLoop) getOrCreateSession(peerID int64) *session.Session {
 		return val.(*session.Session)
 	}
 
+	// Guard the load-then-store so two concurrent callers (e.g. an incoming
+	// message being admitted while another message starts processing) never
+	// create two different Session objects for the same peer.
+	al.sessionCreateMu.Lock()
+	defer al.sessionCreateMu.Unlock()
+	if val, ok := al.sessionM.Load(peerID); ok {
+		return val.(*session.Session)
+	}
+
 	config := al.config.SessionConfig
 	config.PeerID = peerID
 
@@ -685,6 +695,10 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 	}
 
 	agentSess := a.GetSession(peerID)
+
+	// Share the durable session's per-peer inbox so the fresh agent's tool loop
+	// sees user messages admitted while it runs (opencode "steer" delivery).
+	agentSess.SetPeerInput(sess.GetPeerInput())
 	
 	
 	
@@ -715,6 +729,15 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 	}
 
 	response, err := a.ProcessMessage(ctx, prompt, peerID)
+
+	// Mirror user messages that were promoted into the running turn into the
+	// durable session history, so the steer survives the run.
+	if in := sess.GetPeerInput(); in != nil {
+		for _, m := range in.TakePromoted() {
+			sess.AddUserMessage(m)
+		}
+	}
+
 	if err != nil {
 		return "", err
 	}

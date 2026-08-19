@@ -73,6 +73,15 @@ type Logger struct {
 	started time.Time
 }
 
+// LogFilePath returns the configured log file path ("" if file logging is
+// disabled). Used by the /log command to send the log to the user.
+func (l *Logger) LogFilePath() string {
+	if l == nil {
+		return ""
+	}
+	return l.config.File
+}
+
 
 func New(config Config) (*Logger, error) {
 	l := &Logger{

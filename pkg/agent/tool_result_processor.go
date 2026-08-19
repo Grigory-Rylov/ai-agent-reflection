@@ -42,7 +42,15 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	}
 
 	
-	messages := a.buildToolResultMessages(originalMessages, assistantContent, toolCalls, toolResults)
+	// If user messages arrived while the previous step was executing, promote
+	// them into the session and rebuild the request from it, so the very next
+	// LLM call is the user's message (opencode "steer").
+	var messages []Message
+	if a.promoteSteers(ctx, session) {
+		messages = a.buildToolResultMessagesFromSession(session)
+	} else {
+		messages = a.buildToolResultMessages(originalMessages, assistantContent, toolCalls, toolResults)
+	}
 
 	
 	if a.compactor != nil {
