@@ -9,9 +9,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 )
 
-
-// steeringMockAgentLoop mimics the real agent loop: it drains the peer inbox at
-// the END of its processing (i.e. promotes messages that arrived mid-turn).
 type steeringMockAgentLoop struct {
 	*mockAgentLoop
 	mu      sync.Mutex
@@ -32,7 +29,6 @@ func (m *steeringMockAgentLoop) ProcessMessage(ctx context.Context, prompt strin
 	case <-time.After(150 * time.Millisecond):
 	}
 
-	// Mimic the real agent loop: promote any admitted messages into the run.
 	if s := m.GetSession(peerID); s != nil {
 		if in := s.GetPeerInput(); in != nil {
 			if msgs := in.Drain(); len(msgs) > 0 {
@@ -59,11 +55,6 @@ func (m *steeringMockAgentLoop) GetCancelled() bool {
 	return m.cancelled
 }
 
-
-// TestSteer_InjectedIntoRunningTurn verifies the core "steer" wiring at the
-// handler level: a message that arrives while a run is active is handed to the
-// running loop via the peer inbox (promoted), instead of being processed as a
-// separate queued turn — and it must not cancel the running turn.
 func TestSteer_InjectedIntoRunningTurn(t *testing.T) {
 	log, _ := logger.New(logger.DefaultConfig())
 	mock := newSteeringMockAgentLoop()
@@ -79,8 +70,6 @@ func TestSteer_InjectedIntoRunningTurn(t *testing.T) {
 		firstResult = handler.ProcessMessage("задача", peerID)
 	}()
 
-	// Let the run become active, then send the second message. It blocks until
-	// the running turn finishes, then finds its message was already promoted.
 	time.Sleep(50 * time.Millisecond)
 	secondResult := handler.ProcessMessage(steer, peerID)
 

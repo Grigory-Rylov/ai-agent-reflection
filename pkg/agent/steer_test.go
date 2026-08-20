@@ -14,9 +14,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 )
 
-// TestSteerPromotedIntoNextLLMRequest verifies the opencode-style "steer"
-// delivery: a user message admitted to the peer inbox while the agent is
-// working becomes part of the very next LLM request instead of being ignored.
 func TestSteerPromotedIntoNextLLMRequest(t *testing.T) {
 	var lastBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -30,14 +27,12 @@ func TestSteerPromotedIntoNextLLMRequest(t *testing.T) {
 	config := DefaultConfig()
 	config.LlamaServerURL = server.URL
 	config.RetryDelay = time.Millisecond
-	config.EnableCompression = false // keep the test deterministic
+	config.EnableCompression = false
 	a := NewAgent(config)
 
 	peerID := int64(77701)
 	steer := "расскажи что ты уже успел сделать?"
 
-	// A message "arrives" while the (previous) turn would be running: it is
-	// sitting in the peer inbox before this turn starts.
 	a.GetSession(peerID).GetPeerInput().Admit(steer)
 
 	response, err := a.ProcessMessage(context.Background(), "выполни задачу", peerID)
@@ -51,7 +46,6 @@ func TestSteerPromotedIntoNextLLMRequest(t *testing.T) {
 		t.Errorf("steer message not injected into the LLM request body:\n%s", lastBody)
 	}
 
-	// The steer must also land in the session history, so it survives the run.
 	hist := a.GetSession(peerID).GetHistory()
 	found := false
 	for _, m := range hist {
@@ -65,9 +59,6 @@ func TestSteerPromotedIntoNextLLMRequest(t *testing.T) {
 	}
 }
 
-
-// steerBlocker is a tool whose execution blocks until released. It lets the
-// test pause the agent mid-task while a user message arrives.
 type steerBlocker struct {
 	release     chan struct{}
 	releaseOnce sync.Once
@@ -102,11 +93,6 @@ func (t *steerBlocker) Execute(ctx context.Context, _ map[string]string) (tools.
 	return tools.ToolResult{Success: true, Data: map[string]interface{}{"ok": true}}, nil
 }
 
-
-// TestSteer_DeliveredDuringRunningToolLoop reproduces the reported bug: the
-// agent is mid-task (executing a tool), the user writes "расскажи что ты уже
-// успел сделать?", and previously the message was silently parked behind the
-// peer mutex. Now it must be promoted into the agent's NEXT LLM request.
 func TestSteer_DeliveredDuringRunningToolLoop(t *testing.T) {
 	var (
 		mu       sync.Mutex
@@ -125,7 +111,7 @@ func TestSteer_DeliveredDuringRunningToolLoop(t *testing.T) {
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		if n == 1 {
-			// First turn: ask the model to call the blocking tool (native format).
+
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"steer_blocker\",\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"))
 		} else {
@@ -138,7 +124,7 @@ func TestSteer_DeliveredDuringRunningToolLoop(t *testing.T) {
 	config := DefaultConfig()
 	config.LlamaServerURL = server.URL
 	config.RetryDelay = time.Millisecond
-	config.EnableCompression = false // keep the test deterministic
+	config.EnableCompression = false
 	a := NewAgent(config)
 
 	blocker := &steerBlocker{release: make(chan struct{}), calledCh: make(chan struct{})}
@@ -158,19 +144,14 @@ func TestSteer_DeliveredDuringRunningToolLoop(t *testing.T) {
 		done <- runResult{resp, err}
 	}()
 
-	// Wait until the agent is busy executing the tool.
 	select {
 	case <-blocker.calledCh:
 	case <-time.After(5 * time.Second):
 		t.Fatal("blocking tool never started")
 	}
 
-	// The user writes a message while the agent is still busy. It must be
-	// handed to the running turn via the peer inbox, not ignored.
 	a.GetSession(peerID).GetPeerInput().Admit(steer)
 
-	// Release the tool; the loop continues and promotes the steer into the
-	// SECOND LLM request.
 	blocker.Release()
 
 	res := <-done

@@ -559,3 +559,24 @@ func TestBuildBaseRequestJSON_NoSlotIDWhenDisabled(t *testing.T) {
 		t.Error("slot_id should not be present when SlotID is -1")
 	}
 }
+
+func TestBuildBaseRequestJSON_EnablesThinking(t *testing.T) {
+	a := NewAgent(Config{
+		LlamaServerURL: "http://127.0.0.1:8080",
+		Model:          "test",
+		MaxTokens:      100,
+		SlotID:         -1,
+	})
+
+	req := a.buildBaseRequestJSON("test", []Message{
+		{Role: "user", Content: "hello"},
+	}, true)
+
+	kw, ok := req["chat_template_kwargs"].(map[string]interface{})
+	if !ok {
+		t.Fatal("chat_template_kwargs missing or wrong type")
+	}
+	if kw["enable_thinking"] != true {
+		t.Errorf("expected enable_thinking true, got %v", kw["enable_thinking"])
+	}
+}

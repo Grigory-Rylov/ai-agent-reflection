@@ -10,7 +10,6 @@ import (
 	"time"
 )
 
-
 type Level int
 
 const (
@@ -20,7 +19,6 @@ const (
 	LevelError
 	LevelFatal
 )
-
 
 func (l Level) String() string {
 	switch l {
@@ -39,20 +37,18 @@ func (l Level) String() string {
 	}
 }
 
-
 type Config struct {
-	
+
 	Level Level
-	
+
 	File string
-	
+
 	MaxSizeMB int
-	
+
 	MaxAgeDays int
-	
+
 	Compress bool
 }
-
 
 func DefaultConfig() Config {
 	return Config{
@@ -64,7 +60,6 @@ func DefaultConfig() Config {
 	}
 }
 
-
 type Logger struct {
 	config  Config
 	mu      sync.Mutex
@@ -73,8 +68,6 @@ type Logger struct {
 	started time.Time
 }
 
-// LogFilePath returns the configured log file path ("" if file logging is
-// disabled). Used by the /log command to send the log to the user.
 func (l *Logger) LogFilePath() string {
 	if l == nil {
 		return ""
@@ -82,37 +75,31 @@ func (l *Logger) LogFilePath() string {
 	return l.config.File
 }
 
-
 func New(config Config) (*Logger, error) {
 	l := &Logger{
 		config:  config,
 		started: time.Now(),
 	}
 
-	
 	handlerOptions := &slog.HandlerOptions{
 		Level:     slog.LevelInfo,
 		AddSource: false,
 	}
 
-	
 	consoleHandler := slog.NewTextHandler(os.Stderr, handlerOptions)
 	l.slog = slog.New(consoleHandler)
 
-	
 	if config.File != "" {
-		
+
 		dir := filepath.Dir(config.File)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return nil, fmt.Errorf("failed to create log directory: %w", err)
 		}
 
-		
 		if err := RotateLogFile(config.File, config.MaxSizeMB, config.MaxAgeDays); err != nil {
 			return nil, fmt.Errorf("failed to rotate log file: %w", err)
 		}
 
-		
 		logFile, err := os.OpenFile(config.File, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
 			return nil, fmt.Errorf("failed to open log file: %w", err)
@@ -123,31 +110,25 @@ func New(config Config) (*Logger, error) {
 	return l, nil
 }
 
-
 func (l *Logger) DebugLog(msg string, args ...interface{}) {
 	l.log(LevelDebug, msg, args...)
 }
-
 
 func (l *Logger) InfoLog(msg string, args ...interface{}) {
 	l.log(LevelInfo, msg, args...)
 }
 
-
 func (l *Logger) WarnLog(msg string, args ...interface{}) {
 	l.log(LevelWarn, msg, args...)
 }
-
 
 func (l *Logger) ErrorLog(msg string, args ...interface{}) {
 	l.log(LevelError, msg, args...)
 }
 
-
 func (l *Logger) FatalLog(msg string, args ...interface{}) {
 	l.log(LevelFatal, msg, args...)
 }
-
 
 func FatalLogExit(msg string, args ...interface{}) {
 	if globalLogger != nil {
@@ -158,22 +139,17 @@ func FatalLogExit(msg string, args ...interface{}) {
 	os.Exit(1)
 }
 
-
 func (l *Logger) log(level Level, msg string, args ...interface{}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	
 	formattedMsg := fmt.Sprintf(msg, args...)
 
-	
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	levelStr := level.String()
 
-	
 	fullMsg := fmt.Sprintf("[%s] [%s] %s", timestamp, levelStr, formattedMsg)
 
-	
 	if level >= l.config.Level {
 		if l.file != nil {
 			fmt.Fprintln(os.Stderr, fullMsg)
@@ -184,26 +160,21 @@ func (l *Logger) log(level Level, msg string, args ...interface{}) {
 	}
 }
 
-
 func (l *Logger) DebugLogf(format string, args ...interface{}) {
 	l.DebugLog(format, args...)
 }
-
 
 func (l *Logger) InfoLogf(format string, args ...interface{}) {
 	l.InfoLog(format, args...)
 }
 
-
 func (l *Logger) WarnLogf(format string, args ...interface{}) {
 	l.WarnLog(format, args...)
 }
 
-
 func (l *Logger) ErrorLogf(format string, args ...interface{}) {
 	l.ErrorLog(format, args...)
 }
-
 
 func (l *Logger) LogWithFields(level Level, msg string, fields map[string]interface{}) {
 	l.mu.Lock()
@@ -212,7 +183,6 @@ func (l *Logger) LogWithFields(level Level, msg string, fields map[string]interf
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	levelStr := level.String()
 
-	
 	fieldStr := ""
 	for k, v := range fields {
 		fieldStr += fmt.Sprintf(" %s=%v", k, v)
@@ -230,13 +200,11 @@ func (l *Logger) LogWithFields(level Level, msg string, fields map[string]interf
 	}
 }
 
-
 func (l *Logger) SetLevel(level Level) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.config.Level = level
 }
-
 
 func (l *Logger) Close() error {
 	l.mu.Lock()
@@ -248,16 +216,13 @@ func (l *Logger) Close() error {
 	return nil
 }
 
-
 func (l *Logger) IsFileLogging() bool {
 	return l.file != nil
 }
 
-
 func (l *Logger) GetStartTime() time.Time {
 	return l.started
 }
-
 
 func ParseLogLevel(level string) Level {
 	switch strings.ToLower(level) {
@@ -276,13 +241,11 @@ func ParseLogLevel(level string) Level {
 	}
 }
 
-
 func RotateLogFile(path string, maxSizeMB int, maxAgeDays int) error {
 	if maxSizeMB <= 0 {
 		maxSizeMB = 10
 	}
 
-	
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -296,7 +259,6 @@ func RotateLogFile(path string, maxSizeMB int, maxAgeDays int) error {
 		return nil
 	}
 
-	
 	timestamp := time.Now().Format("20060102-150405")
 	archivePath := fmt.Sprintf("%s.%s", path, timestamp)
 
@@ -304,7 +266,6 @@ func RotateLogFile(path string, maxSizeMB int, maxAgeDays int) error {
 		return fmt.Errorf("failed to rename log file: %w", err)
 	}
 
-	
 	cleanOldLogs(path, maxAgeDays)
 
 	return nil
@@ -341,10 +302,8 @@ func cleanOldLogs(basePath string, maxAgeDays int) {
 	}
 }
 
-
 var globalLogger *Logger
 var globalOnce sync.Once
-
 
 func InitGlobalLogger(config Config) {
 	globalOnce.Do(func() {
@@ -352,11 +311,9 @@ func InitGlobalLogger(config Config) {
 	})
 }
 
-
 func GetGlobalLogger() *Logger {
 	return globalLogger
 }
-
 
 func DebugLogfGlobal(format string, args ...interface{}) {
 	if globalLogger != nil {
@@ -364,13 +321,11 @@ func DebugLogfGlobal(format string, args ...interface{}) {
 	}
 }
 
-
 func InfoLogfGlobal(format string, args ...interface{}) {
 	if globalLogger != nil {
 		globalLogger.InfoLogf(format, args...)
 	}
 }
-
 
 func WarnLogfGlobal(format string, args ...interface{}) {
 	if globalLogger != nil {
@@ -378,13 +333,11 @@ func WarnLogfGlobal(format string, args ...interface{}) {
 	}
 }
 
-
 func ErrorLogfGlobal(format string, args ...interface{}) {
 	if globalLogger != nil {
 		globalLogger.ErrorLogf(format, args...)
 	}
 }
-
 
 func DebugToFile(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
@@ -395,7 +348,6 @@ func DebugToFile(format string, args ...interface{}) {
 		globalLogger.WriteToFile(fullMsg)
 	}
 }
-
 
 func (l *Logger) WriteToFile(msg string) {
 	l.mu.Lock()

@@ -5,7 +5,6 @@ import (
 	"strings"
 )
 
-
 func ScanCommand(command string) Scan {
 	scan := Scan{}
 	for _, source := range SplitCommands(command) {
@@ -24,11 +23,9 @@ func ScanCommand(command string) Scan {
 	return scan
 }
 
-
 var cwdCommands = map[string]bool{
 	"cd": true, "chdir": true, "popd": true, "pushd": true,
 }
-
 
 func SplitCommands(command string) []string {
 	var commands []string
@@ -120,9 +117,7 @@ func SplitCommands(command string) []string {
 	return commands
 }
 
-
 var nestedCommandRe = regexp.MustCompile(`\$\(([^)]+)\)`)
-
 
 func (s *Scan) nested(source string) {
 	for _, match := range nestedCommandRe.FindAllStringSubmatch(source, -1) {
@@ -144,11 +139,6 @@ func (s *Scan) addUniqueAlways(always string) {
 	addUnique(&s.Always, always)
 }
 
-
-// Tokenize splits a command into whitespace-separated tokens while keeping
-// quoted segments (single and double quotes) and $() substitutions whole.
-// The quotes are preserved in the resulting tokens, so callers can tell a
-// quoted string (e.g. a search pattern) apart from an unquoted path argument.
 func Tokenize(source string) []string {
 	var tokens []string
 	var current strings.Builder
@@ -217,12 +207,10 @@ func Tokenize(source string) []string {
 	return tokens
 }
 
-
 type Scan struct {
 	Patterns []string
 	Always   []string
 }
-
 
 func addUnique(slice *[]string, value string) {
 	for _, item := range *slice {

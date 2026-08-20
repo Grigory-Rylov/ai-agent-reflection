@@ -19,7 +19,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-
 type FileReadTool = tools.FileReadTool
 type FileWriteTool = tools.FileWriteTool
 type TimeGetTool = tools.TimeGetTool
@@ -34,9 +33,7 @@ type EditTool = tools.EditTool
 type ApplyPatchTool = tools.ApplyPatchTool
 type QuestionTool = tools.QuestionTool
 
-
 type ThinkingCallback func(peerID int64, content string) error
-
 
 type agentImpl struct {
 	config            Config
@@ -45,22 +42,20 @@ type agentImpl struct {
 	mu                sync.RWMutex
 	client            *http.Client
 	compactor         *compress.Compactor
-	systemPrompt      string                   
-	thinkingCallback  ThinkingCallback         
-	toolSchemas       []map[string]interface{} 
-	toolExecutor      ToolExecutor             
-	debugLog          debug.Logger             
-	permissionChecker PermissionChecker        
+	systemPrompt      string
+	thinkingCallback  ThinkingCallback
+	toolSchemas       []map[string]interface{}
+	toolExecutor      ToolExecutor
+	debugLog          debug.Logger
+	permissionChecker PermissionChecker
 	responseLoops     map[int64]*responseLoopState
 }
 
-
 type PermissionChecker interface {
-	Check(toolName string) string                    
-	Evaluate(permission, pattern string) string      
-	Approve(permission, pattern string)              
+	Check(toolName string) string
+	Evaluate(permission, pattern string) string
+	Approve(permission, pattern string)
 }
-
 
 func NewAgent(config Config) *agentImpl {
 	agent := &agentImpl{
@@ -77,15 +72,12 @@ func NewAgent(config Config) *agentImpl {
 		responseLoops: make(map[int64]*responseLoopState),
 	}
 
-	
 	agent.loadSystemPrompt()
 
-	
 	if config.EnableTools {
 		agent.registerDefaultTools()
 	}
 
-	
 	if config.EnableCompression {
 		agent.initCompactor()
 	}
@@ -93,11 +85,9 @@ func NewAgent(config Config) *agentImpl {
 	return agent
 }
 
-
 func (a *agentImpl) loadSystemPrompt() {
 	defaultPrompt := "You are a helpful assistant."
 
-	
 	if a.config.PromptsDir != "" {
 		a.loadFromTemplates()
 		if a.systemPrompt != "" {
@@ -105,7 +95,6 @@ func (a *agentImpl) loadSystemPrompt() {
 		}
 	}
 
-	
 	if a.config.SystemPromptFile != "" {
 		data, err := os.ReadFile(a.config.SystemPromptFile)
 		if err == nil && strings.TrimSpace(string(data)) != "" {
@@ -158,17 +147,14 @@ func extractToolNames(toolList []tools.Tool) []string {
 	return names
 }
 
-
 func (a *agentImpl) GetSystemPrompt() string {
 	return a.systemPrompt
 }
-
 
 func (a *agentImpl) initCompactor() {
 	compressor := compress.NewLLMCompressor(a.config.LlamaServerURL, a.config.Model, a.config.Temperature)
 	a.compactor = compress.NewCompactor(compressor)
 }
-
 
 func (a *agentImpl) registerDefaultTools() {
 	a.toolsRegistry.Register(&FileReadTool{})
@@ -186,7 +172,6 @@ func (a *agentImpl) registerDefaultTools() {
 	a.toolsRegistry.Register(&QuestionTool{})
 }
 
-
 func (a *agentImpl) RegisterTools(registry *tools.Registry) {
 	if registry == nil {
 		return
@@ -196,13 +181,9 @@ func (a *agentImpl) RegisterTools(registry *tools.Registry) {
 			a.toolsRegistry.Register(tool)
 		}
 	}
-	
-	
-	
-	
+
 	a.toolSchemas = a.toolsRegistry.ToOpenAISchema()
 }
-
 
 func (a *agentImpl) ReplaceTools(registry *tools.Registry) {
 	if registry == nil {
@@ -212,19 +193,15 @@ func (a *agentImpl) ReplaceTools(registry *tools.Registry) {
 	a.toolSchemas = registry.ToOpenAISchema()
 }
 
-
 func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID int64) (string, error) {
 	a.debugLog.Debug("ProcessMessage called: peerID=%d, message=%q, tools=%d", peerID, message, len(a.toolsRegistry.GetAll()))
 
-	
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
 
-	
 	s := a.getSession(peerID)
 
-	
 	if s.IsLoopDetected() {
 		alert := s.GetLoopAlertMessage()
 		if alert != "" {
@@ -232,9 +209,6 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 		}
 	}
 
-	
-	
-	
 	history := s.GetHistory()
 	if len(history) == 0 || history[len(history)-1].Role != session.UserRole || history[len(history)-1].Content != message {
 		s.AddUserMessage(message)
@@ -242,37 +216,27 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 		history = s.GetHistory()
 	}
 
-	// Promote any user messages that arrived while the previous turn was still
-	// running (opencode "steer"): they become part of this turn's context, so
-	// the very next LLM call is the user's message.
 	a.promoteSteers(ctx, s)
 
-	
 	if a.compactor != nil {
 		a.compactIfNeeded(ctx, s, true)
 		history = s.GetHistory()
 	}
 
-	
 	apiMessages := a.convertHistoryToAPIMessages(s.GetContextMessages())
 
-	
-	
 	workingDir := s.GetWorkingDir()
 	if workingDir == "" {
 		workingDir = tools.WorkingDir
 	}
 	apiMessages = a.injectInstructions(apiMessages, workingDir)
 
-	
-	
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 
-	
 	if a.config.EnableTools {
-		
+
 		result, err := a.processWithTools(ctx, apiMessages, s)
 		if err != nil {
 			return "", fmt.Errorf("process with tools: %w", err)
@@ -280,14 +244,9 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 		return result.Response, nil
 	}
 
-	
 	return a.processStreaming(ctx, apiMessages, s)
 }
 
-
-// promoteSteers drains user messages that arrived while the current turn was
-// running (opencode "steer" delivery) and adds them to the session so the next
-// LLM call sees them. It returns true if at least one message was promoted.
 func (a *agentImpl) promoteSteers(ctx context.Context, s *session.Session) bool {
 	if ctx.Err() != nil || s == nil {
 		return false
@@ -306,7 +265,6 @@ func (a *agentImpl) promoteSteers(ctx context.Context, s *session.Session) bool 
 	}
 	return true
 }
-
 
 func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session, addAutoContinue bool) bool {
 	history := s.GetHistory()
@@ -347,7 +305,6 @@ func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session, add
 	return true
 }
 
-
 func (a *agentImpl) markCompactedHead(s *session.Session, tailStartID int) {
 	for i := 0; i < tailStartID && i < len(s.GetHistory()); i++ {
 		msg := s.GetHistory()[i]
@@ -358,20 +315,17 @@ func (a *agentImpl) markCompactedHead(s *session.Session, tailStartID int) {
 	a.debugLog.Info("Compaction fallback: marked %d head messages as compacted", tailStartID)
 }
 
-
 const compactionFallbackSummary = "## Goal\n- [context compacted — summary unavailable]\n\n## Constraints & Preferences\n- (none)\n\n## Progress\n### Done\n- (compact failed)\n\n### In Progress\n- (truncated)\n\n### Blocked\n- context overflow during summarization\n\n## Key Decisions\n- (lost during compaction fallback)\n\n## Next Steps\n- continue current task\n\n## Critical Context\n- [compaction summary could not be generated]\n\n## Relevant Files\n- (none)"
-
 
 func (a *agentImpl) convertSessionHistory(history []session.Message) []tokenizers.Message {
 	return compress.FilterCompacted(a.convertSessionHistoryRaw(history))
 }
 
-
 func (a *agentImpl) convertSessionHistoryRaw(history []session.Message) []tokenizers.Message {
 	messages := make([]tokenizers.Message, len(history))
 	for i, msg := range history {
 		content := msg.Content
-		
+
 		for _, tc := range msg.ToolCalls {
 			content += tc.Function.Arguments
 		}
@@ -386,12 +340,10 @@ func (a *agentImpl) convertSessionHistoryRaw(history []session.Message) []tokeni
 	return messages
 }
 
-
 func (a *agentImpl) ResetSession(peerID int64) {
 	s := a.getSession(peerID)
 	s.Reset()
 }
-
 
 func (a *agentImpl) compactionFallback(history []session.Message, tailTurns int, maxTokens int) *compress.SelectResult {
 	if len(history) == 0 {
@@ -409,16 +361,13 @@ func (a *agentImpl) compactionFallback(history []session.Message, tailTurns int,
 	return &selected
 }
 
-
 func (a *agentImpl) GetSession(peerID int64) *session.Session {
 	return a.getSession(peerID)
 }
 
-
 func (a *agentImpl) SetThinkingCallback(cb ThinkingCallback) {
 	a.thinkingCallback = cb
 }
-
 
 func (a *agentImpl) SetTools(toolSchemas []map[string]interface{}) {
 	a.mu.Lock()
@@ -426,20 +375,17 @@ func (a *agentImpl) SetTools(toolSchemas []map[string]interface{}) {
 	a.toolSchemas = toolSchemas
 }
 
-
 func (a *agentImpl) SetToolExecutor(executor ToolExecutor) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.toolExecutor = executor
 }
 
-
 func (a *agentImpl) SetPermissionChecker(checker PermissionChecker) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.permissionChecker = checker
 }
-
 
 func (a *agentImpl) getSession(peerID int64) *session.Session {
 	a.mu.RLock()
@@ -448,7 +394,7 @@ func (a *agentImpl) getSession(peerID int64) *session.Session {
 
 	if !exists {
 		a.mu.Lock()
-		
+
 		s, exists = a.sessions[peerID]
 		if !exists {
 			config := a.config.SessionConfig
@@ -457,7 +403,6 @@ func (a *agentImpl) getSession(peerID int64) *session.Session {
 			s = session.NewSession(config)
 			a.sessions[peerID] = s
 
-			
 			if wd := s.GetWorkingDir(); wd != "" {
 				tools.SetWorkingDir(wd)
 			}
@@ -468,10 +413,8 @@ func (a *agentImpl) getSession(peerID int64) *session.Session {
 	return s
 }
 
-
 func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, session *session.Session) (string, error) {
-	// Promote mid-turn messages so the first LLM call of a streaming-only run
-	// sees them too.
+
 	if a.promoteSteers(ctx, session) {
 		messages = a.convertHistoryToAPIMessages(session.GetContextMessages())
 	}
@@ -483,7 +426,6 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 		Stream:      true,
 	}
 
-	
 	responseText, reasoningText, _, _, promptTokens, completionTokens, err := a.streamAndCollect(ctx, streamConfig, messages)
 	if err != nil {
 		return "", err
@@ -494,11 +436,10 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 		a.injectLoopCorrection(session, loopRepeats)
 	}
 
-	
 	if reasoningText != "" {
 		parsed := ParseXMLToolCalls(reasoningText)
 		if len(parsed.ToolCalls) > 0 {
-			
+
 			result, err := a.processWithTools(ctx, messages, session)
 			if err != nil {
 				return "", err
@@ -507,7 +448,6 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 		}
 	}
 
-	
 	if reasoningText != "" && a.thinkingCallback != nil {
 		cleanedReasoning := reasoningText
 		parsed := ParseXMLToolCalls(reasoningText)
@@ -521,11 +461,8 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 		}
 	}
 
-	
 	a.sendThinkingTokens(session.GetPeerID(), promptTokens, completionTokens)
 
-	
-	
 	if responseText == "" && reasoningText != "" {
 		return "", nil
 	}
@@ -536,17 +473,12 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 	return responseText, nil
 }
 
-
 func (a *agentImpl) injectInstructions(messages []Message, workingDir string) []Message {
 	content := instructions.Build(workingDir)
 	if content == "" {
 		return messages
 	}
 
-	
-	
-	
-	
 	out := make([]Message, len(messages))
 	copy(out, messages)
 	for i := range out {
@@ -555,10 +487,9 @@ func (a *agentImpl) injectInstructions(messages []Message, workingDir string) []
 			return out
 		}
 	}
-	
+
 	return append([]Message{{Role: "system", Content: content}}, out...)
 }
-
 
 func (a *agentImpl) convertHistoryToAPIMessages(history []session.Message) []Message {
 	apiMessages := make([]Message, len(history))
@@ -573,7 +504,7 @@ func (a *agentImpl) convertHistoryToAPIMessages(history []session.Message) []Mes
 			ToolCallID: msg.ToolCallID,
 			Name:       msg.Name,
 		}
-		
+
 		if len(msg.ToolCalls) > 0 {
 			apiMsg.ToolCalls = make([]ToolCall, len(msg.ToolCalls))
 			for j, tc := range msg.ToolCalls {

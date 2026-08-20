@@ -25,31 +25,20 @@ import (
 type AgentLoop interface {
 	ProcessPrompt(ctx context.Context, prompt string, peerID int64) (string, error)
 	ProcessMessage(ctx context.Context, prompt string, peerID int64) (string, error)
-	
-	
-	
-	
-	
-	
+
 	ProcessPromptWithSystemPrompt(ctx context.Context, prompt string, peerID int64, systemPrompt string) (string, error)
 	Start(ctx context.Context)
 	Stop()
 	ResetSession(peerID int64)
-	
-	
-	
-	
+
 	ClearPeerSession(peerID int64)
-	
-	
+
 	GetSessionConfig(peerID int64) (session.Config, bool)
 	GetSession(peerID int64) *session.Session
 	EnsureSession(peerID int64) *session.Session
-	
-	
+
 	ResumeInterruptedTask(ctx context.Context, peerID int64)
-	
-	
+
 	ClearAllSlots(ctx context.Context)
 	SetThinkingCallback(cb func(peerID int64, content string) error)
 	GetContextStats(peerID int64) (charCount int, tokenCount int, err error)
@@ -57,8 +46,7 @@ type AgentLoop interface {
 	GetModelHolder() *modelsconfig.Holder
 	GetSlotManager() *SlotManager
 	GetSlots() *SlotClient
-	
-	
+
 	GetStore() store.Store
 }
 
@@ -101,9 +89,6 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 		l = NewDefaultLogger(config.Debug)
 	}
 
-	
-	
-	
 	var tokenizer *tokenizers.LlamaServerTokenizer
 	if config.ContextResolver != nil {
 		ctx, err := config.ContextResolver.Resolve()
@@ -184,7 +169,6 @@ func (al *agentLoop) GetStore() store.Store {
 	return al.config.SessionConfig.Store
 }
 
-
 func resolveMaxTokens(h *modelsconfig.Holder, alias string, fallback int) int {
 	if h == nil {
 		return fallback
@@ -194,7 +178,6 @@ func resolveMaxTokens(h *modelsconfig.Holder, alias string, fallback int) int {
 	}
 	return fallback
 }
-
 
 func (al *agentLoop) syncCurrentModel() error {
 	al.modelMu.Lock()
@@ -242,7 +225,6 @@ func (al *agentLoop) syncCurrentModel() error {
 	return nil
 }
 
-
 func (al *agentLoop) syncVisionTool() bool {
 	if al.config.ModelHolder == nil {
 		return false
@@ -271,14 +253,12 @@ func (al *agentLoop) syncVisionTool() bool {
 	return vision
 }
 
-
 func (al *agentLoop) currentModelSlotSave() bool {
 	if al.config.ModelHolder == nil {
 		return false
 	}
 	return al.config.ModelHolder.GetCurrentSlotSave()
 }
-
 
 func (al *agentLoop) restoreSlotInto(ctx context.Context, host, modelName string, slotID int, sessionID string) {
 	filename := SlotFileName(modelName, slotID)
@@ -305,7 +285,6 @@ func (al *agentLoop) restoreSlotInto(ctx context.Context, host, modelName string
 	}
 }
 
-
 func (al *agentLoop) saveSlotFrom(ctx context.Context, host, modelName string, slotID int, sessionID string) {
 	filename := SlotFileName(modelName, slotID)
 	err := al.slots.saveSlot(ctx, host, slotID, modelName, filename)
@@ -325,7 +304,6 @@ func (al *agentLoop) saveSlotFrom(ctx context.Context, host, modelName string, s
 		al.log.WarnLogf("[SLOT] save slot %d for session %s: %v", slotID, sessionID, err)
 	}
 }
-
 
 func sanitizeSlotName(name string) string {
 	var b strings.Builder
@@ -384,7 +362,6 @@ func (al *agentLoop) ProcessMessage(ctx context.Context, prompt string, peerID i
 	return al.ProcessPrompt(ctx, prompt, peerID)
 }
 
-
 func (al *agentLoop) ProcessPromptWithSystemPrompt(ctx context.Context, prompt string, peerID int64, systemPrompt string) (string, error) {
 	sess := al.getOrCreateSession(peerID)
 	original := sess.GetSystemPrompt()
@@ -402,8 +379,6 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 	}
 	sess := al.getOrCreateSession(peerID)
 
-	
-	
 	sess.SetResumePrompt(prompt)
 	defer sess.SetResumePrompt("")
 
@@ -431,15 +406,10 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 			al.slotMgr.CheckAvailability(ctx, host, modelName)
 		}
 
-		
 		slotID, evictedSessionID := al.slotMgr.GetOrAssign(sessionID, al.slotMgr.TotalSlots())
 		if al.slotMgr.IsAvailable(host) && slotID >= 0 {
 			assignedSlotID = slotID
 
-			
-			
-			
-			
 			if evictedSessionID != "" {
 				al.saveSlotFrom(ctx, host, modelName, slotID, evictedSessionID)
 				if err := al.slots.eraseSlot(ctx, host, slotID, modelName); err != nil {
@@ -451,8 +421,7 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 					al.log.InfoLogf("[SLOT] evicted session %s from slot %d, new session %s starts cold", evictedSessionID, slotID, sessionID)
 				}
 			} else {
-				
-				
+
 				al.restoreSlotInto(ctx, host, modelName, slotID, sessionID)
 			}
 		}
@@ -467,8 +436,7 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 	}
 
 	if slotSave {
-		
-		
+
 		al.slotMgr.Touch(sessionID)
 	}
 
@@ -522,9 +490,6 @@ func (al *agentLoop) getOrCreateSession(peerID int64) *session.Session {
 		return val.(*session.Session)
 	}
 
-	// Guard the load-then-store so two concurrent callers (e.g. an incoming
-	// message being admitted while another message starts processing) never
-	// create two different Session objects for the same peer.
 	al.sessionCreateMu.Lock()
 	defer al.sessionCreateMu.Unlock()
 	if val, ok := al.sessionM.Load(peerID); ok {
@@ -660,8 +625,7 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 	}
 
 	agentConfig := al.buildAgentConfig()
-	
-	
+
 	agentConfig.SlotID = slotID
 	if slotID >= 0 && al.currentModelSlotSave() {
 		agentConfig.SlotSave = true
@@ -696,22 +660,14 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 
 	agentSess := a.GetSession(peerID)
 
-	// Share the durable session's per-peer inbox so the fresh agent's tool loop
-	// sees user messages admitted while it runs (opencode "steer" delivery).
 	agentSess.SetPeerInput(sess.GetPeerInput())
-	
-	
-	
-	
-	
-	
+
 	if sp := sess.GetSystemPrompt(); strings.TrimSpace(sp) != "" {
 		logger.DebugToFile("[sendToLLM] applying session prompt (%d chars) to agent", len(sp))
 		agentSess.UpdateSystemPrompt(sp)
 	}
 	if len(agentSess.GetHistory()) <= 1 {
-		
-		
+
 		for _, msg := range messages {
 			switch msg.Role {
 			case "system":
@@ -730,8 +686,6 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 
 	response, err := a.ProcessMessage(ctx, prompt, peerID)
 
-	// Mirror user messages that were promoted into the running turn into the
-	// durable session history, so the steer survives the run.
 	if in := sess.GetPeerInput(); in != nil {
 		for _, m := range in.TakePromoted() {
 			sess.AddUserMessage(m)
@@ -773,7 +727,6 @@ func (al *agentLoop) buildAgentConfig() agent.Config {
 		SkipShellPermissionForPathless: al.config.SkipShellPermissionForPathless,
 	}
 
-	
 	if al.registry != nil {
 		schemas := al.registry.ToOpenAISchema()
 		if len(schemas) > 0 {
@@ -955,8 +908,6 @@ func (al *agentLoop) checkAndCompressOpenCode(ctx context.Context, sess *session
 		tailTurns = 2
 	}
 
-	
-	
 	result, err := al.compactor.CompactWithOpenCode(ctx, al.convertHistoryToRawMessages(history), al.config.MaxTokens, tailTurns, al.config.PreserveRecentTokens)
 	if err != nil {
 		if al.log != nil {
@@ -973,22 +924,13 @@ func (al *agentLoop) checkAndCompressOpenCode(ctx context.Context, sess *session
 
 	al.applyOpenCodeCompactResult(sess, result)
 
-	
-	
-	
 	if result.Summary != "" {
 		sess.AddUserMessage(tokenizers.CompactionAutoContinueText)
 	}
 
-	
-	
-	
-	
-	
 	sessionID := sess.GetSessionID()
 	al.invalidateSessionSlot(ctx, sessionID)
 }
-
 
 func (al *agentLoop) invalidateSessionSlot(ctx context.Context, sessionID string) {
 	if al.config.ModelHolder == nil {
@@ -1000,7 +942,7 @@ func (al *agentLoop) invalidateSessionSlot(ctx context.Context, sessionID string
 	}
 	slotID := al.slotMgr.GetSlotID(sessionID)
 	if slotID < 0 {
-		
+
 		return
 	}
 	if err := al.slots.eraseSlot(ctx, host, slotID, modelName); err != nil {
@@ -1017,9 +959,7 @@ func (al *agentLoop) invalidateSessionSlot(ctx context.Context, sessionID string
 }
 
 func (al *agentLoop) applyOpenCodeCompactResult(sess *session.Session, result *compress.OpenCodeCompactResult) {
-	
-	
-	
+
 	if result.Summary == "" {
 		return
 	}
@@ -1032,8 +972,6 @@ func (al *agentLoop) runPruning(sess *session.Session) {
 	}
 	history := sess.GetHistory()
 
-	
-	
 	raw := al.convertHistoryToRawMessages(history)
 	pruned := compress.PruneMessages(raw, compress.PRUNE_PROTECTED_TOOLS...)
 
@@ -1051,10 +989,6 @@ func (al *agentLoop) runPruning(sess *session.Session) {
 		al.log.DebugLogf("[PRUNE] Peer %d: Pruned %d tool outputs", sess.GetPeerID(), prunedCount)
 	}
 
-	
-	
-	
-	
 	for i := range pruned {
 		if pruned[i].Compacted && !raw[i].Compacted {
 			sess.MarkMessageCompacted(i, compress.PRUNED_OUTPUT_PLACEHOLDER)
@@ -1066,12 +1000,11 @@ func (al *agentLoop) convertHistoryToMessages(history []session.Message) []token
 	return compress.FilterCompacted(al.convertHistoryToRawMessages(history))
 }
 
-
 func (al *agentLoop) convertHistoryToRawMessages(history []session.Message) []tokenizers.Message {
 	messages := make([]tokenizers.Message, len(history))
 	for i, msg := range history {
 		content := msg.Content
-		
+
 		for _, tc := range msg.ToolCalls {
 			content += tc.Function.Arguments
 		}
@@ -1116,12 +1049,10 @@ func (al *agentLoop) Stop() {
 	}
 }
 
-
 func (al *agentLoop) deleteSessionSlot(ctx context.Context, peerID int64, sessionID string) {
 	_ = peerID
 	al.invalidateSessionSlot(ctx, sessionID)
 }
-
 
 func (al *agentLoop) ClearAllSlots(ctx context.Context) {
 	if al.config.ModelHolder == nil {
@@ -1160,14 +1091,12 @@ func (al *agentLoop) ResetSession(peerID int64) {
 	}
 }
 
-
 func (al *agentLoop) ClearPeerSession(peerID int64) {
 	al.ResetSession(peerID)
 	if err := al.clearPeerStore(peerID); err != nil && al.log != nil {
 		al.log.WarnLogf("ClearPeerSession: clear store for peer %d: %v", peerID, err)
 	}
 }
-
 
 func (al *agentLoop) clearPeerStore(peerID int64) error {
 	st := al.config.SessionConfig.Store
@@ -1184,7 +1113,6 @@ func (al *agentLoop) clearPeerStore(peerID int64) error {
 		WorkingDir: al.config.SessionConfig.WorkingDir,
 	})
 }
-
 
 func (al *agentLoop) GetSessionConfig(peerID int64) (session.Config, bool) {
 	if val, ok := al.sessionM.Load(peerID); ok {
@@ -1218,7 +1146,6 @@ func (al *agentLoop) EnsureSession(peerID int64) *session.Session {
 	return al.getOrCreateSession(peerID)
 }
 
-
 func (al *agentLoop) ResumeInterruptedTask(ctx context.Context, peerID int64) {
 	sess := al.GetSession(peerID)
 	if sess == nil || sess.GetResumePrompt() == "" {
@@ -1244,7 +1171,6 @@ func (al *agentLoop) TestLlamaServer(ctx context.Context) (model string, respons
 	result := TestLlamaServer(ctx, llamaURL, modelName)
 	return result.Model, result.ResponseTime, result.TokensPerSec, result.Error
 }
-
 
 func NewDefaultLogger(debug bool) Logger {
 	return newDefaultLogger(debug)
