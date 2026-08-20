@@ -297,6 +297,34 @@ func (a *agentImpl) processSSEData(lineStr string, chunkChan chan StreamChunkEve
 	}
 }
 
+type SSEDelta struct {
+	Content          string     `json:"content"`
+	ReasoningContent string     `json:"reasoning_content"`
+	ToolCalls        []ToolCall `json:"tool_calls"`
+	ToolCallID       string     `json:"tool_call_id"`
+}
+
+func (d *SSEDelta) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Content          string     `json:"content"`
+		ReasoningContent string     `json:"reasoning_content"`
+		Reasoning        string     `json:"reasoning"`
+		ToolCalls        []ToolCall `json:"tool_calls"`
+		ToolCallID       string     `json:"tool_call_id"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	d.Content = raw.Content
+	d.ReasoningContent = raw.ReasoningContent
+	if d.ReasoningContent == "" {
+		d.ReasoningContent = raw.Reasoning
+	}
+	d.ToolCalls = raw.ToolCalls
+	d.ToolCallID = raw.ToolCallID
+	return nil
+}
+
 type SSEEvent struct {
 	Error *struct {
 		Message string `json:"message"`
@@ -304,13 +332,8 @@ type SSEEvent struct {
 		Code    string `json:"code"`
 	} `json:"error"`
 	Choices []struct {
-		Delta struct {
-			Content          string     `json:"content"`
-			ReasoningContent string     `json:"reasoning_content"`
-			ToolCalls        []ToolCall `json:"tool_calls"`
-			ToolCallID       string     `json:"tool_call_id"`
-		} `json:"delta"`
-		FinishReason *string `json:"finish_reason"`
+		Delta        SSEDelta `json:"delta"`
+		FinishReason *string  `json:"finish_reason"`
 	} `json:"choices"`
 	
 	Usage *struct {
