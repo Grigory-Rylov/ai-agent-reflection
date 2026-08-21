@@ -167,11 +167,13 @@ func (a *agentImpl) createStreamingRequest(ctx context.Context, jsonData []byte)
 	return req, nil
 }
 
+const maxSSELineBytes = 16 * 1024 * 1024
+
 func (a *agentImpl) readStreamResponse(ctx context.Context, resp *http.Response, chunkChan chan StreamChunkEvent) {
 	defer resp.Body.Close()
 	defer close(chunkChan)
 
-	reader := bufio.NewReader(resp.Body)
+	reader := bufio.NewReaderSize(resp.Body, 256*1024)
 	readCh := make(chan struct {
 		line []byte
 		err  error
@@ -179,7 +181,7 @@ func (a *agentImpl) readStreamResponse(ctx context.Context, resp *http.Response,
 
 	for {
 		go func() {
-			line, err := reader.ReadSlice('\n')
+			line, err := readFullSSELine(reader)
 			readCh <- struct {
 				line []byte
 				err  error
@@ -190,14 +192,42 @@ func (a *agentImpl) readStreamResponse(ctx context.Context, resp *http.Response,
 		case <-ctx.Done():
 			return
 		case result := <-readCh:
+			if len(result.line) > 0 {
+				a.processStreamLine(result.line, chunkChan)
+			}
 			if result.err != nil {
-				if result.err == io.EOF {
+				if result.err == io.EOF || errors.Is(result.err, context.Canceled) {
 					return
 				}
 				a.sendStreamError(chunkChan, result.err)
 				return
 			}
-			a.processStreamLine(result.line, chunkChan)
+		}
+	}
+}
+
+func readFullSSELine(reader *bufio.Reader) ([]byte, error) {
+	var line []byte
+
+	for {
+		segment, err := reader.ReadSlice('\n')
+		if len(segment) > 0 {
+			line = append(line, segment...)
+			if len(line) > maxSSELineBytes {
+				return nil, fmt.Errorf("SSE line exceeds %d bytes", maxSSELineBytes)
+			}
+		}
+
+		switch {
+		case err == nil:
+			return line, nil
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		default:
+			if len(line) > 0 && errors.Is(err, io.EOF) {
+				return line, nil
+			}
+			return nil, err
 		}
 	}
 }
@@ -221,8 +251,10 @@ func (a *agentImpl) processStreamLine(line []byte, chunkChan chan StreamChunkEve
 
 func (a *agentImpl) sendStreamError(chunkChan chan StreamChunkEvent, err error) {
 	chunkChan <- StreamChunkEvent{
-		Content:   fmt.Sprintf("Stream error: %v", err),
+		Content:   fmt.Sprintf("LLM stream read failed: %v", err),
 		IsDone:    true,
+		IsError:   true,
+		ErrorCode: "stream_read_error",
 		Timestamp: time.Now(),
 	}
 }

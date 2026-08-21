@@ -15,10 +15,21 @@ type contextKey string
 
 const toolCallDepthKey contextKey = "tool_call_depth"
 
+const maxToolCallDepth = 50
+
 func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []Message, assistantContent string, toolCalls []ToolCall, toolResults []ToolCallResult, session *sess.Session, executed map[string]bool) (string, error) {
 	depth, _ := ctx.Value(toolCallDepthKey).(int)
 	if a.config.LlamaServerURL == "" {
 		return "", nil
+	}
+
+	if depth >= maxToolCallDepth {
+		prefix := a.agentPrefix()
+		limitMessage := fmt.Sprintf("[TOOL] Tool call recursion limit reached (%d batches in one turn), stopping to avoid an unbounded loop.", maxToolCallDepth)
+		fmt.Printf("%s%s\n", prefix, limitMessage)
+		logger.DebugToFile(prefix+"%s", limitMessage)
+		a.sendThinking(session.GetPeerID(), "[TOOL] Tool call recursion limit reached, finishing turn")
+		return limitMessage, nil
 	}
 
 	sessionToolCalls := make([]sess.MsgToolCall, len(toolCalls))

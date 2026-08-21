@@ -706,7 +706,9 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 		}
 	}
 
-	sess.AddAssistantMessage(response)
+	if response != "" {
+		sess.AddAssistantMessage(response)
+	}
 
 	return response, nil
 }

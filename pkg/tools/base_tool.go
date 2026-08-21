@@ -169,19 +169,6 @@ func CreateEnumParameter(name, description string, values []string, required boo
 }
 
 
-func CreateObjectParameter(name, description string, properties map[string]interface{}, required bool) map[string]interface{} {
-	param := map[string]interface{}{
-		"type":        "object",
-		"description": description,
-		"properties":  properties,
-	}
-	if required {
-		param["required"] = true
-	}
-	return param
-}
-
-
 func MarshalToolResult(result ToolResult) string {
 	data, err := json.Marshal(result)
 	if err != nil {
