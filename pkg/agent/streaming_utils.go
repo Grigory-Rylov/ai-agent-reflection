@@ -18,7 +18,7 @@ func (a *agentImpl) collectStreamResponseWithToolCalls(chunkChan <-chan StreamCh
 
 	for event := range chunkChan {
 		if event.IsError {
-			return "", "", "", nil, 0, 0, fmt.Errorf("API error: %s (code: %s)", event.Content, event.ErrorCode)
+			return "", "", "", nil, 0, 0, fmt.Errorf("%s (code: %s)", event.Content, event.ErrorCode)
 		}
 		
 		

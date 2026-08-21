@@ -9,7 +9,7 @@ import (
 
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
-	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util/stringutil"
 )
 
 
@@ -275,15 +275,15 @@ func TestTruncate(t *testing.T) {
 	short := "hello"
 	long := "this is a very long string that should be truncated"
 
-	if util.Truncate(short, 100) != short {
+	if stringutil.Truncate(short, 100, "...") != short {
 		t.Error("short string should not be truncated")
 	}
 	
-	if len(util.Truncate(long, 10)) != 13 {
-		t.Errorf("expected length 13, got %d", len(util.Truncate(long, 10)))
+	if len(stringutil.Truncate(long, 10, "...")) != 13 {
+		t.Errorf("expected length 13, got %d", len(stringutil.Truncate(long, 10, "...")))
 	}
 	
-	truncated := util.Truncate(long, 10)
+	truncated := stringutil.Truncate(long, 10, "...")
 	if truncated[10] != '.' || truncated[11] != '.' || truncated[12] != '.' {
 		t.Error("truncated string should end with ...")
 	}

@@ -322,70 +322,6 @@ func extractCommand(message string) string {
 	return message
 }
 
-func (h *BotHandler) ProcessMessageWithTimeout(message string, peerID int64, _ time.Duration) string {
-	h.ensureSession(peerID)
-	mu := h.getPeerMutex(peerID)
-
-	command := extractCommand(message)
-
-	if strings.HasPrefix(command, "/") {
-		result := h.handleCommand(command, peerID)
-		if result != "" {
-			return result
-		}
-		if restarterCommands[extractBaseCommand(command)] {
-			return ""
-		}
-		return fmt.Sprintf("Неизвестная команда: %s. Напишите /help для списка команд.", command)
-	}
-
-	if tools.HasPendingQuestion(peerID) {
-		logger.DebugToFile("[ProcessMessageWithTimeout] HasPendingQuestion=true for peer %d, command=%s", peerID, stringutil.Truncate(command, 100, "..."))
-		if tools.ResolvePendingQuestion(peerID, command) {
-			return ""
-		}
-	}
-
-	releaseQueueSlot, generationAtArrival := h.beginProcessingWait(peerID)
-	mu.Lock()
-	releaseQueueSlot()
-	defer mu.Unlock()
-
-	if h.peerGeneration(peerID) != generationAtArrival {
-		logger.DebugToFile("[ProcessMessageWithTimeout] peer %d: session was reset while message waited in queue, dropping stale message", peerID)
-		return ""
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancelEntry := &cancelEntry{cancel: cancel}
-	h.setCancelFunc(peerID, cancelEntry.cancel)
-	defer h.clearCancelFunc(peerID, cancelEntry)
-
-	s := h.aiAgent.GetSession(peerID)
-	if s != nil && s.IsLoopDetected() {
-		alert := s.GetLoopAlertMessage()
-		if alert != "" {
-			message = "[LOOP DETECTED] " + alert + "\n\n" + message
-		}
-	}
-
-	response, err := h.aiAgent.ProcessMessage(ctx, message, peerID)
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			if h.log != nil {
-				h.log.InfoLogf("AI Agent request canceled for peer %d", peerID)
-			}
-			return ""
-		}
-		if h.log != nil {
-			h.log.ErrorLogf("AI Agent error: %v", err)
-		}
-		return fmt.Sprintf("❌ Ошибка: %v", err)
-	}
-
-	return response
-}
-
 var restarterCommands = map[string]bool{
 	"/update":  true,
 	"/b":       true,
@@ -1042,7 +978,11 @@ func (h *BotHandler) launchMessageHandler(
 			h.handleIncomingMessage(msg, replyPeerID, fullMsgMap)
 		}()
 	default:
-		if h.log != nil {
+		text := strings.TrimSpace(msg.Text)
+		if msg.EventID == "" && text != "" && !strings.HasPrefix(text, "/") {
+			logger.DebugToFile("[handler] semaphore saturated: admitting text from peer %d into steer inbox instead of dropping", msg.PeerID)
+			h.admitPeerInput(msg.PeerID, text)
+		} else if h.log != nil {
 			h.log.WarnLogf("Dropping message from peer %d: max concurrent handlers (%d) reached", msg.PeerID, maxConcurrentHandlers)
 		}
 	}

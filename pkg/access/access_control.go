@@ -196,10 +196,6 @@ func (c *Controller) CheckAccess(path string) AccessResult {
 }
 
 
-func (c *Controller) CheckReadAccess(path string) AccessResult {
-	return c.CheckAccess(path)
-}
-
 
 func (c *Controller) CheckWriteAccess(path string) AccessResult {
 	result := c.CheckAccess(path)

@@ -236,12 +236,6 @@ func (m *Manager) registerTools(serverName string, c *client.Client) error {
 }
 
 
-func (m *Manager) GetClient(name string) (*client.Client, bool) {
-	c, ok := m.clients[name]
-	return c, ok
-}
-
-
 func (m *Manager) Close() error {
 	for name, c := range m.clients {
 		if err := c.Close(); err != nil {

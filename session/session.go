@@ -923,11 +923,3 @@ func (s *Session) String() string {
 	}
 	return result
 }
-
-func NormalizeString(s string) string {
-	return normalizeString(s)
-}
-
-func CalcSimilarity(a, b string) float64 {
-	return similarity(a, b)
-}

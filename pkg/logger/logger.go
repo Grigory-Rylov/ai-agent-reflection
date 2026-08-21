@@ -129,16 +129,6 @@ func (l *Logger) ErrorLog(msg string, args ...interface{}) {
 func (l *Logger) FatalLog(msg string, args ...interface{}) {
 	l.log(LevelFatal, msg, args...)
 }
-
-func FatalLogExit(msg string, args ...interface{}) {
-	if globalLogger != nil {
-		globalLogger.FatalLog(msg, args...)
-	} else {
-		fmt.Printf("[FATAL] "+msg+"\n", args...)
-	}
-	os.Exit(1)
-}
-
 func (l *Logger) log(level Level, msg string, args ...interface{}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -309,34 +299,6 @@ func InitGlobalLogger(config Config) {
 	globalOnce.Do(func() {
 		globalLogger, _ = New(config)
 	})
-}
-
-func GetGlobalLogger() *Logger {
-	return globalLogger
-}
-
-func DebugLogfGlobal(format string, args ...interface{}) {
-	if globalLogger != nil {
-		globalLogger.DebugLogf(format, args...)
-	}
-}
-
-func InfoLogfGlobal(format string, args ...interface{}) {
-	if globalLogger != nil {
-		globalLogger.InfoLogf(format, args...)
-	}
-}
-
-func WarnLogfGlobal(format string, args ...interface{}) {
-	if globalLogger != nil {
-		globalLogger.WarnLogf(format, args...)
-	}
-}
-
-func ErrorLogfGlobal(format string, args ...interface{}) {
-	if globalLogger != nil {
-		globalLogger.ErrorLogf(format, args...)
-	}
 }
 
 func DebugToFile(format string, args ...interface{}) {

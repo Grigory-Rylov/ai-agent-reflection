@@ -14,13 +14,6 @@ const (
 
 var PRUNE_PROTECTED_TOOLS = []string{"skill"}
 
-type PruneConfig struct {
-	Prune bool
-}
-
-func DefaultPruneConfig() PruneConfig {
-	return PruneConfig{Prune: true}
-}
 
 func PruneMessages(messages []tokenizers.Message, protectedTools ...string) []tokenizers.Message {
 	var total int

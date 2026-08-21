@@ -65,15 +65,6 @@ func (e *Engine) Resolve(cfg Config) (string, error) {
 	combined = strings.TrimSpace(combined)
 	return combined, nil
 }
-
-func (e *Engine) MustResolve(cfg Config) string {
-	s, err := e.Resolve(cfg)
-	if err != nil {
-		return ""
-	}
-	return s
-}
-
 func (e *Engine) load(t TemplateType) (string, error) {
 	if cached, ok := e.cache[t]; ok {
 		return cached, nil

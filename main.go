@@ -408,44 +408,42 @@ func main() {
 		agentName, task := vk.ParseAgentHashMention(prompt, knownNames)
 		if agentName != "" && orchestrator != nil && task != "" {
 			if orchestrator.IsPrimary(agentName) {
-				
-				
+
 				log.InfoLogf("Processing initial prompt via main agent (#%s): %s", agentName, stringutil.Truncate(task, 100, "..."))
 				agentPrompt, perr := orchestrator.GetSystemPrompt(agentName)
 				if perr != nil {
 					errMsg := fmt.Sprintf("Initial prompt failed: %v", perr)
 					log.ErrorLogf("Initial prompt failed: %v", perr)
 					vkClient.SendMessage(config.PeerID, "❌ "+errMsg)
-					return
+				} else {
+					response, err := agentLoop.ProcessPromptWithSystemPrompt(ctx, task, config.PeerID, agentPrompt)
+
+					if err != nil {
+						errMsg := fmt.Sprintf("Initial prompt failed: %v", err)
+						log.ErrorLogf("Initial prompt failed: %v", err)
+						vkClient.SendMessage(config.PeerID, "❌ "+errMsg)
+					} else if response != "" {
+						log.InfoLogf("Initial prompt response: %s", stringutil.Truncate(response, 200, "..."))
+						vkClient.SendMessage(config.PeerID, "✅ Result:\n"+response)
+					} else {
+						vkClient.SendMessage(config.PeerID, "⚠️ Initial prompt returned empty response")
+					}
 				}
-				response, err := agentLoop.ProcessPromptWithSystemPrompt(ctx, task, config.PeerID, agentPrompt)
+			} else {
+				log.InfoLogf("Processing initial prompt via RunAgent (#%s): %s", agentName, stringutil.Truncate(task, 100, "..."))
+
+				response, err := orchestrator.RunAgent(ctx, agentName, task, config.PeerID)
 
 				if err != nil {
 					errMsg := fmt.Sprintf("Initial prompt failed: %v", err)
 					log.ErrorLogf("Initial prompt failed: %v", err)
 					vkClient.SendMessage(config.PeerID, "❌ "+errMsg)
 				} else if response != "" {
-log.InfoLogf("Initial prompt response: %s", stringutil.Truncate(response, 200, "..."))
-				vkClient.SendMessage(config.PeerID, "✅ Result:\n"+response)
-			} else {
-				vkClient.SendMessage(config.PeerID, "⚠️ Initial prompt returned empty response")
-			}
-			return
-		}
-
-		log.InfoLogf("Processing initial prompt via RunAgent (#%s): %s", agentName, stringutil.Truncate(task, 100, "..."))
-
-			response, err := orchestrator.RunAgent(ctx, agentName, task, config.PeerID)
-
-			if err != nil {
-				errMsg := fmt.Sprintf("Initial prompt failed: %v", err)
-				log.ErrorLogf("Initial prompt failed: %v", err)
-				vkClient.SendMessage(config.PeerID, "❌ "+errMsg)
-			} else if response != "" {
-				log.InfoLogf("Initial prompt response: %s", stringutil.Truncate(response, 200, "..."))
-				vkClient.SendMessage(config.PeerID, "✅ Result:\n"+response)
-			} else {
-				vkClient.SendMessage(config.PeerID, "⚠️ Initial prompt returned empty response")
+					log.InfoLogf("Initial prompt response: %s", stringutil.Truncate(response, 200, "..."))
+					vkClient.SendMessage(config.PeerID, "✅ Result:\n"+response)
+				} else {
+					vkClient.SendMessage(config.PeerID, "⚠️ Initial prompt returned empty response")
+				}
 			}
 		} else {
 			log.InfoLogf("Processing initial prompt: %s", stringutil.Truncate(prompt, 100, "..."))
@@ -674,13 +672,8 @@ func initAgentManager(agents map[string]agentpolicy.AgentCfg, agentDir string, l
 			}
 			prompt, err := agentpolicy.LoadMDPrompt(promptPath)
 			if err != nil {
-				log.InfoLogf("Failed to load prompt for agent %s from %s: %v", name, promptPath, err)
-				data, rErr := os.ReadFile(promptPath)
-				if rErr != nil {
-					log.InfoLogf("Skipping agent %s: cannot read prompt from %s", name, promptPath)
-					continue
-				}
-				prompt = string(data)
+				log.InfoLogf("Skipping agent %s: failed to load prompt from %s: %v", name, promptPath, err)
+				continue
 			}
 			ac.Prompt = prompt
 		}

@@ -87,11 +87,6 @@ func (a *agentImpl) collectStreamAndLog(ctx context.Context, messages []Message)
 		logger.DebugToFile("\n---------------- response content ----------------------")
 		logger.DebugToFile("%s%s", prefix, responseText)
 	}
-	if len(reasoningText) > maxReasoningLength {
-		fmt.Printf("[WARN] %sreasoningText too long (%d chars), truncating to %d\n", prefix, len(reasoningText), maxReasoningLength)
-		logger.DebugToFile("%sreasoningText too long (%d chars), truncating to %d", prefix, len(reasoningText), maxReasoningLength)
-		reasoningText = reasoningText[:maxReasoningLength]
-	}
 	if len(reasoningText) > 0 {
 		logger.DebugToFile("\n---------------- response reasoning ------------------")
 		logger.DebugToFile("%s%s", prefix, reasoningText)
@@ -286,8 +281,16 @@ func (a *agentImpl) sendThinkingIfNeeded(session *sess.Session, reasoningText st
 		}
 	}
 
+	displayText := cleanedReasoning
+	if len(displayText) > maxReasoningLength {
+		prefixDisplay := a.agentPrefix()
+		fmt.Printf("%s[WARN] reasoningText too long for thinking chat (%d chars), truncating to %d\n", prefixDisplay, len(displayText), maxReasoningLength)
+		logger.DebugToFile("%s[THINKING] Truncating %d chars of reasoning to %d for thinking chat", prefixDisplay, len(displayText), maxReasoningLength)
+		displayText = stringutil.Truncate(displayText, maxReasoningLength, "…")
+	}
+
 	logger.DebugToFile("%s[THINKING] Sending %d chars of reasoning to thinking chat", a.agentPrefix(), len(cleanedReasoning))
-	if err := a.thinkingCallback(session.GetPeerID(), cleanedReasoning); err != nil {
+	if err := a.thinkingCallback(session.GetPeerID(), displayText); err != nil {
 		fmt.Printf("%s[WARN] Failed to send thinking message: %v\n", a.agentPrefix(), err)
 		logger.DebugToFile("%s[THINKING] Failed to send: %v", a.agentPrefix(), err)
 	}
