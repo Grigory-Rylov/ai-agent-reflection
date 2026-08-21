@@ -201,11 +201,7 @@ func main() {
 	
 	
 	ctxResolver := agentloop.NewModelContextResolver(modelHolder, log)
-	maxTokens, err := retryResolveContext(ctxResolver, log)
-	if err != nil {
-		println("Error resolving model context:", err.Error())
-		os.Exit(1)
-	}
+	maxTokens := retryResolveContext(ctxResolver, log, config.MaxTokens)
 	log.InfoLogf("Model context: %d tokens", maxTokens)
 
 	tools.SetImage2TextConfig(tools.Image2TextConfig{
@@ -596,17 +592,27 @@ func truncateQuestion(text string) string {
 }
 
 
-func retryResolveContext(resolver *agentloop.ModelContextResolver, log *logger.Logger) (int, error) {
+func retryResolveContext(resolver *agentloop.ModelContextResolver, log *logger.Logger, configuredFallback int) int {
+	const maxAttempts = 12
 	const retryDelay = 5 * time.Second
-	for attempt := 1; ; attempt++ {
+
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		ctx, err := resolver.Resolve()
 		if err == nil {
-			return ctx, nil
+			return ctx
 		}
-		log.WarnLogf("Failed to resolve model context (attempt %d): %v", attempt, err)
-		log.WarnLogf("Retrying in %v... (is llama-server running?)", retryDelay)
+		lastErr = err
+		log.WarnLogf("Failed to resolve model context (attempt %d/%d): %v", attempt, maxAttempts, err)
 		time.Sleep(retryDelay)
 	}
+
+	fallback := configuredFallback
+	if fallback <= 0 {
+		fallback = agentloop.DefaultLoopConfig().MaxTokens
+	}
+	log.WarnLogf("Model context resolution stopped after %d attempts (%v); starting with fallback max_tokens=%d", maxAttempts, lastErr, fallback)
+	return fallback
 }
 
 func registerTools(r *tools.Registry) {
