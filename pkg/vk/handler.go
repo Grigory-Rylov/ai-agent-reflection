@@ -46,6 +46,9 @@ type AgentOrchestrator interface {
 	IsPrimary(agentName string) bool
 
 	GetSystemPrompt(agentName string) (string, error)
+
+	ActiveChainPeers() []int64
+	ResumeActiveChainsForPeer(ctx context.Context, peerID int64) error
 }
 
 type BotHandler struct {
@@ -327,6 +330,7 @@ var restarterCommands = map[string]bool{
 	"/update":  true,
 	"/b":       true,
 	"/restart": true,
+	"/stop":    true,
 }
 
 func (h *BotHandler) handleCommand(input string, peerID int64) string {
@@ -553,13 +557,13 @@ func (h *BotHandler) handlePinCommand(input string, peerID int64) string {
 			h.log.InfoLogf("User %d pinned prompt: %s", peerID, stringutil.Truncate(content, 100, "..."))
 		}
 
-		pinCtx, pinCancel := context.WithCancel(context.Background())
+		ctx, release, started := h.beginExclusiveTurn(peerID)
+		if !started {
+			return fmt.Sprintf("✓ Промпт закреплён: %s\n\nВыполнение отменено: сессия была сброшена.", stringutil.Truncate(content, 100, "..."))
+		}
+		defer release()
 
-		pinEntry := &cancelEntry{cancel: pinCancel}
-		h.setCancelFunc(peerID, pinEntry.cancel)
-		defer h.clearCancelFunc(peerID, pinEntry)
-		defer pinCancel()
-		response, err := h.aiAgent.ProcessMessage(pinCtx, content, peerID)
+		response, err := h.aiAgent.ProcessMessage(ctx, content, peerID)
 		if errors.Is(err, context.Canceled) {
 			return fmt.Sprintf("✓ Промпт закреплён: %s\n\nОперация отменена.", stringutil.Truncate(content, 100, "..."))
 		}
@@ -568,6 +572,27 @@ func (h *BotHandler) handlePinCommand(input string, peerID int64) string {
 		}
 		return fmt.Sprintf("✓ Промпт закреплён: %s\n\n%s", stringutil.Truncate(content, 100, "..."), response)
 	}
+}
+
+func (h *BotHandler) beginExclusiveTurn(peerID int64) (context.Context, func(), bool) {
+	releaseQueueSlot, generationAtArrival := h.beginProcessingWait(peerID)
+	mu := h.getPeerMutex(peerID)
+	mu.Lock()
+	releaseQueueSlot()
+	if h.peerGeneration(peerID) != generationAtArrival {
+		mu.Unlock()
+		return nil, func() {}, false
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	entry := &cancelEntry{cancel: cancel}
+	h.setCancelFunc(peerID, cancel)
+	release := func() {
+		h.clearCancelFunc(peerID, entry)
+		cancel()
+		mu.Unlock()
+	}
+	return ctx, release, true
 }
 
 func extractBaseCommand(input string) string {
@@ -590,11 +615,25 @@ func (h *BotHandler) handleSessions(peerID int64) string {
 }
 
 func (h *BotHandler) handleClear(peerID int64) string {
-	workingDir := ""
+	return h.handleNewSession("/n "+h.resolveClearWorkingDir(peerID), peerID)
+}
+
+func (h *BotHandler) resolveClearWorkingDir(peerID int64) string {
 	if s := h.aiAgent.GetSession(peerID); s != nil {
-		workingDir = s.GetWorkingDir()
+		if wd := s.GetWorkingDir(); wd != "" && h.isAccessibleDir(wd) {
+			return wd
+		}
 	}
-	return h.handleNewSession("/n "+workingDir, peerID)
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return wd
+}
+
+func (h *BotHandler) isAccessibleDir(dir string) bool {
+	info, err := os.Stat(dir)
+	return err == nil && info.IsDir()
 }
 
 func (h *BotHandler) handleNewSession(input string, peerID int64) string {
@@ -769,6 +808,52 @@ func (h *BotHandler) clearHandlerSession(peerID int64) {
 	h.sessionMu.Lock()
 	defer h.sessionMu.Unlock()
 	delete(h.sessions, peerID)
+}
+
+func (h *BotHandler) ScheduleResume(peerID int64) {
+	h.spawnCancellableTurn(peerID, func(ctx context.Context) {
+		h.aiAgent.ResumeInterruptedTask(ctx, peerID)
+	})
+}
+
+func (h *BotHandler) ScheduleChainResume() {
+	if h.orchestrator == nil {
+		return
+	}
+	for _, peerID := range h.orchestrator.ActiveChainPeers() {
+		peer := peerID
+		h.spawnCancellableTurn(peer, func(ctx context.Context) {
+			if err := h.orchestrator.ResumeActiveChainsForPeer(ctx, peer); err != nil && h.log != nil {
+				h.log.WarnLogf("Chain resume for peer %d: %v", peer, err)
+			}
+		})
+	}
+}
+
+func (h *BotHandler) spawnCancellableTurn(peerID int64, run func(ctx context.Context)) {
+	go func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		entry := &cancelEntry{cancel: cancel}
+		if !h.setCancelEntryIfIdle(peerID, entry) {
+			cancel()
+			if h.log != nil {
+				h.log.InfoLogf("Skip resume for peer %d: another request is already active", peerID)
+			}
+			return
+		}
+		defer h.clearCancelFunc(peerID, entry)
+		run(ctx)
+	}()
+}
+
+func (h *BotHandler) setCancelEntryIfIdle(peerID int64, entry *cancelEntry) bool {
+	h.cancelMu.Lock()
+	defer h.cancelMu.Unlock()
+	if cur, ok := h.cancelFuncs[peerID]; ok && !cur.cancelled {
+		return false
+	}
+	h.cancelFuncs[peerID] = entry
+	return true
 }
 
 type cancelEntry struct {

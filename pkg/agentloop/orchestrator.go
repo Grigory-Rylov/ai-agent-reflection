@@ -374,6 +374,42 @@ func (o *Orchestrator) ResumeActiveChains(ctx context.Context) error {
 	return nil
 }
 
+func (o *Orchestrator) ActiveChainPeers() []int64 {
+	if o.config.Store == nil {
+		return nil
+	}
+	chains, err := o.config.Store.GetAllActiveChains()
+	if err != nil {
+		o.debugLog("ActiveChainPeers: %v", err)
+		return nil
+	}
+	var peers []int64
+	for _, chain := range chains {
+		peers = append(peers, chain.PeerID)
+	}
+	return peers
+}
+
+func (o *Orchestrator) ResumeActiveChainsForPeer(ctx context.Context, peerID int64) error {
+	if o.config.Store == nil {
+		return nil
+	}
+	chains, err := o.config.Store.GetAllActiveChains()
+	if err != nil {
+		return fmt.Errorf("get active chains: %w", err)
+	}
+	for _, chain := range chains {
+		if chain.PeerID != peerID {
+			continue
+		}
+		if err := o.resumeChain(ctx, chain); err != nil {
+			o.debugLog("Resume chain for peer %d failed: %v", chain.PeerID, err)
+			return err
+		}
+	}
+	return nil
+}
+
 
 func (o *Orchestrator) resumeChain(ctx context.Context, chain store.AgentChainData) error {
 	if len(chain.Chain) == 0 {
