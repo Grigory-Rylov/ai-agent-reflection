@@ -327,43 +327,34 @@ func isDiscardPath(p string) bool {
 	return p == "/dev/null"
 }
 
+type openHeredoc struct {
+	delim     string
+	bodyStart int
+}
+
 func maskHeredocBodies(command string) string {
 	if command == "" {
 		return command
 	}
 	lines := strings.SplitAfter(command, "\n")
 	out := make([]string, 0, len(lines))
-	openDelims := make(map[string]int)
-	flushOpen := func() {}
+	var open *openHeredoc
 	for _, raw := range lines {
 		line := strings.TrimSuffix(raw, "\n")
 		trimmed := strings.TrimLeft(line, " \t")
-		matched := ""
-		for delim := range openDelims {
-			if trimmed == delim {
-				delete(openDelims, delim)
-				matched = delim
-				break
+		if open != nil {
+			if trimmed == open.delim || strings.HasPrefix(trimmed, open.delim+")") {
+				out = append(out[:open.bodyStart], raw)
+				open = nil
 			}
-		}
-		if matched != "" {
-			out = append(out, line+"\n")
 			continue
 		}
-		out = append(out, line+"\n")
-		if opener := findLineHeredocOpener(trimmed); opener != "" {
-			openDelims[opener] = len(out)
+		out = append(out, raw)
+		if delim := findLineHeredocOpener(trimmed); delim != "" {
+			open = &openHeredoc{delim: delim, bodyStart: len(out)}
 		}
 	}
-	result := strings.Join(out, "")
-	for _, idx := range openDelims {
-		if idx < len(out) {
-			out[idx] = ""
-		}
-	}
-	result = strings.Join(out, "")
-	_ = flushOpen
-	return result
+	return strings.Join(out, "")
 }
 
 func findLineHeredocOpener(line string) string {
