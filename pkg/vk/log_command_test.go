@@ -48,6 +48,17 @@ func newLogVKServer(t *testing.T, wantPeer int64, savedDocs *atomic.Int32) *http
 	}))
 }
 
+func newLogDir(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
 func newLogHandler(t *testing.T, logPath string, mainPeerID, wantPeer int64) (*BotHandler, *mockAgentLoop) {
 	t.Helper()
 
@@ -73,16 +84,17 @@ func newLogHandler(t *testing.T, logPath string, mainPeerID, wantPeer int64) (*B
 }
 
 func TestLogCommandSendsFileWithoutLLM(t *testing.T) {
-	tmp := filepath.Join(t.TempDir(), "debug.log")
-	if err := os.WriteFile(tmp, []byte("test log content\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	dir := newLogDir(t, map[string]string{
+		"debug.log":          "test log content\n",
+		"debug_prompt.txt":   "prompt\n",
+		"debug_response.txt": "response\n",
+	})
 
-	handler, mock := newLogHandler(t, tmp, 0, 12345)
+	handler, mock := newLogHandler(t, filepath.Join(dir, "debug.log"), 0, 12345)
 
 	response := handler.ProcessMessage("/log", 12345)
-	if !strings.Contains(response, "Лог-файл отправлен") {
-		t.Errorf("expected confirmation message, got %q", response)
+	if !strings.Contains(response, "Отправлено файлов: 3") {
+		t.Errorf("expected all debug files sent, got %q", response)
 	}
 	if mock.lastMessage != "" {
 		t.Errorf("/log should not reach LLM, got lastMessage=%q", mock.lastMessage)
@@ -90,16 +102,17 @@ func TestLogCommandSendsFileWithoutLLM(t *testing.T) {
 }
 
 func TestLogCommandAlias(t *testing.T) {
-	tmp := filepath.Join(t.TempDir(), "debug.log")
-	if err := os.WriteFile(tmp, []byte("test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	dir := newLogDir(t, map[string]string{
+		"debug.log":          "test\n",
+		"debug_prompt.txt":   "prompt\n",
+		"debug_response.txt": "response\n",
+	})
 
-	handler, mock := newLogHandler(t, tmp, 0, 12345)
+	handler, mock := newLogHandler(t, filepath.Join(dir, "debug.log"), 0, 12345)
 
 	response := handler.ProcessMessage("/logs", 12345)
-	if !strings.Contains(response, "Лог-файл отправлен") {
-		t.Errorf("expected confirmation message for /logs, got %q", response)
+	if !strings.Contains(response, "Отправлено файлов: 3") {
+		t.Errorf("expected all debug files sent for /logs, got %q", response)
 	}
 	if mock.lastMessage != "" {
 		t.Errorf("/logs should not reach LLM, got lastMessage=%q", mock.lastMessage)
@@ -107,29 +120,26 @@ func TestLogCommandAlias(t *testing.T) {
 }
 
 func TestLogCommandRoutesToMainPeer(t *testing.T) {
-	tmp := filepath.Join(t.TempDir(), "debug.log")
-	if err := os.WriteFile(tmp, []byte("test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	dir := newLogDir(t, map[string]string{
+		"debug.log":          "test\n",
+		"debug_prompt.txt":   "prompt\n",
+		"debug_response.txt": "response\n",
+	})
 
-	handler, _ := newLogHandler(t, tmp, 999, 999)
+	handler, _ := newLogHandler(t, filepath.Join(dir, "debug.log"), 999, 999)
 
 	response := handler.ProcessMessage("/log", 12345)
-	if !strings.Contains(response, "Лог-файл отправлен") {
-		t.Errorf("expected confirmation message, got %q", response)
+	if !strings.Contains(response, "Отправлено файлов: 3") {
+		t.Errorf("expected all debug files sent, got %q", response)
 	}
 }
 
-func TestLogCommandMissingFile(t *testing.T) {
-
+func TestLogCommandMissingDir(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "nope.log")
 	logCfg := logger.DefaultConfig()
 	logCfg.File = missing
 	log, err := logger.New(logCfg)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(missing); err != nil {
 		t.Fatal(err)
 	}
 
@@ -138,9 +148,9 @@ func TestLogCommandMissingFile(t *testing.T) {
 
 	response := handler.ProcessMessage("/log", 12345)
 	if response == "" {
-		t.Error("expected error response for missing log file")
+		t.Error("expected error response for missing debug dir")
 	}
 	if mock.lastMessage != "" {
-		t.Errorf("/log with missing file should not reach LLM, got lastMessage=%q", mock.lastMessage)
+		t.Errorf("/log with missing dir should not reach LLM, got lastMessage=%q", mock.lastMessage)
 	}
 }

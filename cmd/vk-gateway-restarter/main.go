@@ -50,6 +50,21 @@ func (ap *agentProc) start(agentPath string, args []string) error {
 	}
 	ap.cmd = cmd
 	fmt.Printf("[restarter] Agent started (PID %d)\n", cmd.Process.Pid)
+
+	go func(c *exec.Cmd) {
+		waitErr := c.Wait()
+		ap.mu.Lock()
+		defer ap.mu.Unlock()
+		if ap.cmd != c {
+			return
+		}
+		ap.cmd = nil
+		if waitErr != nil {
+			fmt.Printf("[restarter] Agent exited (PID %d): %v\n", c.Process.Pid, waitErr)
+		} else {
+			fmt.Printf("[restarter] Agent stopped (PID %d)\n", c.Process.Pid)
+		}
+	}(cmd)
 	return nil
 }
 
@@ -190,7 +205,7 @@ func monitorAgent(ctx context.Context, ap *agentProc, agentPath string, agentArg
 			fmt.Println("[restarter] monitorAgent stopping")
 			return
 		case <-ticker.C:
-			isRunning := ap.cmd != nil && ap.cmd.Process != nil && ap.cmd.ProcessState == nil
+			isRunning := ap.isRunning()
 			if !isRunning {
 				fmt.Println("[restarter] Agent not running — waiting for /restart command")
 			}

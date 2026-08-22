@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -353,7 +354,7 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 			"/help - Показать эту справку\n" +
 			"/status - Показать статус агента (сообщения, символы, токены)\n" +
 			"/test-llama - Тест соединения с llama-server\n" +
-			"/log, /logs - Отправить файл логов (debug/debug.log)\n" +
+			"/log, /logs - Отправить все файлы из папки debug/\n" +
 			"/m, /models - Список доступных моделей\n" +
 			"/r [alias] - Переключить текущую модель\n" +
 			"/pin <промпт> - Закрепить промпт (переживает компактизацию) и выполнить его\n" +
@@ -691,7 +692,7 @@ func (h *BotHandler) handleTestLlama() string {
 	return result
 }
 
-func (h *BotHandler) handleLogCommand(peerID int64) string {
+func (h *BotHandler) logDirPath() string {
 	logPath := "debug/debug.log"
 	if h.log != nil {
 		if configured := h.log.LogFilePath(); configured != "" {
@@ -701,35 +702,67 @@ func (h *BotHandler) handleLogCommand(peerID int64) string {
 
 	absPath, err := filepath.Abs(logPath)
 	if err != nil {
-		absPath = logPath
+		return logPath
+	}
+	return filepath.Dir(absPath)
+}
+
+func (h *BotHandler) collectDebugFiles(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read debug dir: %w", err)
 	}
 
-	if _, err := os.Stat(absPath); os.IsNotExist(err) {
-		if h.log != nil {
-			h.log.WarnLogf("/log: log file not found: %s", absPath)
+	var files []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
 		}
-		return fmt.Sprintf("❌ Лог-файл не найден: %s", absPath)
+		files = append(files, filepath.Join(dir, entry.Name()))
 	}
-	if h.vkClient == nil {
-		if h.log != nil {
-			h.log.WarnLogf("/log: VK client is nil, cannot send %s", absPath)
-		}
-		return "❌ VK client не настроен"
-	}
+	sort.Strings(files)
+	return files, nil
+}
 
+func (h *BotHandler) sendDebugFiles(peerID int64, files []string) error {
 	targetPeer := peerID
 	if h.mainPeerID > 0 {
 		targetPeer = h.mainPeerID
 	}
 
-	logger.DebugToFile("[handleLogCommand] sending %s to peer %d", absPath, targetPeer)
-	if _, err := h.vkClient.UploadAndSendDocument(absPath, targetPeer, "📋 Логи"); err != nil {
-		if h.log != nil {
-			h.log.ErrorLogf("/log: failed to send log file: %v", err)
+	for _, file := range files {
+		logger.DebugToFile("[handleLogCommand] sending %s to peer %d", file, targetPeer)
+		if _, err := h.vkClient.UploadAndSendDocument(file, targetPeer, "📋 Логи"); err != nil {
+			return fmt.Errorf("send %s: %w", filepath.Base(file), err)
 		}
-		return fmt.Sprintf("❌ Ошибка отправки лог-файла: %v", err)
 	}
-	return "📋 Лог-файл отправлен"
+	return nil
+}
+
+func (h *BotHandler) handleLogCommand(peerID int64) string {
+	dir := h.logDirPath()
+
+	files, err := h.collectDebugFiles(dir)
+	if err != nil || len(files) == 0 {
+		if h.log != nil {
+			h.log.WarnLogf("/log: debug dir is empty or missing: %s (%v)", dir, err)
+		}
+		return fmt.Sprintf("❌ Файлы логов не найдены в: %s", dir)
+	}
+	if h.vkClient == nil {
+		if h.log != nil {
+			h.log.WarnLogf("/log: VK client is nil, cannot send files from %s", dir)
+		}
+		return "❌ VK client не настроен"
+	}
+
+	if err := h.sendDebugFiles(peerID, files); err != nil {
+		if h.log != nil {
+			h.log.ErrorLogf("/log: failed to send log files: %v", err)
+		}
+		return fmt.Sprintf("❌ Ошибка отправки логов: %v", err)
+	}
+	return fmt.Sprintf("📋 Отправлено файлов: %d (из %s)", len(files), dir)
 }
 
 func (h *BotHandler) clearHandlerSession(peerID int64) {
