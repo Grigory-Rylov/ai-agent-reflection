@@ -700,7 +700,7 @@ func isSubcommandSafe(sub string, devPaths map[string]bool) bool {
 	}
 	rest, _ := commandParts(parts)
 	if isAbsolutePath(rest[0]) {
-		return false
+		return absoluteProgramSafe(rest)
 	}
 	for _, target := range redirectionTargets(sub) {
 		if !devPaths[target] && !isDiscardPath(target) {
@@ -721,6 +721,39 @@ func isSubcommandSafe(sub string, devPaths map[string]bool) bool {
 		return false
 	}
 	return true
+}
+
+func absoluteProgramSafe(rest []string) bool {
+	base := filepath.Base(rest[0])
+	if !readOnlyCommands[base] {
+		return false
+	}
+	sub := strings.Join(rest, " ")
+	if !IsReadOnlySubcommand(sub) {
+		return false
+	}
+	if base == "go" {
+		for _, arg := range rest[1:] {
+			if goWritingVerbs[arg] {
+				return false
+			}
+		}
+	}
+	for _, target := range redirectionTargets(sub) {
+		if !isDiscardPath(target) && !PathsAllAllowed([]string{target}) {
+			return false
+		}
+	}
+	for _, token := range rest[1:] {
+		if isAbsolutePath(token) && !PathsAllAllowed([]string{token}) {
+			return false
+		}
+	}
+	return true
+}
+
+var goWritingVerbs = map[string]bool{
+	"install": true, "publish": true, "get": true, "reset": true, "clean": true,
 }
 
 func exportStatementPaths(rest []string) []string {

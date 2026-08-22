@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/access"
 )
 
 func TestShellCommandFilesystemSafeReadOnly(t *testing.T) {
@@ -58,11 +60,11 @@ func TestShellCommandFilesystemSafeReadOnly(t *testing.T) {
 		}
 	})
 
-	t.Run("executing go binary from outside allowed dir is not safe", func(t *testing.T) {
+	t.Run("reading via absolute program outside allowed dir is safe", func(t *testing.T) {
 		setup(t)
 		cmd := "ls -la /mnt/data/usr/local/go/bin/ 2>&1 && /mnt/data/usr/local/go/bin/go version 2>&1 && head -3 && echo \"HOME=$HOME\" && ls ~/go 2>/dev/null"
-		if ShellCommandFilesystemSafe(cmd) {
-			t.Error("expected false: executing a binary from outside allowed dirs must ask")
+		if !ShellCommandFilesystemSafe(cmd) {
+			t.Error("expected true: read-only verb via absolute program performs no mutation, should not ask")
 		}
 	})
 
@@ -100,6 +102,52 @@ func TestShellCommandFilesystemSafeReadOnly(t *testing.T) {
 		setup(t)
 		if !ShellCommandFilesystemSafe("tail -6") {
 			t.Error("expected true: tail with no file argument should not ask")
+		}
+	})
+}
+
+func TestShellCommandFilesystemSafeAbsoluteProgram(t *testing.T) {
+	newCtrl := func(t *testing.T, dirs ...string) {
+		prevWD := WorkingDir
+		SetWorkingDir(t.TempDir())
+		SetAccessController(access.NewController(dirs))
+		t.Cleanup(func() {
+			SetAccessController(nil)
+			SetWorkingDir(prevWD)
+		})
+	}
+
+	t.Run("absolute go vet with tmp in whitelist is safe", func(t *testing.T) {
+		newCtrl(t, "/tmp")
+		cmd := "/tmp/godl/go/bin/go vet ./pkg/permission/ 2>&1"
+		if ShellCommandFilesystemSafe(cmd) {
+			return
+		}
+		t.Error("expected true: read-only go vet launched from whitelisted /tmp should not ask")
+	})
+
+	t.Run("absolute go build and test chain from tmp is safe", func(t *testing.T) {
+		newCtrl(t, "/tmp")
+		cmd := "/tmp/godl/go/bin/go build ./... 2>&1 && /tmp/godl/go/bin/go test ./... 2>&1"
+		if ShellCommandFilesystemSafe(cmd) {
+			return
+		}
+		t.Error("expected true: go invoked from whitelisted /tmp should not ask")
+	})
+
+	t.Run("absolute python script outside whitelist asks", func(t *testing.T) {
+		dir := t.TempDir()
+		newCtrl(t, dir)
+		cmd := "/mnt/data/usr/bin/python3 /mnt/data/evil/setup.py"
+		if ShellCommandFilesystemSafe(cmd) {
+			t.Error("expected false: executing an interpreter script outside whitelist must ask")
+		}
+	})
+
+	t.Run("absolute rm outside whitelist asks", func(t *testing.T) {
+		newCtrl(t, "/tmp")
+		if ShellCommandFilesystemSafe("/tmp/rm -rf /usr/local/go/bin") {
+			t.Error("expected false: mutating binary touching outside dir must ask")
 		}
 	})
 }
