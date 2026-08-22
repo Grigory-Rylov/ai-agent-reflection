@@ -172,6 +172,10 @@ type mockOrchestrator struct {
 	primaryAgents map[string]bool
 	systemPrompts map[string]string
 	agentNames    []string
+
+	chainPeers     []int64
+	chainResumeCtx context.Context
+	chainStarted   chan struct{}
 }
 
 func newMockOrchestrator(response string) *mockOrchestrator {
@@ -234,6 +238,17 @@ func (m *mockOrchestrator) GetSystemPrompt(agentName string) (string, error) {
 	return "system prompt for " + agentName, nil
 }
 
+func (m *mockOrchestrator) ActiveChainPeers() []int64 { return m.chainPeers }
+
+func (m *mockOrchestrator) ResumeActiveChainsForPeer(ctx context.Context, peerID int64) error {
+	m.mu.Lock()
+	m.chainResumeCtx = ctx
+	m.mu.Unlock()
+	close(m.chainStarted)
+	<-ctx.Done()
+	return nil
+}
+
 
 func TestCommandsDoNotReachModel(t *testing.T) {
 	log, _ := logger.New(logger.DefaultConfig())
@@ -279,6 +294,21 @@ func TestNormalMessagesReachModel(t *testing.T) {
 	}
 	if response != "processed: Hello, how are you?" {
 		t.Errorf("Expected 'processed: Hello, how are you?', got %q", response)
+	}
+}
+
+func TestStopCommandIsSilentlyIgnored(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newMockAgentLoop()
+	handler := NewBotHandler(nil, mock, log)
+
+	response := handler.ProcessMessage("/stop", 12345)
+
+	if mock.lastMessage != "" {
+		t.Errorf("/stop was sent to AI model: lastMessage=%q", mock.lastMessage)
+	}
+	if response != "" {
+		t.Errorf("/stop should be silently ignored by agent, got response: %q", response)
 	}
 }
 

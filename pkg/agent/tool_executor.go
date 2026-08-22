@@ -219,8 +219,13 @@ func (e *agentToolExecutor) checkShellPermission(ctx context.Context, checker pe
 		return true
 	}
 
-	e.agent.sendThinking(peerID, fmt.Sprintf("[PERMISSION] Asking user for bash command '%s'...", command))
-	return askShellPermission(ctx, checker, scan, peerID)
+	problematic := tools.ProblematicShellSubCommands(command)
+	display := command
+	if len(problematic) > 0 {
+		display = strings.Join(problematic, " && ")
+	}
+	e.agent.sendThinking(peerID, fmt.Sprintf("[PERMISSION] Asking user for bash command '%s'...", display))
+	return askShellPermission(ctx, checker, scan, problematic, peerID)
 }
 
 func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName string, args map[string]string, peerID int64) bool {
@@ -432,14 +437,19 @@ func getQuestionState() (func(int64, map[string]interface{}) (map[string]interfa
 }
 
 
-func askShellPermission(ctx context.Context, checker permissionChecker, scan permission.Scan, peerID int64) bool {
+func askShellPermission(ctx context.Context, checker permissionChecker, scan permission.Scan, problematic []string, peerID int64) bool {
 	cb, _ := getQuestionState()
 	if cb == nil {
 		logger.DebugToFile("[askShellPermission] cb is nil, allowing command without asking")
 		return true
 	}
 
-	detail := strings.Join(scan.Patterns, " && ")
+	var detail string
+	if len(problematic) > 0 {
+		detail = strings.Join(problematic, " && ")
+	} else {
+		detail = strings.Join(scan.Patterns, " && ")
+	}
 	q := map[string]interface{}{
 		"question": fmt.Sprintf("Allow shell command: %s?", stringutil.Truncate(detail, 200, "...")),
 		"header":   "🔐 bash",

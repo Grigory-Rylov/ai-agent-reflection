@@ -108,3 +108,40 @@ func TestModelSwitchRefreshNilHolder(t *testing.T) {
 		t.Fatalf("syncCurrentModel: %v", err)
 	}
 }
+
+func TestSyncCurrentModel_ResolvingFailsUsesFallback(t *testing.T) {
+	vk := &mockVKClient{}
+	reg := newMockToolRegistry()
+	config := DefaultLoopConfig()
+	config.ModelHolder = writeModelsHolder(t, &modelsconfig.ModelsConfig{
+		Default: "test",
+		Models: map[string]modelsconfig.ModelEntry{
+			"test":        {Name: "test-model", Host: "http://localhost:8081"},
+			"unreachable": {Name: "bad-model", Host: "127.0.0.1:1"},
+		},
+	})
+	r := NewModelContextResolver(config.ModelHolder, nil)
+	config.ContextResolver = r
+	config.MaxTokens = 4096
+
+	loop, err := NewAgentLoop(config, vk, reg)
+	if err != nil {
+		t.Fatalf("NewAgentLoop: %v", err)
+	}
+	al := loop.(*agentLoop)
+
+	if err := config.ModelHolder.Switch("unreachable"); err != nil {
+		t.Fatalf("Switch: %v", err)
+	}
+
+	if err := al.syncCurrentModel(); err != nil {
+		t.Fatalf("syncCurrentModel should not fail (fallback expected), got: %v", err)
+	}
+
+	if got := al.tokenizer.Name(); got != "llama-server-bad-model" {
+		t.Errorf("tokenizer = %q, want llama-server-bad-model", got)
+	}
+	if al.config.MaxTokens != 4096 {
+		t.Errorf("MaxTokens = %d, want 4096 (fallback)", al.config.MaxTokens)
+	}
+}

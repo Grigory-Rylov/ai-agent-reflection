@@ -110,13 +110,16 @@ func isAbsolutePath(s string) bool {
 }
 
 func looksLikePath(token string) bool {
+	token = stripOuterQuotes(token)
 	if strings.HasPrefix(token, "-") {
 		return false
 	}
 	if len(token) > 0 && (token[0] == '\'' || token[0] == '"' || token[0] == '`') {
 		return false
 	}
-
+	if strings.ContainsAny(token, " \t\r\n") {
+		return false
+	}
 	if strings.ContainsAny(token, "?*[]!") {
 		return false
 	}
@@ -303,7 +306,17 @@ func isKnownInterpreter(token string) bool {
 	return knownInterpreterBasenames[name]
 }
 
+func stripOuterQuotes(token string) string {
+	if len(token) >= 2 {
+		if (token[0] == '"' && token[len(token)-1] == '"') || (token[0] == '\'' && token[len(token)-1] == '\'') {
+			return token[1 : len(token)-1]
+		}
+	}
+	return token
+}
+
 func isExplicitPathToken(token string) bool {
+	token = stripOuterQuotes(token)
 	if strings.HasPrefix(token, "-") {
 		return false
 	}
@@ -312,6 +325,59 @@ func isExplicitPathToken(token string) bool {
 
 func isDiscardPath(p string) bool {
 	return p == "/dev/null"
+}
+
+type openHeredoc struct {
+	delim     string
+	bodyStart int
+}
+
+func maskHeredocBodies(command string) string {
+	if command == "" {
+		return command
+	}
+	lines := strings.SplitAfter(command, "\n")
+	out := make([]string, 0, len(lines))
+	var open *openHeredoc
+	for _, raw := range lines {
+		line := strings.TrimSuffix(raw, "\n")
+		trimmed := strings.TrimLeft(line, " \t")
+		if open != nil {
+			if trimmed == open.delim || strings.HasPrefix(trimmed, open.delim+")") {
+				out = append(out[:open.bodyStart], raw)
+				open = nil
+			}
+			continue
+		}
+		out = append(out, raw)
+		if delim := findLineHeredocOpener(trimmed); delim != "" {
+			open = &openHeredoc{delim: delim, bodyStart: len(out)}
+		}
+	}
+	return strings.Join(out, "")
+}
+
+func findLineHeredocOpener(line string) string {
+	idx := strings.Index(line, "<<")
+	if idx < 0 {
+		return ""
+	}
+	rest := line[idx+2:]
+	rest = strings.TrimPrefix(rest, "-")
+	start := 0
+	for start < len(rest) && (rest[start] == ' ' || rest[start] == '\t') {
+		start++
+	}
+	end := start
+	for end < len(rest) && rest[end] != ' ' && rest[end] != '\t' && rest[end] != '\n' {
+		end++
+	}
+	if end == start {
+		return ""
+	}
+	delim := rest[start:end]
+	delim = strings.Trim(delim, "'\"")
+	return delim
 }
 
 var nestedSubRe = regexp.MustCompile(`\$\(([^)]+)\)`)
@@ -329,13 +395,14 @@ func collectFilePaths(sub string, devPaths map[string]bool) []string {
 		}
 		return hostPaths
 	}
+	masked := maskHeredocBodies(sub)
 	var paths []string
-	for _, p := range ExtractShellPaths(sub) {
+	for _, p := range ExtractShellPaths(masked) {
 		if !devPaths[p] && !isDiscardPath(p) {
 			paths = append(paths, p)
 		}
 	}
-	for _, p := range redirectionTargets(sub) {
+	for _, p := range redirectionTargets(masked) {
 		if !devPaths[p] && !isDiscardPath(p) {
 			paths = append(paths, p)
 		}
@@ -351,7 +418,7 @@ func collectFilePaths(sub string, devPaths map[string]bool) []string {
 		}
 	}
 
-	for _, m := range nestedSubRe.FindAllStringSubmatch(sub, -1) {
+	for _, m := range nestedSubRe.FindAllStringSubmatch(masked, -1) {
 		inner := m[1]
 		innerDev := collectDevicePaths(permission.SplitCommands(inner))
 		for _, p := range collectFilePaths(inner, innerDev) {
@@ -590,21 +657,46 @@ func redirectionTargets(sub string) []string {
 	var targets []string
 	tokens := permission.Tokenize(sub)
 	for i := 0; i < len(tokens); i++ {
-		idx := strings.LastIndexAny(tokens[i], "><")
-		if idx < 0 {
+		opPos := unquotedRedirOperatorAt(tokens[i])
+		if opPos < 0 {
 			continue
 		}
-		target := strings.TrimLeft(tokens[i][idx+1:], "&0123456789")
+		target := strings.TrimLeft(tokens[i][opPos+1:], "&0123456789")
 		if target != "" && looksLikePath(target) {
 			targets = append(targets, target)
 			continue
 		}
-		if idx == len(tokens[i])-1 && i+1 < len(tokens) && looksLikePath(tokens[i+1]) {
+		if opPos == len(tokens[i])-1 && i+1 < len(tokens) && looksLikePath(tokens[i+1]) {
 			targets = append(targets, tokens[i+1])
 			i++
 		}
 	}
 	return targets
+}
+
+func unquotedRedirOperatorAt(token string) int {
+	inSingle, inDouble := false, false
+	lastUnquoted := -1
+	for i := 0; i < len(token); i++ {
+		ch := token[i]
+		switch {
+		case inSingle:
+			if ch == '\'' {
+				inSingle = false
+			}
+		case inDouble:
+			if ch == '"' {
+				inDouble = false
+			}
+		case ch == '\'':
+			inSingle = true
+		case ch == '"':
+			inDouble = true
+		case ch == '>' || ch == '<':
+			lastUnquoted = i
+		}
+	}
+	return lastUnquoted
 }
 
 func ShellCommandHasFilePaths(command string) bool {
@@ -625,6 +717,67 @@ func shellSubcommandHasFilePaths(sub string, devPaths map[string]bool) bool {
 	return len(collectFilePaths(sub, devPaths)) > 0
 }
 
+var readOnlyCommands = map[string]bool{
+	"ls": true, "cat": true, "head": true, "tail": true,
+	"less": true, "more": true, "wc": true,
+	"which": true, "whereis": true, "type": true,
+	"file": true, "stat": true, "readlink": true,
+	"grep": true, "egrep": true, "fgrep": true, "rg": true, "ag": true,
+	"diff": true, "cmp": true, "md5sum": true, "sha1sum": true, "sha256sum": true,
+	"tr": true, "cut": true, "sort": true, "uniq": true, "xargs": true,
+	"echo": true, "printf": true, "pwd": true, "date": true, "env": true,
+	"export": true, "unset": true,
+	"ps": true, "top": true, "free": true, "df": true, "du": true, "uptime": true, "uname": true,
+	"find": true,
+	"go": true,
+}
+
+var findMutatingFlags = map[string]bool{
+	"-delete": true, "-exec": true, "-execdir": true,
+	"-ok": true, "-okdir": true,
+	"-fprint": true, "-fprintf": true, "-fls": true,
+}
+
+func isFindExecFlag(tok string) bool {
+	return tok == "-exec" || tok == "-execdir"
+}
+
+func IsReadOnlySubcommand(sub string) bool {
+	parts := permission.Tokenize(sub)
+	if len(parts) == 0 {
+		return false
+	}
+	_, cmd := commandParts(parts)
+	if !readOnlyCommands[cmd] {
+		return false
+	}
+	for _, tok := range parts[1:] {
+		tok = strings.TrimRight(tok, ";")
+		if findMutatingFlags[tok] {
+			return false
+		}
+		if isFindExecFlag(tok) {
+			return false
+		}
+	}
+	if cmd == "head" || cmd == "tail" {
+		return headTailSafe(parts)
+	}
+	return true
+}
+
+func headTailSafe(parts []string) bool {
+	for _, tok := range parts[1:] {
+		if strings.HasPrefix(tok, "-") {
+			continue
+		}
+		if isAbsolutePath(tok) || strings.HasPrefix(tok, "~") || tok == ".." {
+			return false
+		}
+	}
+	return true
+}
+
 func ShellCommandFilesystemSafe(command string) bool {
 	if command == "" {
 		return true
@@ -632,12 +785,127 @@ func ShellCommandFilesystemSafe(command string) bool {
 	subs := permission.SplitCommands(command)
 	devPaths := collectDevicePaths(subs)
 	for _, sub := range subs {
+		if !isSubcommandSafe(sub, devPaths) {
+			return false
+		}
+	}
+	return true
+}
+
+func isSubcommandSafe(sub string, devPaths map[string]bool) bool {
+	parts := permission.Tokenize(sub)
+	if len(parts) == 0 {
+		return true
+	}
+	rest, _ := commandParts(parts)
+	if isAbsolutePath(rest[0]) {
+		return absoluteProgramSafe(rest)
+	}
+	for _, target := range redirectionTargets(sub) {
+		if !devPaths[target] && !isDiscardPath(target) {
+			if !PathsAllAllowed([]string{target}) {
+				return false
+			}
+		}
+	}
+	if !IsReadOnlySubcommand(sub) {
 		paths := collectFilePaths(sub, devPaths)
 		if len(paths) > 0 && !PathsAllAllowed(paths) {
 			return false
 		}
 	}
+	envPaths := envAssignmentPaths(parts)
+	envPaths = append(envPaths, exportStatementPaths(rest)...)
+	if len(envPaths) > 0 && !PathsAllAllowed(envPaths) {
+		return false
+	}
 	return true
+}
+
+func absoluteProgramSafe(rest []string) bool {
+	base := filepath.Base(rest[0])
+	if !readOnlyCommands[base] {
+		return false
+	}
+	sub := strings.Join(rest, " ")
+	if !IsReadOnlySubcommand(sub) {
+		return false
+	}
+	if base == "go" {
+		for _, arg := range rest[1:] {
+			if goWritingVerbs[arg] {
+				return false
+			}
+		}
+	}
+	for _, target := range redirectionTargets(sub) {
+		if !isDiscardPath(target) && !PathsAllAllowed([]string{target}) {
+			return false
+		}
+	}
+	for _, token := range rest[1:] {
+		if isAbsolutePath(token) && !PathsAllAllowed([]string{token}) {
+			return false
+		}
+	}
+	return true
+}
+
+var goWritingVerbs = map[string]bool{
+	"install": true, "publish": true, "get": true, "reset": true, "clean": true,
+}
+
+func exportStatementPaths(rest []string) []string {
+	cmd := rest[0]
+	base := cmd
+	if idx := strings.LastIndex(base, "/"); idx >= 0 {
+		base = base[idx+1:]
+	}
+	if base != "export" {
+		return nil
+	}
+	var paths []string
+	for _, tok := range rest[1:] {
+		eq := strings.IndexByte(tok, '=')
+		if eq <= 0 {
+			continue
+		}
+		value := tok[eq+1:]
+		if isAbsolutePath(value) || strings.HasPrefix(value, "~") {
+			paths = append(paths, value)
+		}
+	}
+	return paths
+}
+
+func envAssignmentPaths(rest []string) []string {
+	cmdStart := 0
+	for cmdStart < len(rest) && isEnvAssignment(rest[cmdStart]) {
+		cmdStart++
+	}
+	var paths []string
+	for i := 0; i < cmdStart; i++ {
+		value := rest[i][strings.IndexByte(rest[i], '=')+1:]
+		if isAbsolutePath(value) || strings.HasPrefix(value, "~") {
+			paths = append(paths, value)
+		}
+	}
+	return paths
+}
+
+func ProblematicShellSubCommands(command string) []string {
+	if command == "" {
+		return nil
+	}
+	subs := permission.SplitCommands(command)
+	devPaths := collectDevicePaths(subs)
+	var problematic []string
+	for _, sub := range subs {
+		if !isSubcommandSafe(sub, devPaths) {
+			problematic = append(problematic, sub)
+		}
+	}
+	return problematic
 }
 
 func CheckToolArgs(toolName string, args map[string]string) error {

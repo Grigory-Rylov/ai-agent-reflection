@@ -50,6 +50,21 @@ func (ap *agentProc) start(agentPath string, args []string) error {
 	}
 	ap.cmd = cmd
 	fmt.Printf("[restarter] Agent started (PID %d)\n", cmd.Process.Pid)
+
+	go func(c *exec.Cmd) {
+		waitErr := c.Wait()
+		ap.mu.Lock()
+		defer ap.mu.Unlock()
+		if ap.cmd != c {
+			return
+		}
+		ap.cmd = nil
+		if waitErr != nil {
+			fmt.Printf("[restarter] Agent exited (PID %d): %v\n", c.Process.Pid, waitErr)
+		} else {
+			fmt.Printf("[restarter] Agent stopped (PID %d)\n", c.Process.Pid)
+		}
+	}(cmd)
 	return nil
 }
 
@@ -158,7 +173,11 @@ func main() {
 	go runVKListener(ctx, vkClient, config, &agent, agentPath, agentArgs)
 
 	sendWelcome(vkClient, config.PeerID)
-	fmt.Println("[restarter] Waiting for /restart command to start agent")
+
+	if err := agent.start(agentPath, agentArgs); err != nil {
+		fmt.Fprintf(os.Stderr, "[restarter] Failed to auto-start agent: %v\n", err)
+		vkClient.SendMessage(config.PeerID, fmt.Sprintf("❌ Не удалось запустить агента: %v", err))
+	}
 
 	<-done
 	fmt.Println("[restarter] Shutdown complete")
@@ -169,7 +188,7 @@ func sendWelcome(vkClient *vk.BotClient, peerID int64) {
 	if peerID <= 0 {
 		return
 	}
-	msg := fmt.Sprintf("🤖 Restarter v%s запущен. Агент остановлен — отправьте /restart для запуска.\n", Version)
+	msg := fmt.Sprintf("🤖 Restarter v%s запущен. Агент стартовал автоматически.\nКоманды: /status, /stop, /restart, /update\n", Version)
 	vkClient.SendMessage(peerID, msg)
 }
 
@@ -190,7 +209,7 @@ func monitorAgent(ctx context.Context, ap *agentProc, agentPath string, agentArg
 			fmt.Println("[restarter] monitorAgent stopping")
 			return
 		case <-ticker.C:
-			isRunning := ap.cmd != nil && ap.cmd.Process != nil && ap.cmd.ProcessState == nil
+			isRunning := ap.isRunning()
 			if !isRunning {
 				fmt.Println("[restarter] Agent not running — waiting for /restart command")
 			}
@@ -355,6 +374,11 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 						sendRestarterStatus(vkClient, replyPeerID, ap)
 					case cmd == "/help":
 						vkClient.SendMessage(replyPeerID, restarterHelpText())
+					case cmd == "/stop":
+						vkClient.SendMessage(replyPeerID, "Останавливаю агента...")
+						ap.stop()
+					case strings.HasPrefix(cmd, "/r "):
+						handleModelSwitch(vkClient, replyPeerID, cmd)
 					}
 					continue
 				}
@@ -444,8 +468,14 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 				case cmd == "/status":
 					sendRestarterStatus(vkClient, replyPeerID, ap)
 
+				case cmd == "/stop":
+					vkClient.SendMessage(replyPeerID, "Агент не запущен")
+
 				case cmd == "/help":
 					vkClient.SendMessage(replyPeerID, restarterHelpText())
+
+				case strings.HasPrefix(cmd, "/r "):
+					handleModelSwitch(vkClient, replyPeerID, cmd)
 
 				default:
 				}
@@ -472,6 +502,7 @@ func sendRestarterStatus(vkClient *vk.BotClient, peerID int64, ap *agentProc) {
 func restarterHelpText() string {
 	return "Restarter команды:\n" +
 		"/restart - Перезапустить агента без пересборки\n" +
+		"/stop - Остановить агента\n" +
 		"/update - git pull, пересобрать, перезапустить\n" +
 		"/b <branch> - Переключиться на ветку, пересобрать, перезапустить\n" +
 		"/status - Статус агента и текущая ветка\n" +
@@ -503,6 +534,54 @@ func extractCommand(message string) string {
 		return message
 	}
 	return ""
+}
+
+func handleModelSwitch(vkClient *vk.BotClient, peerID int64, cmd string) {
+	alias := strings.TrimSpace(strings.TrimPrefix(cmd, "/r"))
+	if alias == "" {
+		vkClient.SendMessage(peerID, "Укажите модель: /r <alias>. Доступные модели см. в models.json")
+		return
+	}
+
+	wd, _ := os.Getwd()
+	modelsPath := filepath.Join(wd, "models.json")
+	data, err := os.ReadFile(modelsPath)
+	if err != nil {
+		vkClient.SendMessage(peerID, fmt.Sprintf("❌ Не удалось прочитать models.json: %v", err))
+		return
+	}
+
+	var cfg modelsConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		vkClient.SendMessage(peerID, fmt.Sprintf("❌ Не удалось разобрать models.json: %v", err))
+		return
+	}
+
+	if _, ok := cfg.Models[alias]; !ok {
+		avail := make([]string, 0, len(cfg.Models))
+		for k := range cfg.Models {
+			avail = append(avail, k)
+		}
+		vkClient.SendMessage(peerID, fmt.Sprintf("❌ Модель %q не найдена. Доступные: %s", alias, strings.Join(avail, ", ")))
+		return
+	}
+
+	cfg.Default = alias
+	out, err := json.MarshalIndent(cfg, "", "    ")
+	if err != nil {
+		vkClient.SendMessage(peerID, fmt.Sprintf("❌ Ошибка: %v", err))
+		return
+	}
+	if err := os.WriteFile(modelsPath, out, 0644); err != nil {
+		vkClient.SendMessage(peerID, fmt.Sprintf("❌ Не удалось сохранить models.json: %v", err))
+		return
+	}
+	vkClient.SendMessage(peerID, fmt.Sprintf("✅ Модель переключена на %q", alias))
+}
+
+type modelsConfig struct {
+	Default string                `json:"default"`
+	Models  map[string]struct{}   `json:"models"`
 }
 
 func loadConfig(path string) (Config, error) {

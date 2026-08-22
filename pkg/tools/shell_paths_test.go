@@ -449,11 +449,11 @@ func TestShellCommandFilesystemSafe(t *testing.T) {
 		}
 	})
 
-	t.Run("read outside allowed dir is not safe", func(t *testing.T) {
+	t.Run("read outside allowed dir is safe (read-only cannot mutate)", func(t *testing.T) {
 		dir, _ := setupAccessTest(t)
 		defer cleanupAccessTest(t, dir)
-		if ShellCommandFilesystemSafe("cat /etc/passwd") {
-			t.Error("expected false: host read outside allowed dir")
+		if !ShellCommandFilesystemSafe("cat /etc/passwd") {
+			t.Error("expected true: read-only cat cannot mutate the filesystem")
 		}
 	})
 

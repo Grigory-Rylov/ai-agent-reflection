@@ -207,7 +207,7 @@ func TestShellExecutePermissionAsksForUnmatched(t *testing.T) {
 	tools.SetAccessController(ctrl)
 	defer tools.SetAccessController(nil)
 
-	t.Run("shell cat /etc/passwd asks when path outside allowed dirs", func(t *testing.T) {
+	t.Run("read-only cat outside allowed dirs does not ask", func(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(askChecker)
 		e := newAgentToolExecutor(a)
@@ -224,10 +224,10 @@ func TestShellExecutePermissionAsksForUnmatched(t *testing.T) {
 		}, 12345)
 
 		if !result {
-			t.Error("expected allow after user approved")
+			t.Error("expected auto-allow for read-only command")
 		}
-		if !asked {
-			t.Error("expected permission ask for path outside allowed dirs")
+		if asked {
+			t.Error("expected NO permission ask: read-only cat cannot modify the filesystem")
 		}
 	})
 
@@ -445,7 +445,7 @@ func TestShellExecutePathOutsideAllowed(t *testing.T) {
 		},
 	}
 
-	t.Run("shell cat outside allowed dir asks", func(t *testing.T) {
+	t.Run("read-only cat outside allowed dir does not ask", func(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(askChecker)
 		e := newAgentToolExecutor(a)
@@ -461,11 +461,11 @@ func TestShellExecutePathOutsideAllowed(t *testing.T) {
 			"command": "cat /etc/passwd",
 		}, 12345)
 
-		if result {
-			t.Error("expected deny for cat /etc/passwd when bash permission is ask")
+		if !result {
+			t.Error("expected auto-allow for read-only command")
 		}
-		if !asked {
-			t.Error("expected permission ask for cat /etc/passwd when bash permission is ask")
+		if asked {
+			t.Error("expected NO permission ask for read-only cat outside allowed dir")
 		}
 	})
 

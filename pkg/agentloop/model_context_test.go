@@ -151,3 +151,52 @@ func TestModelContextResolver(t *testing.T) {
 		}
 	})
 }
+
+func TestNewAgentLoop_ContextResolverFallback(t *testing.T) {
+	t.Run("AgentLoop creates successfully when resolver fails", func(t *testing.T) {
+		holder := modelsconfig.NewTestHolder(&modelsconfig.ModelsConfig{
+			Default: "unreachable",
+			Models: map[string]modelsconfig.ModelEntry{
+				"unreachable": {Name: "some-model", Host: "127.0.0.1:1"},
+			},
+		})
+		r := NewModelContextResolver(holder, nil)
+
+		config := DefaultLoopConfig()
+		config.ModelHolder = holder
+		config.ContextResolver = r
+		config.MaxTokens = 4096
+
+		loop, err := NewAgentLoop(config, &mockVKClient{}, newMockToolRegistry())
+		if err != nil {
+			t.Fatalf("expected no error (should use fallback), got: %v", err)
+		}
+		if loop == nil {
+			t.Fatal("expected non-nil AgentLoop")
+		}
+	})
+
+	t.Run("AgentLoop uses resolved context when available", func(t *testing.T) {
+		holder := modelsconfig.NewTestHolder(&modelsconfig.ModelsConfig{
+			Default: "local",
+			Models: map[string]modelsconfig.ModelEntry{
+				"local": {Name: "local-model", Host: "127.0.0.1:8081", Context: 131072},
+			},
+		})
+		r := NewModelContextResolver(holder, nil)
+
+		config := DefaultLoopConfig()
+		config.ModelHolder = holder
+		config.ContextResolver = r
+		config.MaxTokens = 4096
+
+		loop, err := NewAgentLoop(config, &mockVKClient{}, newMockToolRegistry())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		al := loop.(*agentLoop)
+		if al.config.MaxTokens != 131072 {
+			t.Errorf("expected MaxTokens 131072, got %d", al.config.MaxTokens)
+		}
+	})
+}

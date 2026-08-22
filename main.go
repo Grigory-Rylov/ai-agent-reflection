@@ -37,6 +37,7 @@ type Config struct {
 	MaxTokens           int                             `json:"max_tokens"`
 	ModelLimitInput     int                             `json:"model_limit_input"`
 	Temperature         float64                         `json:"temperature"`
+	StreamIdleTimeoutSec int                            `json:"stream_idle_timeout_sec"`
 	MCPConfigPath       string                          `json:"mcp_config_path"`
 	AllowedDirs         []string                        `json:"allowed_dirs"`
 	DBPath              string                          `json:"db_path"`
@@ -225,6 +226,9 @@ func main() {
 	loopConfig.MaxTokens = maxTokens
 	loopConfig.ModelLimitInput = config.ModelLimitInput
 	loopConfig.Temperature = config.Temperature
+	if config.StreamIdleTimeoutSec != 0 {
+		loopConfig.StreamIdleTimeout = time.Duration(config.StreamIdleTimeoutSec) * time.Second
+	}
 	if dbStore != nil {
 		loopConfig.SessionConfig.Store = dbStore
 	} else {
@@ -259,13 +263,6 @@ func main() {
 			agentLoop.ResetSession(config.PeerID)
 		} else {
 			agentLoop.EnsureSession(config.PeerID)
-			
-			
-			go func() {
-				resumeCtx, resumeCancel := context.WithCancel(context.Background())
-				defer resumeCancel()
-				agentLoop.ResumeInterruptedTask(resumeCtx, config.PeerID)
-			}()
 		}
 	}
 
@@ -344,18 +341,15 @@ func main() {
 	botHandler := vk.NewBotHandlerWithPeerID(vkClient, agentLoop, log,
 		config.PeerID, config.ThinkingPeerID, orchestrator, modelHolder)
 
+	if config.PeerID > 0 && !*reset {
+		botHandler.ScheduleResume(config.PeerID)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	
 	if dbStore != nil {
-		go func() {
-			resumeCtx, resumeCancel := context.WithCancel(ctx)
-			defer resumeCancel()
-			if err := orchestrator.ResumeActiveChains(resumeCtx); err != nil {
-				log.WarnLogf("Resume active agent chains: %v", err)
-			}
-		}()
+		botHandler.ScheduleChainResume()
 	}
 
 	sigChan := make(chan os.Signal, 1)

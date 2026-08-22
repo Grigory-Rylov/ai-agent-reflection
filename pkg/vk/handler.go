@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +46,9 @@ type AgentOrchestrator interface {
 	IsPrimary(agentName string) bool
 
 	GetSystemPrompt(agentName string) (string, error)
+
+	ActiveChainPeers() []int64
+	ResumeActiveChainsForPeer(ctx context.Context, peerID int64) error
 }
 
 type BotHandler struct {
@@ -326,6 +330,7 @@ var restarterCommands = map[string]bool{
 	"/update":  true,
 	"/b":       true,
 	"/restart": true,
+	"/stop":    true,
 }
 
 func (h *BotHandler) handleCommand(input string, peerID int64) string {
@@ -353,7 +358,7 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 			"/help - Показать эту справку\n" +
 			"/status - Показать статус агента (сообщения, символы, токены)\n" +
 			"/test-llama - Тест соединения с llama-server\n" +
-			"/log, /logs - Отправить файл логов (debug/debug.log)\n" +
+			"/log, /logs - Отправить все файлы из папки debug/\n" +
 			"/m, /models - Список доступных моделей\n" +
 			"/r [alias] - Переключить текущую модель\n" +
 			"/pin <промпт> - Закрепить промпт (переживает компактизацию) и выполнить его\n" +
@@ -552,13 +557,13 @@ func (h *BotHandler) handlePinCommand(input string, peerID int64) string {
 			h.log.InfoLogf("User %d pinned prompt: %s", peerID, stringutil.Truncate(content, 100, "..."))
 		}
 
-		pinCtx, pinCancel := context.WithCancel(context.Background())
+		ctx, release, started := h.beginExclusiveTurn(peerID)
+		if !started {
+			return fmt.Sprintf("✓ Промпт закреплён: %s\n\nВыполнение отменено: сессия была сброшена.", stringutil.Truncate(content, 100, "..."))
+		}
+		defer release()
 
-		pinEntry := &cancelEntry{cancel: pinCancel}
-		h.setCancelFunc(peerID, pinEntry.cancel)
-		defer h.clearCancelFunc(peerID, pinEntry)
-		defer pinCancel()
-		response, err := h.aiAgent.ProcessMessage(pinCtx, content, peerID)
+		response, err := h.aiAgent.ProcessMessage(ctx, content, peerID)
 		if errors.Is(err, context.Canceled) {
 			return fmt.Sprintf("✓ Промпт закреплён: %s\n\nОперация отменена.", stringutil.Truncate(content, 100, "..."))
 		}
@@ -567,6 +572,27 @@ func (h *BotHandler) handlePinCommand(input string, peerID int64) string {
 		}
 		return fmt.Sprintf("✓ Промпт закреплён: %s\n\n%s", stringutil.Truncate(content, 100, "..."), response)
 	}
+}
+
+func (h *BotHandler) beginExclusiveTurn(peerID int64) (context.Context, func(), bool) {
+	releaseQueueSlot, generationAtArrival := h.beginProcessingWait(peerID)
+	mu := h.getPeerMutex(peerID)
+	mu.Lock()
+	releaseQueueSlot()
+	if h.peerGeneration(peerID) != generationAtArrival {
+		mu.Unlock()
+		return nil, func() {}, false
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	entry := &cancelEntry{cancel: cancel}
+	h.setCancelFunc(peerID, cancel)
+	release := func() {
+		h.clearCancelFunc(peerID, entry)
+		cancel()
+		mu.Unlock()
+	}
+	return ctx, release, true
 }
 
 func extractBaseCommand(input string) string {
@@ -589,11 +615,25 @@ func (h *BotHandler) handleSessions(peerID int64) string {
 }
 
 func (h *BotHandler) handleClear(peerID int64) string {
-	workingDir := ""
+	return h.handleNewSession("/n "+h.resolveClearWorkingDir(peerID), peerID)
+}
+
+func (h *BotHandler) resolveClearWorkingDir(peerID int64) string {
 	if s := h.aiAgent.GetSession(peerID); s != nil {
-		workingDir = s.GetWorkingDir()
+		if wd := s.GetWorkingDir(); wd != "" && h.isAccessibleDir(wd) {
+			return wd
+		}
 	}
-	return h.handleNewSession("/n "+workingDir, peerID)
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return wd
+}
+
+func (h *BotHandler) isAccessibleDir(dir string) bool {
+	info, err := os.Stat(dir)
+	return err == nil && info.IsDir()
 }
 
 func (h *BotHandler) handleNewSession(input string, peerID int64) string {
@@ -691,7 +731,7 @@ func (h *BotHandler) handleTestLlama() string {
 	return result
 }
 
-func (h *BotHandler) handleLogCommand(peerID int64) string {
+func (h *BotHandler) logDirPath() string {
 	logPath := "debug/debug.log"
 	if h.log != nil {
 		if configured := h.log.LogFilePath(); configured != "" {
@@ -701,41 +741,119 @@ func (h *BotHandler) handleLogCommand(peerID int64) string {
 
 	absPath, err := filepath.Abs(logPath)
 	if err != nil {
-		absPath = logPath
+		return logPath
+	}
+	return filepath.Dir(absPath)
+}
+
+func (h *BotHandler) collectDebugFiles(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read debug dir: %w", err)
 	}
 
-	if _, err := os.Stat(absPath); os.IsNotExist(err) {
-		if h.log != nil {
-			h.log.WarnLogf("/log: log file not found: %s", absPath)
+	var files []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
 		}
-		return fmt.Sprintf("❌ Лог-файл не найден: %s", absPath)
+		files = append(files, filepath.Join(dir, entry.Name()))
 	}
-	if h.vkClient == nil {
-		if h.log != nil {
-			h.log.WarnLogf("/log: VK client is nil, cannot send %s", absPath)
-		}
-		return "❌ VK client не настроен"
-	}
+	sort.Strings(files)
+	return files, nil
+}
 
+func (h *BotHandler) sendDebugFiles(peerID int64, files []string) error {
 	targetPeer := peerID
 	if h.mainPeerID > 0 {
 		targetPeer = h.mainPeerID
 	}
 
-	logger.DebugToFile("[handleLogCommand] sending %s to peer %d", absPath, targetPeer)
-	if _, err := h.vkClient.UploadAndSendDocument(absPath, targetPeer, "📋 Логи"); err != nil {
-		if h.log != nil {
-			h.log.ErrorLogf("/log: failed to send log file: %v", err)
+	for _, file := range files {
+		logger.DebugToFile("[handleLogCommand] sending %s to peer %d", file, targetPeer)
+		if _, err := h.vkClient.UploadAndSendDocument(file, targetPeer, "📋 Логи"); err != nil {
+			return fmt.Errorf("send %s: %w", filepath.Base(file), err)
 		}
-		return fmt.Sprintf("❌ Ошибка отправки лог-файла: %v", err)
 	}
-	return "📋 Лог-файл отправлен"
+	return nil
+}
+
+func (h *BotHandler) handleLogCommand(peerID int64) string {
+	dir := h.logDirPath()
+
+	files, err := h.collectDebugFiles(dir)
+	if err != nil || len(files) == 0 {
+		if h.log != nil {
+			h.log.WarnLogf("/log: debug dir is empty or missing: %s (%v)", dir, err)
+		}
+		return fmt.Sprintf("❌ Файлы логов не найдены в: %s", dir)
+	}
+	if h.vkClient == nil {
+		if h.log != nil {
+			h.log.WarnLogf("/log: VK client is nil, cannot send files from %s", dir)
+		}
+		return "❌ VK client не настроен"
+	}
+
+	if err := h.sendDebugFiles(peerID, files); err != nil {
+		if h.log != nil {
+			h.log.ErrorLogf("/log: failed to send log files: %v", err)
+		}
+		return fmt.Sprintf("❌ Ошибка отправки логов: %v", err)
+	}
+	return fmt.Sprintf("📋 Отправлено файлов: %d (из %s)", len(files), dir)
 }
 
 func (h *BotHandler) clearHandlerSession(peerID int64) {
 	h.sessionMu.Lock()
 	defer h.sessionMu.Unlock()
 	delete(h.sessions, peerID)
+}
+
+func (h *BotHandler) ScheduleResume(peerID int64) {
+	h.spawnCancellableTurn(peerID, func(ctx context.Context) {
+		h.aiAgent.ResumeInterruptedTask(ctx, peerID)
+	})
+}
+
+func (h *BotHandler) ScheduleChainResume() {
+	if h.orchestrator == nil {
+		return
+	}
+	for _, peerID := range h.orchestrator.ActiveChainPeers() {
+		peer := peerID
+		h.spawnCancellableTurn(peer, func(ctx context.Context) {
+			if err := h.orchestrator.ResumeActiveChainsForPeer(ctx, peer); err != nil && h.log != nil {
+				h.log.WarnLogf("Chain resume for peer %d: %v", peer, err)
+			}
+		})
+	}
+}
+
+func (h *BotHandler) spawnCancellableTurn(peerID int64, run func(ctx context.Context)) {
+	go func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		entry := &cancelEntry{cancel: cancel}
+		if !h.setCancelEntryIfIdle(peerID, entry) {
+			cancel()
+			if h.log != nil {
+				h.log.InfoLogf("Skip resume for peer %d: another request is already active", peerID)
+			}
+			return
+		}
+		defer h.clearCancelFunc(peerID, entry)
+		run(ctx)
+	}()
+}
+
+func (h *BotHandler) setCancelEntryIfIdle(peerID int64, entry *cancelEntry) bool {
+	h.cancelMu.Lock()
+	defer h.cancelMu.Unlock()
+	if cur, ok := h.cancelFuncs[peerID]; ok && !cur.cancelled {
+		return false
+	}
+	h.cancelFuncs[peerID] = entry
+	return true
 }
 
 type cancelEntry struct {

@@ -93,11 +93,14 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 	if config.ContextResolver != nil {
 		ctx, err := config.ContextResolver.Resolve()
 		if err != nil {
-			return nil, fmt.Errorf("resolve model context: %w", err)
-		}
-		config.MaxTokens = ctx
-		if l != nil {
-			l.InfoLogf("Using model context for %s: %d tokens", alias, ctx)
+			if l != nil {
+				l.WarnLogf("Could not resolve model context for %s: %v (using fallback maxTokens=%d)", alias, err, config.MaxTokens)
+			}
+		} else {
+			config.MaxTokens = ctx
+			if l != nil {
+				l.InfoLogf("Using model context for %s: %d tokens", alias, ctx)
+			}
 		}
 		tokenizer = tokenizers.NewLlamaServerTokenizer(llamaURL, modelName, config.MaxTokens)
 		if config.EnableLogging {
@@ -203,9 +206,12 @@ func (al *agentLoop) syncCurrentModel() error {
 	if al.config.ContextResolver != nil {
 		ctx, err := al.config.ContextResolver.Resolve()
 		if err != nil {
-			return fmt.Errorf("resolve model context for %s: %w", alias, err)
+			if al.log != nil {
+				al.log.WarnLogf("Could not resolve model context for %s: %v (keeping maxTokens=%d)", alias, err, al.config.MaxTokens)
+			}
+		} else {
+			al.config.MaxTokens = ctx
 		}
-		al.config.MaxTokens = ctx
 	} else {
 		al.config.MaxTokens = resolveMaxTokens(al.config.ModelHolder, alias, al.config.MaxTokens)
 	}
@@ -720,6 +726,7 @@ func (al *agentLoop) buildAgentConfig() agent.Config {
 		Model:                          modelName,
 		MaxTokens:                      al.config.MaxTokens,
 		Temperature:                    al.config.Temperature,
+		StreamIdleTimeout:              al.config.StreamIdleTimeout,
 		SessionConfig:                  al.config.SessionConfig,
 		SystemPromptFile:               al.config.SystemPromptFile,
 		EnableTools:                    al.config.EnableTools,
