@@ -169,6 +169,44 @@ func (a *agentImpl) createStreamingRequest(ctx context.Context, jsonData []byte)
 
 const maxSSELineBytes = 16 * 1024 * 1024
 
+const DefaultStreamIdleTimeout = 5 * time.Minute
+
+const ErrCodeStreamIdleTimeout = "stream_idle_timeout"
+
+func (a *agentImpl) streamIdleTimeout() time.Duration {
+	if a.config.StreamIdleTimeout > 0 {
+		return a.config.StreamIdleTimeout
+	}
+	if a.config.StreamIdleTimeout < 0 {
+		return 0
+	}
+	return DefaultStreamIdleTimeout
+}
+
+func resetIdleTimer(t *time.Timer, d time.Duration) {
+	if t == nil {
+		return
+	}
+	if !t.Stop() {
+		select {
+		case <-t.C:
+		default:
+		}
+	}
+	t.Reset(d)
+}
+
+func (a *agentImpl) sendStreamIdleError(chunkChan chan StreamChunkEvent, idleFor time.Duration) {
+	logger.DebugToFile("%s[LLM STREAM] no SSE data for %s, aborting stream", a.agentPrefix(), idleFor)
+	chunkChan <- StreamChunkEvent{
+		Content:   fmt.Sprintf("LLM stream stalled: no SSE data for %s", idleFor),
+		IsDone:    true,
+		IsError:   true,
+		ErrorCode: ErrCodeStreamIdleTimeout,
+		Timestamp: time.Now(),
+	}
+}
+
 func (a *agentImpl) readStreamResponse(ctx context.Context, resp *http.Response, chunkChan chan StreamChunkEvent) {
 	defer resp.Body.Close()
 	defer close(chunkChan)
@@ -178,6 +216,15 @@ func (a *agentImpl) readStreamResponse(ctx context.Context, resp *http.Response,
 		line []byte
 		err  error
 	}, 1)
+
+	idleTimeout := a.streamIdleTimeout()
+	var idleTimer *time.Timer
+	var idleCh <-chan time.Time
+	if idleTimeout > 0 {
+		idleTimer = time.NewTimer(idleTimeout)
+		defer idleTimer.Stop()
+		idleCh = idleTimer.C
+	}
 
 	for {
 		go func() {
@@ -191,7 +238,11 @@ func (a *agentImpl) readStreamResponse(ctx context.Context, resp *http.Response,
 		select {
 		case <-ctx.Done():
 			return
+		case <-idleCh:
+			a.sendStreamIdleError(chunkChan, idleTimeout)
+			return
 		case result := <-readCh:
+			resetIdleTimer(idleTimer, idleTimeout)
 			if len(result.line) > 0 {
 				a.processStreamLine(result.line, chunkChan)
 			}

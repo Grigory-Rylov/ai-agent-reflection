@@ -106,6 +106,36 @@ func TestShellCommandFilesystemSafeReadOnly(t *testing.T) {
 	})
 }
 
+func TestShellCommandFilesystemSafeUnknownProgWithHeredocPayload(t *testing.T) {
+	newCtrl := func(t *testing.T, dirs ...string) {
+		prevWD := WorkingDir
+		SetWorkingDir(t.TempDir())
+		SetAccessController(access.NewController(dirs))
+		t.Cleanup(func() {
+			SetAccessController(nil)
+			SetWorkingDir(prevWD)
+		})
+	}
+
+	t.Run("gh pr create with heredoc body is safe despite unknown program", func(t *testing.T) {
+		newCtrl(t, "/home/grishberg/projects/go/ai-agent-reflection")
+		title := "fix(permission): read-only ops auto-pass, mutations ask"
+		body := "## Summary\n\nRefines the shell-permission module so read-only operations\nnever trigger a prompt, while mutations outside the whitelist keep asking.\n\nKey changes:\n\n- Absolute program invocations now route through the regular\n  read-only / mutation pipeline instead of blanket deny.\n- Heredoc bodies are kept atomic by the command splitter, so a\n  commit message can no longer surface as a fake sub-command."
+		cmd := "gh pr create --base master --head fix/review-2026-08 --title \"" + title + "\" --body \"$(cat <<'PRDESC'\n" + body + "\nPRDESC)\""
+		if ShellCommandFilesystemSafe(cmd) {
+			return
+		}
+		t.Error("expected true: unknown program whose only outside-list material is heredoc prose must not ask")
+	})
+
+	t.Run("unknown program with real outside write path still asks", func(t *testing.T) {
+		newCtrl(t, "/home/grishberg/projects/go/ai-agent-reflection")
+		if ShellCommandFilesystemSafe("mytool --input /etc/shadow") {
+			t.Error("expected false: unknown program acting on an outside-list path must ask")
+		}
+	})
+}
+
 func TestShellCommandFilesystemSafeAbsoluteProgram(t *testing.T) {
 	newCtrl := func(t *testing.T, dirs ...string) {
 		prevWD := WorkingDir
@@ -164,6 +194,7 @@ func TestIsReadOnlySubcommand(t *testing.T) {
 		{"head with count", "head -3", true},
 		{"tail with count", "tail -6", true},
 		{"find without mutation flags", "find / -maxdepth 4 -name 'go' -type f -path '*bin*' 2>/dev/null", true},
+		{"find with executable flag", "find /tmp /root /home -maxdepth 4 -name 'go' -type f -executable 2>/dev/null", true},
 		{"find with delete flag", "find /tmp -name '*.log' -delete", false},
 		{"find with exec flag", `find /tmp -name x -exec rm {} \;`, false},
 		{"grep file", `grep 'func' /home/src/main.go`, true},

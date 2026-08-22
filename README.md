@@ -27,6 +27,7 @@ Two JSON files in the project root. Fallback path for `config.json`: `~/.config/
   "peer_id": 2000000001,
   "thinking_peer_id": 2000000002,
   "temperature": 0.7,
+  "stream_idle_timeout_sec": 300,
   "db_path": "./agent.db",
   "mcp_config_path": "./mcp_config.json",
   "allowed_dirs": ["/your/working/dir"],
@@ -66,6 +67,20 @@ Per model entry:
 | `vision` | no | `false` | Model supports images (multimodal) |
 | `slot-save` | no | `false` | Persist KV-cache per session for faster follow-up turns. Requires `--slot-save-path <dir>` on the server. |
 
+### Stream idle watchdog
+
+If the LLM stream sends no SSE data for a while (stalled engine, dead connection), the agent aborts the stream and retries the request automatically.
+
+Configured in **config.json** via `stream_idle_timeout_sec`:
+
+| Value | Meaning |
+|-------|---------|
+| `0` / absent | default — 300 seconds (5 minutes; long prefills on big contexts are normal silence) |
+| `> 0` | custom timeout in seconds |
+| `< 0` | watchdog disabled — wait forever (only the global 2h HTTP timeout applies) |
+
+An aborted-by-watchdog stream is treated as a retryable error and goes through the standard retry loop (`retry_delay`, default 5s).
+
 ## Features
 
 - **14+ tools**: file read/write/edit/patch, shell execute, glob, code grep, web search/fetch, math calc, image OCR/vision, question dialogs, time.
@@ -74,6 +89,7 @@ Per model entry:
 - **Slot KV-cache persistence** — fast context reuse between conversation turns via llama-server `/slots` API.
 - **Permission system**: per-agent allow/deny/ask rules for tools and shell commands, with runtime "Always allow" learning.
 - **Session memory** with automatic token-limit aware pruning
+- **Stream idle watchdog** — detects stalled LLM streams (no SSE data) and retries automatically; timeout configurable via `stream_idle_timeout_sec`
 
 ## Bot Commands
 

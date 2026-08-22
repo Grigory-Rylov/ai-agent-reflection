@@ -110,13 +110,16 @@ func isAbsolutePath(s string) bool {
 }
 
 func looksLikePath(token string) bool {
+	token = stripOuterQuotes(token)
 	if strings.HasPrefix(token, "-") {
 		return false
 	}
 	if len(token) > 0 && (token[0] == '\'' || token[0] == '"' || token[0] == '`') {
 		return false
 	}
-
+	if strings.ContainsAny(token, " \t\r\n") {
+		return false
+	}
 	if strings.ContainsAny(token, "?*[]!") {
 		return false
 	}
@@ -303,7 +306,17 @@ func isKnownInterpreter(token string) bool {
 	return knownInterpreterBasenames[name]
 }
 
+func stripOuterQuotes(token string) string {
+	if len(token) >= 2 {
+		if (token[0] == '"' && token[len(token)-1] == '"') || (token[0] == '\'' && token[len(token)-1] == '\'') {
+			return token[1 : len(token)-1]
+		}
+	}
+	return token
+}
+
 func isExplicitPathToken(token string) bool {
+	token = stripOuterQuotes(token)
 	if strings.HasPrefix(token, "-") {
 		return false
 	}
@@ -312,6 +325,68 @@ func isExplicitPathToken(token string) bool {
 
 func isDiscardPath(p string) bool {
 	return p == "/dev/null"
+}
+
+func maskHeredocBodies(command string) string {
+	if command == "" {
+		return command
+	}
+	lines := strings.SplitAfter(command, "\n")
+	out := make([]string, 0, len(lines))
+	openDelims := make(map[string]int)
+	flushOpen := func() {}
+	for _, raw := range lines {
+		line := strings.TrimSuffix(raw, "\n")
+		trimmed := strings.TrimLeft(line, " \t")
+		matched := ""
+		for delim := range openDelims {
+			if trimmed == delim {
+				delete(openDelims, delim)
+				matched = delim
+				break
+			}
+		}
+		if matched != "" {
+			out = append(out, line+"\n")
+			continue
+		}
+		out = append(out, line+"\n")
+		if opener := findLineHeredocOpener(trimmed); opener != "" {
+			openDelims[opener] = len(out)
+		}
+	}
+	result := strings.Join(out, "")
+	for _, idx := range openDelims {
+		if idx < len(out) {
+			out[idx] = ""
+		}
+	}
+	result = strings.Join(out, "")
+	_ = flushOpen
+	return result
+}
+
+func findLineHeredocOpener(line string) string {
+	idx := strings.Index(line, "<<")
+	if idx < 0 {
+		return ""
+	}
+	rest := line[idx+2:]
+	rest = strings.TrimPrefix(rest, "-")
+	start := 0
+	for start < len(rest) && (rest[start] == ' ' || rest[start] == '\t') {
+		start++
+	}
+	end := start
+	for end < len(rest) && rest[end] != ' ' && rest[end] != '\t' && rest[end] != '\n' {
+		end++
+	}
+	if end == start {
+		return ""
+	}
+	delim := rest[start:end]
+	delim = strings.Trim(delim, "'\"")
+	return delim
 }
 
 var nestedSubRe = regexp.MustCompile(`\$\(([^)]+)\)`)
@@ -329,13 +404,14 @@ func collectFilePaths(sub string, devPaths map[string]bool) []string {
 		}
 		return hostPaths
 	}
+	masked := maskHeredocBodies(sub)
 	var paths []string
-	for _, p := range ExtractShellPaths(sub) {
+	for _, p := range ExtractShellPaths(masked) {
 		if !devPaths[p] && !isDiscardPath(p) {
 			paths = append(paths, p)
 		}
 	}
-	for _, p := range redirectionTargets(sub) {
+	for _, p := range redirectionTargets(masked) {
 		if !devPaths[p] && !isDiscardPath(p) {
 			paths = append(paths, p)
 		}
@@ -351,7 +427,7 @@ func collectFilePaths(sub string, devPaths map[string]bool) []string {
 		}
 	}
 
-	for _, m := range nestedSubRe.FindAllStringSubmatch(sub, -1) {
+	for _, m := range nestedSubRe.FindAllStringSubmatch(masked, -1) {
 		inner := m[1]
 		innerDev := collectDevicePaths(permission.SplitCommands(inner))
 		for _, p := range collectFilePaths(inner, innerDev) {
@@ -590,21 +666,46 @@ func redirectionTargets(sub string) []string {
 	var targets []string
 	tokens := permission.Tokenize(sub)
 	for i := 0; i < len(tokens); i++ {
-		idx := strings.LastIndexAny(tokens[i], "><")
-		if idx < 0 {
+		opPos := unquotedRedirOperatorAt(tokens[i])
+		if opPos < 0 {
 			continue
 		}
-		target := strings.TrimLeft(tokens[i][idx+1:], "&0123456789")
+		target := strings.TrimLeft(tokens[i][opPos+1:], "&0123456789")
 		if target != "" && looksLikePath(target) {
 			targets = append(targets, target)
 			continue
 		}
-		if idx == len(tokens[i])-1 && i+1 < len(tokens) && looksLikePath(tokens[i+1]) {
+		if opPos == len(tokens[i])-1 && i+1 < len(tokens) && looksLikePath(tokens[i+1]) {
 			targets = append(targets, tokens[i+1])
 			i++
 		}
 	}
 	return targets
+}
+
+func unquotedRedirOperatorAt(token string) int {
+	inSingle, inDouble := false, false
+	lastUnquoted := -1
+	for i := 0; i < len(token); i++ {
+		ch := token[i]
+		switch {
+		case inSingle:
+			if ch == '\'' {
+				inSingle = false
+			}
+		case inDouble:
+			if ch == '"' {
+				inDouble = false
+			}
+		case ch == '\'':
+			inSingle = true
+		case ch == '"':
+			inDouble = true
+		case ch == '>' || ch == '<':
+			lastUnquoted = i
+		}
+	}
+	return lastUnquoted
 }
 
 func ShellCommandHasFilePaths(command string) bool {
@@ -646,6 +747,10 @@ var findMutatingFlags = map[string]bool{
 	"-fprint": true, "-fprintf": true, "-fls": true,
 }
 
+func isFindExecFlag(tok string) bool {
+	return tok == "-exec" || tok == "-execdir"
+}
+
 func IsReadOnlySubcommand(sub string) bool {
 	parts := permission.Tokenize(sub)
 	if len(parts) == 0 {
@@ -657,7 +762,10 @@ func IsReadOnlySubcommand(sub string) bool {
 	}
 	for _, tok := range parts[1:] {
 		tok = strings.TrimRight(tok, ";")
-		if findMutatingFlags[tok] || (strings.HasPrefix(tok, "-") && strings.Contains(strings.ToLower(tok), "exec")) {
+		if findMutatingFlags[tok] {
+			return false
+		}
+		if isFindExecFlag(tok) {
 			return false
 		}
 	}

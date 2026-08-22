@@ -220,6 +220,7 @@ func TestShellPermissionReadOnlyWithExternalPathsSkipsAsk(t *testing.T) {
 		{"ls-la and find external", "ls -la /mnt/data/usr/local/go/bin 2>&1 && ls ~/go/bin 2>/dev/null && which go golang 2>&1 && find /usr -maxdepth 4 -name 'go' -type f 2>/dev/null && head && echo PATH=$PATH"},
 		{"ls which cat chain", "ls /usr/local/go/bin/ 2>/dev/null && which go 2>/dev/null && ls ~/go 2>/dev/null && head -3 && cat /home/grishberg/projects/go/ai-agent-reflection/build.sh"},
 		{"find root", "find / -maxdepth 4 -name 'go' -type f -path '*bin*' 2>/dev/null && head && ls /mnt/data/usr/local/go/bin 2>/dev/null"},
+		{"find executable go", "find /tmp /root /home -maxdepth 4 -name 'go' -type f -executable 2>/dev/null"},
 	}
 
 	for _, tt := range tests {

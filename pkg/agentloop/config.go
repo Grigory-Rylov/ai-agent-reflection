@@ -3,6 +3,7 @@ package agentloop
 import (
 	"time"
 
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agent"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
@@ -13,6 +14,8 @@ type LoopConfig struct {
 	ContextResolver *ModelContextResolver
 	MaxTokens       int
 	Temperature     float64
+
+	StreamIdleTimeout time.Duration
 
 	SessionConfig                  session.Config
 	SystemPromptFile               string
@@ -40,6 +43,7 @@ func DefaultLoopConfig() LoopConfig {
 	return LoopConfig{
 		MaxTokens:                      4096,
 		Temperature:                    0.7,
+		StreamIdleTimeout:              agent.DefaultStreamIdleTimeout,
 		SessionConfig:                  session.DefaultConfig(),
 		EnableLoopDetection:            true,
 		LoopThreshold:                  0.85,

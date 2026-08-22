@@ -76,9 +76,9 @@ type Config struct {
 	
 	SkipShellPermissionForPathless bool
 	
-	
-	
 	RetryDelay time.Duration
+	
+	StreamIdleTimeout time.Duration
 	
 	SlotID int
 	
@@ -109,6 +109,7 @@ func DefaultConfig() Config {
 		TailTurns:         2,
 		EnablePruning:     true,
 		RetryDelay:        5 * time.Second,
+		StreamIdleTimeout: DefaultStreamIdleTimeout,
 		SlotID:            -1, 
 	}
 }
