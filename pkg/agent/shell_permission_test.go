@@ -98,7 +98,7 @@ func TestCheckShellPermissionAsksForUnmatched(t *testing.T) {
 	e := newAgentToolExecutor(a)
 
 	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
-		"command": "cat /etc/passwd",
+		"command": "cp /etc/passwd /tmp/x",
 	}, 12345)
 	if !result {
 		t.Error("expected allow after user approved one-time")
@@ -130,7 +130,7 @@ func TestCheckShellPermissionDeniesWhenUserRejects(t *testing.T) {
 	e := newAgentToolExecutor(a)
 
 	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
-		"command": "cat /etc/passwd",
+		"command": "cp /etc/passwd /tmp/x",
 	}, 12345)
 	if result {
 		t.Error("expected deny after user rejected")
@@ -211,17 +211,17 @@ func TestCheckShellPermissionAlwaysUsesPrefixOnly(t *testing.T) {
 	e := newAgentToolExecutor(a)
 
 	_ = e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
-		"command": "cat /etc/passwd",
+		"command": "cp /etc/passwd /tmp/x",
 	}, 12345)
 
 	found := false
 	for _, rule := range *checker.P {
-		if rule.Pattern == "cat *" && rule.Action == permission.Allow {
+		if rule.Pattern == "cp *" && rule.Action == permission.Allow {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected 'cat *' allow rule, got %v", *checker.P)
+		t.Errorf("expected 'cp *' allow rule, got %v", *checker.P)
 	}
 }
 

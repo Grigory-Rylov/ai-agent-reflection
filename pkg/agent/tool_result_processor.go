@@ -149,37 +149,10 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	if len(streamToolCalls) > 0 {
 		a.debugLog.Debug("NATIVE format: detected %d tool calls in tool results response", len(streamToolCalls))
 
-		var uniqueCalls []ToolCall
-		var sawDuplicate bool
-		for _, tc := range streamToolCalls {
-			sig := toolCallSignature(tc)
-			if executed[sig] {
-				sawDuplicate = true
-				a.debugLog.Debug("NATIVE duplicate skipped in tool results: %s", tc.Function.Name)
-				continue
-			}
-			executed[sig] = true
-			uniqueCalls = append(uniqueCalls, tc)
-		}
+		uniqueCalls := a.filterUniqueToolCalls(streamToolCalls, executed)
 
-		if len(uniqueCalls) == 0 && sawDuplicate {
-			repeats := a.checkResponseLoop(session.GetPeerID(), responseText, reasoningText, streamToolCalls)
-			if repeats > 0 {
-				a.injectLoopCorrection(session, repeats)
-			}
-		}
 		if len(uniqueCalls) == 0 {
-			a.debugLog.Debug("All native tool calls are duplicates, returning existing response without execution")
-			if responseText == "" {
-				hist := session.GetHistory()
-				if len(hist) > 0 {
-					last := hist[len(hist)-1]
-					if last.Role == sess.AssistantRole && last.Content != "" {
-						return last.Content, nil
-					}
-				}
-			}
-			return responseText, nil
+			return a.continueAfterDuplicateToolCalls(ctx, messages, responseText, streamToolCalls, executed, session, depth)
 		}
 
 		result := a.executeAllTools(ctx, uniqueCalls, session.GetPeerID())
@@ -263,18 +236,84 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 	}
 
 	if responseText == "" {
-		hist := session.GetHistory()
-		if len(hist) > 0 {
-			last := hist[len(hist)-1]
-			if last.Role == sess.AssistantRole && last.Content != "" {
-				return last.Content, nil
-			}
+		if content, ok := lastAssistantContent(session); ok {
+			return content, nil
 		}
 		return "", nil
 	}
 
 	session.AddAssistantMessage(responseText)
 	return responseText, nil
+}
+
+const maxDuplicateNudges = 3
+
+const duplicateNudgeCountKey = contextKey("duplicate_nudge_count")
+
+func duplicateNudgeCount(ctx context.Context) int {
+	n, _ := ctx.Value(duplicateNudgeCountKey).(int)
+	return n
+}
+
+func (a *agentImpl) filterUniqueToolCalls(calls []ToolCall, executed map[string]bool) []ToolCall {
+	var uniqueCalls []ToolCall
+	for _, tc := range calls {
+		sig := toolCallSignature(tc)
+		if executed[sig] {
+			a.debugLog.Debug("duplicate tool call skipped: %s", tc.Function.Name)
+			continue
+		}
+		executed[sig] = true
+		uniqueCalls = append(uniqueCalls, tc)
+	}
+	return uniqueCalls
+}
+
+func (a *agentImpl) continueAfterDuplicateToolCalls(ctx context.Context, messages []Message, responseText string, dupCalls []ToolCall, executed map[string]bool, session *sess.Session, depth int) (string, error) {
+	if duplicateNudgeCount(ctx) >= maxDuplicateNudges {
+		a.debugLog.Debug("Duplicate tool call nudges exhausted, ending turn")
+		if responseText == "" {
+			if content, ok := lastAssistantContent(session); ok {
+				return content, nil
+			}
+		}
+		return responseText, nil
+	}
+	return a.nudgeOnDuplicateToolCalls(ctx, messages, responseText, dupCalls, executed, session, depth)
+}
+
+func (a *agentImpl) nudgeOnDuplicateToolCalls(ctx context.Context, messages []Message, responseText string, dupCalls []ToolCall, executed map[string]bool, session *sess.Session, depth int) (string, error) {
+	const notice = "[DUPLICATE] This tool call was already executed earlier in this turn and its result is already in your context. Re-running it produces no new information. Take a different action or provide the final answer."
+
+	nudgeCalls := make([]ToolCall, 0, len(dupCalls))
+	results := make([]ToolCallResult, 0, len(dupCalls))
+	for _, tc := range dupCalls {
+		nudgeTC := tc
+		nudgeTC.ID = fmt.Sprintf("%s_dup%d", tc.ID, depth+1)
+		nudgeCalls = append(nudgeCalls, nudgeTC)
+		results = append(results, ToolCallResult{
+			ToolCallID: nudgeTC.ID,
+			ToolName:   tc.Function.Name,
+			Content:    notice,
+			IsError:    true,
+		})
+	}
+
+	nextCtx := context.WithValue(ctx, duplicateNudgeCountKey, duplicateNudgeCount(ctx)+1)
+	recursiveCtx := context.WithValue(nextCtx, toolCallDepthKey, depth+1)
+	return a.processToolResults(recursiveCtx, messages, responseText, nudgeCalls, results, session, executed)
+}
+
+func lastAssistantContent(session *sess.Session) (string, bool) {
+	hist := session.GetHistory()
+	if len(hist) == 0 {
+		return "", false
+	}
+	last := hist[len(hist)-1]
+	if last.Role == sess.AssistantRole && last.Content != "" {
+		return last.Content, true
+	}
+	return "", false
 }
 
 func (a *agentImpl) handleInvalidXMLToolCall(ctx context.Context, messages []Message, session *sess.Session, executed map[string]bool) (FunctionCallResult, error) {
