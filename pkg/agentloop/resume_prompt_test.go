@@ -109,7 +109,7 @@ func TestAgentLoopResumeInterruptedTask(t *testing.T) {
 
 	loop, err := NewAgentLoop(LoopConfig{
 		ModelHolder:       modelsconfig.NewTestHolder(&modelsconfig.ModelsConfig{Default: "test", Models: map[string]modelsconfig.ModelEntry{"test": {Name: "test-model", Host: server.URL}}}),
-		SessionConfig:     session.Config{PeerID: peerID, SessionID: "main-s1", AutoSave: true, Store: st},
+		SessionConfig:     session.Config{PeerID: peerID, SessionID: "main-s1", Store: st},
 		EnableTools:       false,
 		EnableCompression: false,
 		MaxTokens:         4096,
@@ -145,7 +145,7 @@ func TestAgentLoopResumeInterruptedTaskNoop(t *testing.T) {
 
 	loop, err := NewAgentLoop(LoopConfig{
 		ModelHolder:   modelsconfig.NewTestHolder(&modelsconfig.ModelsConfig{Default: "test", Models: map[string]modelsconfig.ModelEntry{"test": {Name: "test-model", Host: server.URL}}}),
-		SessionConfig: session.Config{PeerID: 7, SessionID: "main-s2", AutoSave: false},
+		SessionConfig: session.Config{PeerID: 7, SessionID: "main-s2"},
 		EnableTools:   false,
 	}, &mockVKClient{}, newMockToolRegistry())
 	if err != nil {

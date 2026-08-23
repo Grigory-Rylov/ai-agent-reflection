@@ -635,7 +635,6 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 
 	agentConfig := al.buildAgentConfig()
 	agentConfig.SessionConfig.Store = nil
-	agentConfig.SessionConfig.AutoSave = false
 	agentConfig.SessionConfig.SessionFile = ""
 
 	agentConfig.SlotID = slotID

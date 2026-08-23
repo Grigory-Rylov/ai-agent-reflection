@@ -202,7 +202,6 @@ func TestSessionPersistence(t *testing.T) {
 		config := DefaultConfig()
 		config.PeerID = 12345
 		config.SessionFile = sessionFile
-		config.AutoSave = true
 
 		s := NewSession(config)
 		s.AddUserMessage("User message")
@@ -304,9 +303,6 @@ func TestDefaultConfig(t *testing.T) {
 	if config.LoopSimilarityThreshold != 0.85 {
 		t.Errorf("expected LoopSimilarityThreshold 0.85, got %f", config.LoopSimilarityThreshold)
 	}
-	if config.AutoSave {
-		t.Error("expected AutoSave false by default")
-	}
 }
 
 
@@ -319,7 +315,6 @@ func TestSetWorkingDirPersists(t *testing.T) {
 	config := DefaultConfig()
 	config.PeerID = 12345
 	config.Store = mockSt
-	config.AutoSave = true
 
 	s := NewSession(config)
 

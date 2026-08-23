@@ -39,7 +39,7 @@ func mockChatCompletionServer(t *testing.T, content string) *httptest.Server {
 }
 
 func newImage2TextConfig(serverURL string) {
-	SetImage2TextConfig(Image2TextConfig{
+	SetMediaConfig(MediaConfig{
 		ModelHolder: modelsconfig.NewTestHolder(&modelsconfig.ModelsConfig{
 			Default: "test",
 			Models: map[string]modelsconfig.ModelEntry{

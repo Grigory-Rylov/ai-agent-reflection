@@ -61,6 +61,7 @@ type BotHandler struct {
 	mainPeerID     int64
 	thinkingPeerID int64
 	modelHolder    *modelsconfig.Holder
+	messageFetcher messageFetcher
 	cancelFuncs    map[int64]*cancelEntry
 	cancelMu       sync.RWMutex
 	attachmentsDir string
@@ -1053,7 +1054,9 @@ func (h *BotHandler) handleIncomingMessage(
 		}
 	}
 
-	fullText := h.buildFullText(&msg, fullMsgMap)
+	atts := resolveAttachments(&msg, fullMsgMap)
+	atts = h.enrichVideosViaRetry(&msg, atts)
+	fullText := h.buildFullText(&msg, fullMsgMap, atts)
 	if msg.Payload != "" {
 		if cmd := h.payloadToCommand(msg.Payload); cmd != "" {
 			logger.DebugToFile("[handler] callback payload: peerID=%d, cmd=%s", msg.PeerID, cmd)
@@ -1106,21 +1109,26 @@ func (h *BotHandler) launchMessageHandler(
 	}
 }
 
-func (h *BotHandler) buildFullText(msg *VKMessage, fullMsgMap map[int64]VKMessage) string {
+func resolveAttachments(msg *VKMessage, fullMsgMap map[int64]VKMessage) []VKAttachment {
 	full, found := fullMsgMap[msg.ID]
-
-	atts := full.Attachments
-	attSource := "getById"
-	if !found || len(atts) == 0 {
-		if len(msg.Attachments) > 0 {
-			atts = msg.Attachments
-			attSource = "longpoll"
-			if !found {
-				logger.DebugToFile("[buildFullText] msg id=%d: full message not fetched (id=%d), falling back to long-poll attachments", msg.ID, msg.ID)
-			}
-		} else {
-			return msg.Text
+	if found && len(full.Attachments) > 0 {
+		return full.Attachments
+	}
+	if len(msg.Attachments) > 0 {
+		if !found {
+			logger.DebugToFile("[buildFullText] msg id=%d: full message not fetched (id=%d), falling back to long-poll attachments", msg.ID, msg.ID)
 		}
+		return msg.Attachments
+	}
+	return nil
+}
+
+func (h *BotHandler) buildFullText(msg *VKMessage, fullMsgMap map[int64]VKMessage, atts []VKAttachment) string {
+	if len(atts) == 0 {
+		atts = resolveAttachments(msg, fullMsgMap)
+	}
+	if len(atts) == 0 {
+		return msg.Text
 	}
 
 	absAttachmentsDir, _ := filepath.Abs(h.attachmentsDir)
@@ -1128,7 +1136,7 @@ func (h *BotHandler) buildFullText(msg *VKMessage, fullMsgMap map[int64]VKMessag
 		ctrl.AddAllowedDir(absAttachmentsDir)
 	}
 
-	logger.DebugToFile("[buildFullText] msg id=%d: %d attachment(s) from %s: %s", msg.ID, len(atts), attSource, describeAttachments(atts))
+	logger.DebugToFile("[buildFullText] msg id=%d: %d attachment(s): %s", msg.ID, len(atts), describeAttachments(atts))
 	downloaded, err := h.downloadAttachments(atts)
 	if err != nil {
 		logger.DebugToFile("[buildFullText] msg id=%d: download failed: %v (downloaded %d of %d)", msg.ID, err, len(downloaded), len(atts))
@@ -1143,7 +1151,7 @@ func (h *BotHandler) buildFullText(msg *VKMessage, fullMsgMap map[int64]VKMessag
 }
 
 func (h *BotHandler) downloadAttachments(atts []VKAttachment) ([]DownloadedAttachment, error) {
-	return DownloadAttachments(toRawAttachments(atts), h.attachmentsDir)
+	return DownloadAttachments(toRawAttachments(atts), h.attachmentsDir, h.vkClient)
 }
 
 func describeAttachments(atts []VKAttachment) string {

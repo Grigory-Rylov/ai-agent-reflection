@@ -76,10 +76,6 @@ func (s *Session) saveToStore(st store.Store) error {
 		return fmt.Errorf("save session: %w", err)
 	}
 
-	if !s.config.AutoSave {
-		return nil
-	}
-
 	if err := st.ClearMessages(s.config.PeerID); err != nil {
 		return fmt.Errorf("clear messages: %w", err)
 	}

@@ -317,6 +317,9 @@ type lpUpdate struct {
 
 
 func parseMessageNewUpdate(object map[string]interface{}) VKMessage {
+	rawObjDump, _ := json.Marshal(object)
+	logger.DebugToFile("[parseMessageNewUpdate] OBJECT DUMP: %s", string(rawObjDump))
+
 	raw, ok := object["message"].(map[string]interface{})
 	if !ok {
 		return VKMessage{}
@@ -575,6 +578,31 @@ func truncateForLog(data []byte, max int) string {
 		return string(data)
 	}
 	return string(data[:max]) + "..."
+}
+
+
+func (c *BotClient) GetBestVideoURL(ownerID, videoID int64) (string, error) {
+	params := map[string]interface{}{
+		"owner_id": ownerID,
+		"video_id": videoID,
+	}
+	responseBody, err := c.doRequestGET("videos.get", params)
+	if err != nil {
+		return "", fmt.Errorf("videos.get: %w", err)
+	}
+
+	var response struct {
+		Response []struct {
+			Files map[string]interface{} `json:"files"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(responseBody, &response); err != nil {
+		return "", fmt.Errorf("parse videos.get response: %w", err)
+	}
+	if len(response.Response) == 0 {
+		return "", nil
+	}
+	return findBestMp4(response.Response[0].Files), nil
 }
 
 

@@ -341,7 +341,6 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 
 	cfg.SystemPromptFile = ""
 	cfg.SessionConfig = session.Config{
-		AutoSave:    false,
 		SessionFile: "",
 	}
 	cfg.EnableLoopAlert = false

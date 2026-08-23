@@ -63,8 +63,6 @@ type Config struct {
 
 	LoopSimilarityThreshold float64
 
-	AutoSave bool
-
 	SystemPrompt string
 
 	LoopAlertEnabled bool
@@ -82,7 +80,6 @@ func DefaultConfig() Config {
 		SessionFile:             "",
 		MaxLoopHistory:          5,
 		LoopSimilarityThreshold: 0.85,
-		AutoSave:                false,
 		SystemPrompt:            "You are a helpful assistant.",
 		LoopAlertEnabled:        true,
 		LoopAlertMessage:        "WARNING: You are repeating yourself. This appears to be a loop. Please provide a different response.",
@@ -117,22 +114,26 @@ func NewSession(config Config) *Session {
 		peerInput:   &PeerInput{},
 	}
 
-	if config.SystemPrompt != "" {
-		s.messages = append(s.messages, Message{
-			Role:    SystemRole,
-			Content: s.buildSystemMessage(),
-			Timestamp: time.Now(),
-		})
-	}
-
 	if config.Store != nil {
-		s.loadFromStore(config.Store)
+		if err := s.loadFromStore(config.Store); err != nil {
+			fmt.Printf("[SESSION] loadFromStore error: %v\n", err)
+		}
 	} else if config.SessionFile != "" {
-		s.Load()
+		if err := s.Load(); err != nil {
+			fmt.Printf("[SESSION] Load error: %v\n", err)
+		}
 	}
 
 	if config.SystemPrompt != "" {
-		s.UpdateSystemPrompt(config.SystemPrompt)
+		if len(s.messages) == 0 {
+			s.messages = append(s.messages, Message{
+				Role:      SystemRole,
+				Content:   s.buildSystemMessage(),
+				Timestamp: time.Now(),
+			})
+		} else {
+			s.UpdateSystemPrompt(config.SystemPrompt)
+		}
 	}
 
 	return s
@@ -167,9 +168,7 @@ func (s *Session) UpdateSystemPrompt(newPrompt string) {
 		}}, s.messages...)
 	}
 
-	if s.config.AutoSave {
-		s.saveNow()
-	}
+	s.saveNow()
 }
 
 func (s *Session) getSystemMessageIndex() int {
@@ -193,9 +192,7 @@ func (s *Session) AddUserMessage(content string) {
 	s.messages = append(s.messages, msg)
 	s.updatedAt = time.Now()
 
-	if s.config.AutoSave {
-		s.saveNow()
-	}
+	s.saveNow()
 }
 
 func (s *Session) AddAssistantMessage(content string) {
@@ -212,9 +209,7 @@ func (s *Session) AddAssistantMessage(content string) {
 
 	s.checkLoop(content)
 
-	if s.config.AutoSave {
-		s.saveNow()
-	}
+	s.saveNow()
 }
 
 func (s *Session) AddAssistantMessageWithToolCalls(content string, toolCalls []MsgToolCall) {
@@ -230,9 +225,7 @@ func (s *Session) AddAssistantMessageWithToolCalls(content string, toolCalls []M
 	s.messages = append(s.messages, msg)
 	s.updatedAt = time.Now()
 
-	if s.config.AutoSave {
-		s.saveNow()
-	}
+	s.saveNow()
 }
 
 func (s *Session) AddAssistantMessageWithSummary(content string) {
@@ -248,9 +241,7 @@ func (s *Session) AddAssistantMessageWithSummary(content string) {
 	s.messages = append(s.messages, msg)
 	s.updatedAt = time.Now()
 
-	if s.config.AutoSave {
-		s.saveNow()
-	}
+	s.saveNow()
 }
 
 func (s *Session) MarkCompaction(tailStartID int, summary string) {
@@ -279,9 +270,7 @@ func (s *Session) MarkCompaction(tailStartID int, summary string) {
 	})
 	s.updatedAt = time.Now()
 
-	if s.config.AutoSave {
-		s.saveNow()
-	}
+	s.saveNow()
 }
 
 func (s *Session) MarkMessageCompacted(index int, content string) {
@@ -295,9 +284,7 @@ func (s *Session) MarkMessageCompacted(index int, content string) {
 	s.messages[index].Compacted = true
 	s.updatedAt = time.Now()
 
-	if s.config.AutoSave {
-		s.saveNow()
-	}
+	s.saveNow()
 }
 
 func (s *Session) AddToolMessage(toolCallID, toolName, content string) {
@@ -314,9 +301,7 @@ func (s *Session) AddToolMessage(toolCallID, toolName, content string) {
 	s.messages = append(s.messages, msg)
 	s.updatedAt = time.Now()
 
-	if s.config.AutoSave {
-		s.saveNow()
-	}
+	s.saveNow()
 }
 
 func (s *Session) GetHistory() []Message {
@@ -364,9 +349,7 @@ func (s *Session) AddPinned(content string) {
 	s.pinned = append(s.pinned, content)
 	s.updatedAt = time.Now()
 
-	if s.config.AutoSave {
-		s.saveNow()
-	}
+	s.saveNow()
 }
 
 func (s *Session) GetPinned() []string {
@@ -385,9 +368,7 @@ func (s *Session) ClearPinned() {
 	s.pinned = nil
 	s.updatedAt = time.Now()
 
-	if s.config.AutoSave {
-		s.saveNow()
-	}
+	s.saveNow()
 }
 
 func (s *Session) GetContextMessages() []Message {
@@ -635,9 +616,7 @@ func (s *Session) Reset() {
 		s.peerInput.Clear()
 	}
 
-	if s.config.AutoSave {
-		s.saveNow()
-	}
+	s.saveNow()
 }
 
 type SessionData struct {
@@ -742,8 +721,10 @@ func (s *Session) saveInternal() error {
 		Pinned:     s.pinned,
 	}
 
-	if s.isLooped && s.GetLastAssistantMessage() != nil {
-		session.LastLooped = s.GetLastAssistantMessage().Content
+	if s.isLooped {
+		if last := s.getLastAssistantMessageLocked(); last != nil {
+			session.LastLooped = last.Content
+		}
 	}
 
 	data, err := json.MarshalIndent(session, "", "  ")
@@ -882,9 +863,7 @@ func (s *Session) SetResumePrompt(prompt string) {
 	defer s.mu.Unlock()
 	s.resumePrompt = prompt
 	s.updatedAt = time.Now()
-	if s.config.AutoSave {
-		s.saveNow()
-	}
+	s.saveNow()
 }
 
 func (s *Session) GetResumePrompt() string {

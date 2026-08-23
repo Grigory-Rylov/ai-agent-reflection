@@ -1,13 +1,19 @@
 package vk
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 )
@@ -208,7 +214,7 @@ func TestDownloadAttachmentsAbsolutePath(t *testing.T) {
 	}
 	defer os.Chdir(origWD)
 
-	downloaded, err := DownloadAttachments(attachments, "./attachments")
+	downloaded, err := DownloadAttachments(attachments, "./attachments", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -259,7 +265,7 @@ func TestBuildFullTextLongPollFallback(t *testing.T) {
 	
 	
 	msg := &VKMessage{ID: 0, PeerID: 2000000001, Text: "что на фото", Attachments: []VKAttachment{att}}
-	out := h.buildFullText(msg, nil)
+	out := h.buildFullText(msg, nil, nil)
 
 	if !strings.Contains(out, "что на фото") {
 		t.Errorf("prompt should keep original text, got: %s", out)
@@ -279,8 +285,86 @@ func TestBuildFullTextNoAttachmentsWithoutFullMsg(t *testing.T) {
 	h.attachmentsDir = t.TempDir()
 
 	msg := &VKMessage{ID: 0, PeerID: 2000000001, Text: "просто текст"}
-	if got := h.buildFullText(msg, nil); got != "просто текст" {
+	if got := h.buildFullText(msg, nil, nil); got != "просто текст" {
 		t.Errorf("expected plain text, got %q", got)
+	}
+}
+
+func TestExtractVideoURL(t *testing.T) {
+	tests := []struct {
+		name       string
+		attData    map[string]interface{}
+		wantOK     bool
+		wantExt    string
+		wantPrefix string
+	}{
+		{
+			name: "mp4_854 preferred",
+			attData: map[string]interface{}{
+				"id":    float64(100),
+				"title": "my_video",
+				"files": map[string]interface{}{
+					"mp4_854": map[string]interface{}{"url": "http://example.com/854.mp4"},
+					"mp4_360": map[string]interface{}{"url": "http://example.com/360.mp4"},
+				},
+			},
+			wantOK:     true,
+			wantExt:    ".mp4",
+			wantPrefix: "http://example.com/854.mp4",
+		},
+		{
+			name: "mp4_640 fallback",
+			attData: map[string]interface{}{
+				"id": float64(200),
+				"files": map[string]interface{}{
+					"mp4_640": map[string]interface{}{"url": "http://example.com/640.mp4"},
+				},
+			},
+			wantOK:     true,
+			wantExt:    ".mp4",
+			wantPrefix: "http://example.com/640.mp4",
+		},
+		{
+			name: "playUrl fallback when no files",
+			attData: map[string]interface{}{
+				"id":        float64(300),
+				"playUrl":   "http://example.com/play.mp4",
+				"title":     "fallback",
+			},
+			wantOK:     true,
+			wantExt:    ".mp4",
+			wantPrefix: "http://example.com/play.mp4",
+		},
+		{
+			name: "no url at all",
+			attData: map[string]interface{}{
+				"id": float64(400),
+			},
+			wantOK: false,
+		},
+		{
+			name: "empty files map",
+			attData: map[string]interface{}{
+				"id":    float64(500),
+				"files": map[string]interface{}{},
+			},
+			wantOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url, filename, ok := extractVideoURL(tt.attData, nil)
+			if ok != tt.wantOK {
+				t.Errorf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if tt.wantOK && !strings.HasPrefix(url, tt.wantPrefix) {
+				t.Errorf("url = %q, want prefix %q", url, tt.wantPrefix)
+			}
+			if tt.wantOK && !strings.HasSuffix(filename, tt.wantExt) {
+				t.Errorf("filename = %q, want suffix %q", filename, tt.wantExt)
+			}
+		})
 	}
 }
 
@@ -315,7 +399,7 @@ func TestDownloadAttachmentsPartialOnFailure(t *testing.T) {
 		},
 	}
 
-	downloaded, err := DownloadAttachments(attachments, t.TempDir())
+	downloaded, err := DownloadAttachments(attachments, t.TempDir(), nil)
 	if err == nil {
 		t.Fatal("expected error for failed download, got nil")
 	}
@@ -332,5 +416,292 @@ func TestDownloadAttachmentsPartialOnFailure(t *testing.T) {
 	info := FormatAttachmentInfo(downloaded)
 	if !strings.Contains(info, downloaded[0].Path) {
 		t.Errorf("partial attachment info should contain path %q, got: %s", downloaded[0].Path, info)
+	}
+}
+
+
+func newVideosGetStub(t *testing.T, body string) (*BotClient, *httptest.Server) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, body)
+	}))
+	client := NewBotClient("test_token")
+	client.baseURL = srv.URL + "/method/"
+	return client, srv
+}
+
+
+func TestExtractVideoURLOwnerOnlyFallsBackToAPI(t *testing.T) {
+	body := `{"response":[
+		{"id":400,"owner_id":-100,"files":{
+			"mp4_360":{"url":"http://stub.example/m360.mp4","width":640,"height":360},
+			"mp4_854":{"url":"http://stub.example/m854.mp4","width":1280,"height":854}
+		}}
+	]}`
+	client, srv := newVideosGetStub(t, body)
+	defer srv.Close()
+
+	attData := map[string]interface{}{
+		"id":       float64(400),
+		"owner_id": float64(-100),
+		"title":    "owner only clip",
+	}
+
+	url, filename, ok := extractVideoURL(attData, client)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	want := "http://stub.example/m854.mp4"
+	if url != want {
+		t.Errorf("url = %q, want %q", url, want)
+	}
+	if filename != "owner_only_clip.mp4" {
+		t.Errorf("filename = %q, want %q", filename, "owner_only_clip.mp4")
+	}
+}
+
+
+func TestExtractVideoURLNilClientGracefulFalse(t *testing.T) {
+	attData := map[string]interface{}{
+		"id":       float64(400),
+		"owner_id": float64(-100),
+		"title":    "no url here",
+	}
+	_, _, ok := extractVideoURL(attData, nil)
+	if ok {
+		t.Error("expected ok=false when no inline url and no client")
+	}
+}
+
+
+func TestGetBestVideoURLShapes(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "prefers highest known resolution among maps",
+			body: `{"response":[{"id":1,"owner_id":-100,"files":{
+				"mp4_360":{"url":"http://x/a360.mp4"},
+				"mp4_854":{"url":"http://x/a854.mp4"},
+				"mp4_480":{"url":"http://x/a480.mp4"}
+			}}]}`,
+			want: "http://x/a854.mp4",
+		},
+		{
+			name: "unknown mp4 beats generic url",
+			body: `{"response":[{"id":2,"owner_id":-100,"files":{
+				"url":"http://x/generic.mp4",
+				"mp4_720":{"url":"http://x/a720.mp4"}
+			}}]}`,
+			want: "http://x/a720.mp4",
+		},
+		{
+			name: "bare string values handled",
+			body: `{"response":[{"id":3,"owner_id":-100,"files":{
+				"mp4_360":"http://x/s360.mp4",
+				"mp4_854":"http://x/s854.mp4"
+			}}]}`,
+			want: "http://x/s854.mp4",
+		},
+		{
+			name: "mixed map and string picks best",
+			body: `{"response":[{"id":4,"owner_id":-100,"files":{
+				"mp4_360":{"url":"http://x/m360.mp4"},
+				"mp4_854":"http://x/s854.mp4"
+			}}]}`,
+			want: "http://x/s854.mp4",
+		},
+		{
+			name: "missing files yields empty",
+			body: `{"response":[{"id":5,"owner_id":-100,"title":"nofiles"}]}`,
+			want: "",
+		},
+		{
+			name: "empty response array",
+			body: `{"response":[]}`,
+			want: "",
+		},
+		{
+			name: "files without usable urls",
+			body: `{"response":[{"id":6,"owner_id":-100,"files":{"flv":{"ext":"flv"}}}]}`,
+			want: "",
+		},
+		{
+			name: "api error propagates",
+			body: `{"error":{"error_code":15,"error_message":"Access denied"}}`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client, srv := newVideosGetStub(t, tt.body)
+			defer srv.Close()
+			got, err := client.GetBestVideoURL(-100, 1)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("url = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+type seqFetcher struct {
+	mu     sync.Mutex
+	resps  [][]VKMessage
+	errs   []error
+	called int
+}
+
+func (f *seqFetcher) GetMessagesByID(ids []int64) ([]VKMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	idx := f.called
+	f.called++
+	if idx < len(f.errs) && f.errs[idx] != nil {
+		return nil, f.errs[idx]
+	}
+	if idx < len(f.resps) {
+		return f.resps[idx], nil
+	}
+	return nil, nil
+}
+
+func videoAtt(ownerID, vid float64, files map[string]interface{}, playURL string) VKAttachment {
+	data := map[string]interface{}{
+		"id":       vid,
+		"owner_id": ownerID,
+	}
+	if files != nil {
+		data["files"] = files
+	}
+	if playURL != "" {
+		data["playUrl"] = playURL
+	}
+	return VKAttachment{Type: "video", Raw: map[string]interface{}{"video": data}}
+}
+
+func setupFastEnrich(t *testing.T) {
+	t.Helper()
+	prevAttempts := enrichAttemptsN.Load()
+	prevSleep := enrichSleepMs.Load()
+	enrichAttemptsN.Store(5)
+	enrichSleepMs.Store(1)
+	t.Cleanup(func() {
+		enrichAttemptsN.Store(prevAttempts)
+		enrichSleepMs.Store(prevSleep)
+	})
+}
+
+func restoreVideoExtHost(t *testing.T) {
+	t.Helper()
+	prev := videoExtHostOverride
+	t.Cleanup(func() { videoExtHostOverride = prev })
+}
+
+func TestEnrichVideosViaRetry_FetchSucceedsOnSecondAttempt(t *testing.T) {
+	setupFastEnrich(t)
+	restoreVideoExtHost(t)
+	log, _ := logger.New(logger.DefaultConfig())
+	h := NewBotHandler(nil, newMockAgentLoop(), log)
+
+	poor := videoAtt(-100, 400, nil, "")
+	rich := videoAtt(-100, 400, map[string]interface{}{
+		"mp4_854": map[string]interface{}{"url": "http://example.com/rich.mp4"},
+	}, "")
+	fetcher := &seqFetcher{resps: [][]VKMessage{{}, {{ID: 7, Attachments: []VKAttachment{rich}}}}}
+	h.messageFetcher = fetcher
+
+	msg := &VKMessage{ID: 7, PeerID: 2000000001, Text: "видео"}
+	start := time.Now()
+	got := h.enrichVideosViaRetry(msg, []VKAttachment{poor})
+	elapsed := time.Since(start)
+
+	if elapsed > 3*time.Second {
+		t.Errorf("took too long: %v", elapsed)
+	}
+	if fetcher.called != 2 {
+		t.Errorf("expected 2 fetches (early exit on success), got %d", fetcher.called)
+	}
+	videoData, _ := got[0].Raw["video"].(map[string]interface{})
+	files, _ := videoData["files"].(map[string]interface{})
+	if files == nil {
+		t.Fatal("expected files map in enriched attachment")
+	}
+	mp4, _ := files["mp4_854"].(map[string]interface{})
+	if u, _ := mp4["url"].(string); u != "http://example.com/rich.mp4" {
+		t.Errorf("mp4_854 url = %q", u)
+	}
+}
+
+func TestEnrichVideosViaRetry_ZeroIDUsesConstructedURL(t *testing.T) {
+	setupFastEnrich(t)
+	payload := make([]byte, 150*1024)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(payload)))
+		if r.Method == http.MethodHead {
+			return
+		}
+		w.Write(payload)
+	}))
+	defer srv.Close()
+	videoExtHostOverride = srv.URL
+	log, _ := logger.New(logger.DefaultConfig())
+	h := NewBotHandler(nil, newMockAgentLoop(), log)
+
+	poor := videoAtt(-100, 400, nil, "")
+	msg := &VKMessage{ID: 0, PeerID: 2000000001, Text: "видео"}
+	start := time.Now()
+	got := h.enrichVideosViaRetry(msg, []VKAttachment{poor})
+	elapsed := time.Since(start)
+
+	if elapsed > 3*time.Second {
+		t.Errorf("took too long: %v", elapsed)
+	}
+	want := fmt.Sprintf("%s/video_ext.php?oid=-100&id=400&expire=0&hash=&hd=1", srv.URL)
+	videoData, _ := got[0].Raw["video"].(map[string]interface{})
+	playURL, _ := videoData["playUrl"].(string)
+	if playURL != want {
+		t.Errorf("playUrl = %q, want %q", playURL, want)
+	}
+	url, _, ok := extractVideoURL(videoData, nil)
+	if !ok || url != want {
+		t.Errorf("extractVideoURL = %q, %v; want %q", url, ok, want)
+	}
+}
+
+func TestEnrichVideosViaRetry_AllFailReturnsOriginal(t *testing.T) {
+	setupFastEnrich(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	videoExtHostOverride = srv.URL
+	log, _ := logger.New(logger.DefaultConfig())
+	h := NewBotHandler(nil, newMockAgentLoop(), log)
+
+	poor := videoAtt(-100, 400, nil, "")
+	msg := &VKMessage{ID: 0, PeerID: 2000000001, Text: "видео"}
+	start := time.Now()
+	got := h.enrichVideosViaRetry(msg, []VKAttachment{poor})
+	elapsed := time.Since(start)
+
+	if elapsed > 3*time.Second {
+		t.Errorf("budget exceeded: %v", elapsed)
+	}
+	if got[0] != poor {
+		t.Errorf("attachment mutated despite all failures: %+v", got[0])
 	}
 }

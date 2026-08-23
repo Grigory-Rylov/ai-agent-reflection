@@ -68,7 +68,7 @@ func newPersistenceTestLoop(t *testing.T, sseResponses [][]string) (*agentLoop, 
 func sessionConfigForStore(st store.Store) session.Config {
 	cfg := session.DefaultConfig()
 	cfg.Store = st
-	cfg.AutoSave = true
+	// AutoSave always on
 	return cfg
 }
 
