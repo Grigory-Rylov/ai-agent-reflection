@@ -244,7 +244,6 @@ func TestProcessMessageAddsUserWithOrchestratorLikeConfig(t *testing.T) {
 		Debug:            false,
 		SystemPromptFile: "nonexistent_file.txt",
 		SessionConfig: session.Config{
-			AutoSave:    false,
 			SessionFile: "",
 		},
 	}
@@ -340,7 +339,6 @@ func TestAgentSessionPersistence(t *testing.T) {
 	config.LlamaServerURL = "127.0.0.1:8080"
 	config.Model = "test-model"
 	config.SessionConfig.SessionFile = sessionFile
-	config.SessionConfig.AutoSave = true
 
 	agent := NewAgent(config)
 

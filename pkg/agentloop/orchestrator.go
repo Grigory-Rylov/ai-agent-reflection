@@ -640,7 +640,6 @@ func (o *Orchestrator) configureAgentBase(cfg *agent.Config, name string, sessio
 	
 	
 	cfg.SessionConfig = session.Config{
-		AutoSave:    false,
 		SessionFile: "",
 		SessionID:   sessionID,
 	}
@@ -736,7 +735,6 @@ func (o *Orchestrator) makeAgentConfig() (agent.Config, error) {
 		Debug:               o.config.Debug,
 		AgentName:           "coordinator",
 		SessionConfig: session.Config{
-			AutoSave:    false,
 			SessionFile: "",
 		},
 	}, nil

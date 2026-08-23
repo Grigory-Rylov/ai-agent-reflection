@@ -162,7 +162,6 @@ func TestProcessPromptWithSystemPrompt_AppliesLeadPrompt_WithPersistedHistory(t 
 	config.SessionConfig.WorkingDir = promptDir
 	
 	config.SessionConfig.Store = dbStore
-	config.SessionConfig.AutoSave = true
 
 	loop, err := NewAgentLoop(config, &mockVKClient{}, tools.NewRegistry())
 	if err != nil {
@@ -259,7 +258,6 @@ func TestProcessPromptWithSystemPrompt_FollowUpWithoutLeadKeepsContext(t *testin
 	config.EnablePruning = false
 	config.SessionConfig.WorkingDir = promptDir
 	config.SessionConfig.Store = dbStore
-	config.SessionConfig.AutoSave = true
 
 	loop, err := NewAgentLoop(config, &mockVKClient{}, tools.NewRegistry())
 	if err != nil {

@@ -17,17 +17,15 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util/stringutil"
 )
 
-
-type Image2TextConfig struct {
+type MediaConfig struct {
 	ModelHolder *modelsconfig.Holder
 	MaxTokens   int
 }
 
-var globalImage2Text Image2TextConfig
+var globalMediaConfig MediaConfig
 
-
-func SetImage2TextConfig(cfg Image2TextConfig) {
-	globalImage2Text = cfg
+func SetMediaConfig(cfg MediaConfig) {
+	globalMediaConfig = cfg
 }
 
 type Image2TextTool struct{}
@@ -72,7 +70,7 @@ func (t *Image2TextTool) Execute(ctx context.Context, inputs map[string]string) 
 		prompt = "Describe the image content in detail."
 	}
 
-	text, err := t.recognize(ctx, resolvedPath, data, prompt)
+	text, err := recognizeMedia(ctx, resolvedPath, data, imageMimeType(resolvedPath), prompt)
 	if err != nil {
 		return ToolResult{Success: false, Error: err.Error()}, nil
 	}
@@ -86,14 +84,23 @@ func (t *Image2TextTool) Execute(ctx context.Context, inputs map[string]string) 
 	}, nil
 }
 
-
-func (t *Image2TextTool) recognize(ctx context.Context, imagePath string, data []byte, prompt string) (string, error) {
-	model, host := currentImage2TextModel()
+func recognizeMedia(ctx context.Context, filePath string, data []byte, mimeType, prompt string) (string, error) {
+	model, host := currentMediaModel()
 	if host == "" {
 		host = "http://127.0.0.1:8081"
 	}
 
-	imageURL := "data:" + imageMimeType(imagePath) + ";base64," + base64.StdEncoding.EncodeToString(data)
+	contentType := "image_url"
+	if strings.HasPrefix(mimeType, "video/") {
+		contentType = "video_url"
+	}
+
+	fileURL := "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
+
+	mediaPart := map[string]interface{}{
+		"type": contentType,
+	}
+	mediaPart[contentType] = map[string]string{"url": fileURL}
 
 	reqBody := map[string]interface{}{
 		"model": model,
@@ -101,46 +108,62 @@ func (t *Image2TextTool) recognize(ctx context.Context, imagePath string, data [
 			{
 				"role": "user",
 				"content": []map[string]interface{}{
-					{"type": "image_url", "image_url": map[string]string{"url": imageURL}},
+					mediaPart,
 					{"type": "text", "text": prompt},
 				},
 			},
 		},
-		"max_tokens": image2TextMaxTokens(),
+		"max_tokens": mediaMaxTokens(),
 		"stream":     false,
 	}
 
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", fmt.Errorf("image2text: marshal request: %w", err)
+		return "", fmt.Errorf("media recognize: marshal request: %w", err)
 	}
 
 	return postChatCompletion(ctx, host, jsonData)
 }
 
+func videoMimeType(path string) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	mimeMap := map[string]string{
+		".mp4":  "video/mp4",
+		".avi":  "video/x-msvideo",
+		".mov":  "video/quicktime",
+		".mkv":  "video/x-matroska",
+		".webm": "video/webm",
+		".flv":  "video/x-flv",
+		".wmv":  "video/x-ms-wmv",
+	}
+	if mime, ok := mimeMap[ext]; ok {
+		return mime
+	}
+	return "video/mp4"
+}
 
 func postChatCompletion(ctx context.Context, host string, jsonData []byte) (string, error) {
 	url := strings.TrimSuffix(host, "/") + "/v1/chat/completions"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonData))
 	if err != nil {
-		return "", fmt.Errorf("image2text: create request: %w", err)
+		return "", fmt.Errorf("media recognize: create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("image2text: request failed: %w", err)
+		return "", fmt.Errorf("media recognize: request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("image2text: read response: %w", err)
+		return "", fmt.Errorf("media recognize: read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("image2text: server error %d: %s", resp.StatusCode, stringutil.Truncate(string(body), 300, "..."))
+		return "", fmt.Errorf("media recognize: server error %d: %s", resp.StatusCode, stringutil.Truncate(string(body), 300, "..."))
 	}
 
 	var parsed struct {
@@ -151,30 +174,27 @@ func postChatCompletion(ctx context.Context, host string, jsonData []byte) (stri
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", fmt.Errorf("image2text: parse response: %w", err)
+		return "", fmt.Errorf("media recognize: parse response: %w", err)
 	}
 	if len(parsed.Choices) == 0 {
-		return "", fmt.Errorf("image2text: empty choices in response")
+		return "", fmt.Errorf("media recognize: empty choices in response")
 	}
 	return strings.TrimSpace(parsed.Choices[0].Message.Content), nil
 }
 
-
-func currentImage2TextModel() (model, host string) {
-	if globalImage2Text.ModelHolder != nil {
-		_, model, host = globalImage2Text.ModelHolder.GetCurrent()
+func currentMediaModel() (model, host string) {
+	if globalMediaConfig.ModelHolder != nil {
+		_, model, host = globalMediaConfig.ModelHolder.GetCurrent()
 	}
 	return model, host
 }
 
-
-func image2TextMaxTokens() int {
-	if globalImage2Text.MaxTokens > 0 {
-		return globalImage2Text.MaxTokens
+func mediaMaxTokens() int {
+	if globalMediaConfig.MaxTokens > 0 {
+		return globalMediaConfig.MaxTokens
 	}
 	return 4096
 }
-
 
 func imageMimeType(path string) string {
 	switch strings.ToLower(filepath.Ext(path)) {
@@ -192,5 +212,3 @@ func imageMimeType(path string) string {
 		return "application/octet-stream"
 	}
 }
-
-

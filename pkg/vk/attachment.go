@@ -1,6 +1,7 @@
 package vk
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -8,12 +9,15 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 )
 
 
-func GetAttachmentDownloadURL(attachment map[string]interface{}) (string, string, bool) {
+func GetAttachmentDownloadURL(attachment map[string]interface{}, vkClient *BotClient) (string, string, bool) {
 	attType, _ := attachment["type"].(string)
 	if attType == "" {
 		return "", "", false
@@ -27,6 +31,8 @@ func GetAttachmentDownloadURL(attachment map[string]interface{}) (string, string
 	switch attType {
 	case "photo":
 		return extractPhotoURL(attData)
+	case "video":
+		return extractVideoURL(attData, vkClient)
 	case "doc":
 		return extractDocURL(attData)
 	case "audio_message":
@@ -75,6 +81,171 @@ func sortPhotoSizes(sizes []interface{}) []interface{} {
 	return sizes
 }
 
+
+func extractVideoURL(attData map[string]interface{}, vkClient *BotClient) (string, string, bool) {
+	rawDump, _ := json.Marshal(attData)
+	logger.DebugToFile("[extractVideoURL] RAW: %s", string(rawDump))
+
+	if url, filename, ok := extractInlineVideoURL(attData); ok {
+		return url, filename, true
+	}
+
+	if vkClient != nil {
+		if url, filename, ok := extractAPIVideoURL(attData, vkClient); ok {
+			return url, filename, true
+		}
+	}
+
+	if url := probeVideoExtURL(attData); url != "" {
+		return url, buildVideoFilename(attData), true
+	}
+
+	logger.DebugToFile("[extractVideoURL] no video URL found")
+	return "", "", false
+}
+
+
+var videoExtHostOverride string
+
+const VideoExtProbeMinBytes = 100_000
+
+func ConstructVideoExtURL(attData map[string]interface{}) string {
+	ownerID := toInt64(attData["owner_id"])
+	videoID := toInt64(attData["id"])
+	hash, _ := attData["access_key"].(string)
+	host := videoExtHostOverride
+	if host == "" {
+		host = "https://vk.com"
+	}
+	return fmt.Sprintf("%s/video_ext.php?oid=%d&id=%d&expire=0&hash=%s&hd=1", host, ownerID, videoID, hash)
+}
+
+func probeVideoExtURL(attData map[string]interface{}) string {
+	url := ConstructVideoExtURL(attData)
+	client := &http.Client{Timeout: 2 * time.Second}
+	req, err := http.NewRequest(http.MethodHead, url, nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	size, _ := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+	ok := resp.StatusCode == http.StatusOK && size >= VideoExtProbeMinBytes
+	logger.DebugToFile("[probeVideoExtURL] %s status=%d size=%d adopted=%v", url, resp.StatusCode, size, ok)
+	if !ok {
+		return ""
+	}
+	return url
+}
+func extractInlineVideoURL(attData map[string]interface{}) (string, string, bool) {
+	files, _ := attData["files"].(map[string]interface{})
+	if files != nil {
+		logger.DebugToFile("[extractVideoURL] files keys: %v", getMapKeys(files))
+		for _, resolution := range []string{"mp4_854", "mp4_640", "mp4_480", "mp4_360"} {
+			if url := videoFileURL(files[resolution]); url != "" {
+				return url, buildVideoFilename(attData), true
+			}
+		}
+	}
+
+	playURL, _ := attData["playUrl"].(string)
+	if playURL != "" {
+		return playURL, buildVideoFilename(attData), true
+	}
+
+	return "", "", false
+}
+
+
+func extractAPIVideoURL(attData map[string]interface{}, vkClient *BotClient) (string, string, bool) {
+	ownerID := toInt64(attData["owner_id"])
+	videoID := toInt64(attData["id"])
+	if ownerID == 0 && videoID == 0 {
+		logger.DebugToFile("[extractVideoURL] no owner_id/id for API fallback")
+		return "", "", false
+	}
+	logger.DebugToFile("[extractVideoURL] trying videos.get: owner_id=%d video_id=%d", ownerID, videoID)
+	url, err := vkClient.GetBestVideoURL(ownerID, videoID)
+	if err != nil {
+		logger.DebugToFile("[extractVideoURL] videos.get failed: %v", err)
+		return "", "", false
+	}
+	if url == "" {
+		logger.DebugToFile("[extractVideoURL] videos.get returned no mp4 url")
+		return "", "", false
+	}
+	return url, buildVideoFilename(attData), true
+}
+
+
+func videoFileURL(v interface{}) string {
+	switch fv := v.(type) {
+	case map[string]interface{}:
+		url, _ := fv["url"].(string)
+		return url
+	case string:
+		return fv
+	}
+	return ""
+}
+
+
+func buildVideoFilename(attData map[string]interface{}) string {
+	id, _ := attData["id"].(float64)
+	title, _ := attData["title"].(string)
+	if title != "" {
+		return sanitizeFilename(title + ".mp4")
+	}
+	return fmt.Sprintf("video_%.0f.mp4", id)
+}
+
+
+func findBestMp4(files map[string]interface{}) string {
+	preferred := []string{"mp4_854", "mp4_640", "mp4_480", "mp4_360"}
+	for _, res := range preferred {
+		if url := videoFileURL(files[res]); url != "" {
+			return url
+		}
+	}
+
+	keys := make([]string, 0, len(files))
+	for k := range files {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var otherMP4, anyURL string
+	for _, k := range keys {
+		url := videoFileURL(files[k])
+		if url == "" {
+			continue
+		}
+		if strings.HasPrefix(k, "mp4_") {
+			if otherMP4 == "" {
+				otherMP4 = url
+			}
+			continue
+		}
+		if anyURL == "" {
+			anyURL = url
+		}
+	}
+	if otherMP4 != "" {
+		return otherMP4
+	}
+	return anyURL
+}
+
+func getMapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
 
 func extractDocURL(attData map[string]interface{}) (string, string, bool) {
 	url, _ := attData["url"].(string)
@@ -143,7 +314,7 @@ func extractStickerURL(attData map[string]interface{}) (string, string, bool) {
 }
 
 
-func DownloadAttachments(attachments []map[string]interface{}, saveDir string) ([]DownloadedAttachment, error) {
+func DownloadAttachments(attachments []map[string]interface{}, saveDir string, vkClient *BotClient) ([]DownloadedAttachment, error) {
 	absDir, err := filepath.Abs(saveDir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve dir %s: %w", saveDir, err)
@@ -157,7 +328,7 @@ func DownloadAttachments(attachments []map[string]interface{}, saveDir string) (
 	var firstErr error
 
 	for _, att := range attachments {
-		url, filename, ok := GetAttachmentDownloadURL(att)
+		url, filename, ok := GetAttachmentDownloadURL(att, vkClient)
 		if !ok {
 			continue
 		}
@@ -183,16 +354,31 @@ func DownloadAttachments(attachments []map[string]interface{}, saveDir string) (
 
 
 func downloadSingle(urlStr, destPath string) (DownloadedAttachment, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	isVideo := strings.HasSuffix(destPath, ".mp4") || strings.HasSuffix(destPath, ".webm")
+	timeout := 30 * time.Second
+	if isVideo {
+		timeout = 5 * time.Minute
+	}
 
-	resp, err := client.Get(urlStr)
+	client := &http.Client{Timeout: timeout}
+
+	req, err := http.NewRequest(http.MethodGet, urlStr, nil)
+	if err != nil {
+		return DownloadedAttachment{}, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	req.Header.Set("Referer", "https://vk.com/")
+	req.Header.Set("Accept", "*/*")
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return DownloadedAttachment{}, fmt.Errorf("http get: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return DownloadedAttachment{}, fmt.Errorf("http error: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return DownloadedAttachment{}, fmt.Errorf("http error: %d body: %s", resp.StatusCode, string(body))
 	}
 
 	data, err := io.ReadAll(resp.Body)

@@ -205,17 +205,19 @@ func main() {
 	maxTokens := retryResolveContext(ctxResolver, log, config.MaxTokens)
 	log.InfoLogf("Model context: %d tokens", maxTokens)
 
-	tools.SetImage2TextConfig(tools.Image2TextConfig{
+	tools.SetMediaConfig(tools.MediaConfig{
 		ModelHolder: modelHolder,
-		
-		
-		
+
+
+
 		MaxTokens: 4096,
 	})
 
 	if modelHolder.GetCurrentVision() {
 		toolRegistry.Register(&tools.Image2TextTool{})
 		log.InfoLogf("image2text tool registered (vision model)")
+		toolRegistry.Register(&tools.Video2TextTool{})
+		log.InfoLogf("video2text tool registered (vision model)")
 	} else {
 		log.InfoLogf("image2text tool NOT registered (model is not vision-capable)")
 	}
@@ -234,7 +236,6 @@ func main() {
 	} else {
 		loopConfig.SessionConfig.SessionFile = "./sessions/vk_session.json"
 	}
-	loopConfig.SessionConfig.AutoSave = true
 	loopConfig.SessionConfig.WorkingDir = tools.WorkingDir
 
 	loopConfig.SystemPromptFile = sysPromptPath
@@ -293,7 +294,6 @@ func main() {
 		ToolOutputMaxBytes:  config.ToolOutput.MaxBytes,
 		Debug:               *debug,
 		SessionConfig: session.Config{
-			AutoSave:    false,
 			SessionFile: "",
 		},
 	}

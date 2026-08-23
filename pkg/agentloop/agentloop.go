@@ -3,6 +3,7 @@ package agentloop
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -244,15 +245,17 @@ func (al *agentLoop) syncVisionTool() bool {
 	vision := al.config.ModelHolder.GetCurrentVision()
 	if vision && !reg.IsRegistered("image2text") {
 		reg.Register(&tools.Image2TextTool{})
+		reg.Register(&tools.Video2TextTool{})
 		if al.log != nil {
-			al.log.InfoLogf("image2text tool registered (vision model)")
+			al.log.InfoLogf("image2text and video2text tools registered (vision model)")
 		}
 		return true
 	}
 	if !vision && reg.IsRegistered("image2text") {
 		reg.Unregister("image2text")
+		reg.Unregister("video2text")
 		if al.log != nil {
-			al.log.InfoLogf("image2text tool unregistered (model is not vision-capable)")
+			al.log.InfoLogf("image2text and video2text tools unregistered (model is not vision-capable)")
 		}
 		return false
 	}
@@ -631,6 +634,8 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 	}
 
 	agentConfig := al.buildAgentConfig()
+	agentConfig.SessionConfig.Store = nil
+	agentConfig.SessionConfig.SessionFile = ""
 
 	agentConfig.SlotID = slotID
 	if slotID >= 0 && al.currentModelSlotSave() {
@@ -690,7 +695,15 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 		al.log.DebugLog("[sendToLLM] agent session already has %d messages, skipping pre-seed", len(agentSess.GetHistory()))
 	}
 
+	seededLen := len(agentSess.GetHistory())
+
 	response, err := a.ProcessMessage(ctx, prompt, peerID)
+
+	if err != nil && (errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "context canceled")) {
+		return "", err
+	}
+
+	al.mirrorAgentSession(sess, agentSess, seededLen)
 
 	if in := sess.GetPeerInput(); in != nil {
 		for _, m := range in.TakePromoted() {
@@ -712,11 +725,26 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 		}
 	}
 
-	if response != "" {
-		sess.AddAssistantMessage(response)
-	}
-
 	return response, nil
+}
+
+func (al *agentLoop) mirrorAgentSession(sess *session.Session, agentSess *session.Session, seededLen int) {
+	history := agentSess.GetHistory()
+	for i := seededLen; i < len(history); i++ {
+		m := history[i]
+		switch m.Role {
+		case session.UserRole:
+			sess.AddUserMessage(m.Content)
+		case session.AssistantRole:
+			if len(m.ToolCalls) > 0 {
+				sess.AddAssistantMessageWithToolCalls(m.Content, m.ToolCalls)
+			} else if m.Content != "" || i == len(history)-1 {
+				sess.AddAssistantMessage(m.Content)
+			}
+		case session.ToolRole:
+			sess.AddToolMessage(m.ToolCallID, m.Name, m.Content)
+		}
+	}
 }
 
 func (al *agentLoop) buildAgentConfig() agent.Config {
