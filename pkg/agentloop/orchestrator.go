@@ -26,6 +26,7 @@ type OrchestratorConfig struct {
 	MaxTokens       int
 	ModelLimitInput int
 	Temperature     float64
+	MaxToolCallDepth int
 	ToolRegistry    *tools.Registry
 	Debug           bool
 	Logger          Logger
@@ -727,6 +728,7 @@ func (o *Orchestrator) makeAgentConfig() (agent.Config, error) {
 		MaxTokens:           maxTokens,
 		ModelLimitInput:     o.config.ModelLimitInput,
 		Temperature:         o.config.Temperature,
+		MaxToolCallDepth:    o.config.MaxToolCallDepth,
 		SystemPromptFile:    o.systemPromptDir() + "/coordinator.txt",
 		EnableTools:         true,
 		EnableLoopAlert:     false,

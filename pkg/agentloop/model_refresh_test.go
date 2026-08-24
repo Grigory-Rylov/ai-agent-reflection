@@ -1,6 +1,7 @@
 package agentloop
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -53,7 +54,7 @@ func TestModelSwitchRefreshesTokenizerCompactor(t *testing.T) {
 		t.Fatalf("Switch: %v", err)
 	}
 
-	if err := al.syncCurrentModel(); err != nil {
+	if err := al.syncCurrentModel(context.Background(), 0); err != nil {
 		t.Fatalf("syncCurrentModel: %v", err)
 	}
 
@@ -94,7 +95,7 @@ func TestModelSwitchRefreshIdempotent(t *testing.T) {
 	al := loop.(*agentLoop)
 
 	before := al.tokenizer
-	if err := al.syncCurrentModel(); err != nil {
+	if err := al.syncCurrentModel(context.Background(), 0); err != nil {
 		t.Fatalf("syncCurrentModel: %v", err)
 	}
 	if al.tokenizer != before {
@@ -104,7 +105,7 @@ func TestModelSwitchRefreshIdempotent(t *testing.T) {
 
 func TestModelSwitchRefreshNilHolder(t *testing.T) {
 	al := &agentLoop{config: DefaultLoopConfig()}
-	if err := al.syncCurrentModel(); err != nil {
+	if err := al.syncCurrentModel(context.Background(), 0); err != nil {
 		t.Fatalf("syncCurrentModel: %v", err)
 	}
 }
@@ -134,7 +135,7 @@ func TestSyncCurrentModel_ResolvingFailsUsesFallback(t *testing.T) {
 		t.Fatalf("Switch: %v", err)
 	}
 
-	if err := al.syncCurrentModel(); err != nil {
+	if err := al.syncCurrentModel(context.Background(), 0); err != nil {
 		t.Fatalf("syncCurrentModel should not fail (fallback expected), got: %v", err)
 	}
 

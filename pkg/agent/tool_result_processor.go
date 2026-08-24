@@ -23,9 +23,14 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		return "", nil
 	}
 
-	if depth >= maxToolCallDepth {
+	limit := a.config.MaxToolCallDepth
+	if limit <= 0 {
+		limit = maxToolCallDepth
+	}
+
+	if depth >= limit {
 		prefix := a.agentPrefix()
-		limitMessage := fmt.Sprintf("[TOOL] Tool call recursion limit reached (%d batches in one turn), stopping to avoid an unbounded loop.", maxToolCallDepth)
+		limitMessage := fmt.Sprintf("[TOOL] Tool call recursion limit reached (%d batches in one turn), stopping to avoid an unbounded loop.", limit)
 		fmt.Printf("%s%s\n", prefix, limitMessage)
 		logger.DebugToFile(prefix+"%s", limitMessage)
 		a.sendThinking(session.GetPeerID(), "[TOOL] Tool call recursion limit reached, finishing turn")
@@ -237,8 +242,10 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 
 	if responseText == "" {
 		if content, ok := lastAssistantContent(session); ok {
+			logger.DebugToFile("%s[FLOW] Empty final response, falling back to stale last assistant content (%d chars)", prefix, len(content))
 			return content, nil
 		}
+		logger.DebugToFile("%s[FLOW] Empty final response, nothing to return", prefix)
 		return "", nil
 	}
 
@@ -271,15 +278,27 @@ func (a *agentImpl) filterUniqueToolCalls(calls []ToolCall, executed map[string]
 
 func (a *agentImpl) continueAfterDuplicateToolCalls(ctx context.Context, messages []Message, responseText string, dupCalls []ToolCall, executed map[string]bool, session *sess.Session, depth int) (string, error) {
 	if duplicateNudgeCount(ctx) >= maxDuplicateNudges {
-		a.debugLog.Debug("Duplicate tool call nudges exhausted, ending turn")
+		logger.DebugToFile("%s[FLOW] Duplicate tool call nudges exhausted (%d/%d), ending turn silently; dupTools=%s responseLen=%d",
+			a.agentPrefix(), duplicateNudgeCount(ctx), maxDuplicateNudges, toolCallNames(dupCalls), len(responseText))
 		if responseText == "" {
 			if content, ok := lastAssistantContent(session); ok {
+				logger.DebugToFile("%s[FLOW] Returning stale last assistant content as turn result (%d chars)", a.agentPrefix(), len(content))
 				return content, nil
 			}
 		}
 		return responseText, nil
 	}
+	logger.DebugToFile("%s[FLOW] Duplicate tool calls (%d): %s, sending nudge %d/%d",
+		a.agentPrefix(), len(dupCalls), toolCallNames(dupCalls), duplicateNudgeCount(ctx)+1, maxDuplicateNudges)
 	return a.nudgeOnDuplicateToolCalls(ctx, messages, responseText, dupCalls, executed, session, depth)
+}
+
+func toolCallNames(calls []ToolCall) string {
+	names := make([]string, 0, len(calls))
+	for _, tc := range calls {
+		names = append(names, tc.Function.Name)
+	}
+	return strings.Join(names, ",")
 }
 
 func (a *agentImpl) nudgeOnDuplicateToolCalls(ctx context.Context, messages []Message, responseText string, dupCalls []ToolCall, executed map[string]bool, session *sess.Session, depth int) (string, error) {

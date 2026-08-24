@@ -80,6 +80,8 @@ type Config struct {
 	
 	StreamIdleTimeout time.Duration
 	
+	MaxToolCallDepth int
+	
 	SlotID int
 	
 	SlotSave bool
@@ -110,6 +112,7 @@ func DefaultConfig() Config {
 		EnablePruning:     true,
 		RetryDelay:        5 * time.Second,
 		StreamIdleTimeout: DefaultStreamIdleTimeout,
-		SlotID:            -1, 
+		MaxToolCallDepth:  maxToolCallDepth,
+		SlotID:            -1,
 	}
 }

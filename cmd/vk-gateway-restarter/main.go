@@ -26,6 +26,7 @@ type Config struct {
 	TokenVK        string `json:"token_vk"`
 	PeerID         int64  `json:"peer_id"`
 	ThinkingPeerID int64  `json:"thinking_peer_id"`
+	Debug          bool   `json:"debug"`
 }
 
 type agentProc struct {
@@ -116,19 +117,18 @@ func (ap *agentProc) pid() int {
 	return 0
 }
 
-func buildAgentArgs() []string {
+func buildAgentArgs(cfgDebug bool) []string {
 	restarterDebug := flag.Bool("d", false, "Enable debug mode")
 	flag.Parse()
 
 	var args []string
-	if *restarterDebug {
+	if cfgDebug || *restarterDebug {
 		args = append(args, "-d")
 	}
 	return args
 }
 
 func main() {
-	agentArgs := buildAgentArgs()
 	agentDir, _ := os.Getwd()
 
 	config, err := loadConfig(filepath.Join(agentDir, "config.json"))
@@ -136,6 +136,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "[restarter] Error loading config: %v\n", err)
 		os.Exit(1)
 	}
+	agentArgs := buildAgentArgs(config.Debug)
 	if config.TokenVK == "" {
 		fmt.Fprintln(os.Stderr, "[restarter] token_vk is required in config.json")
 		os.Exit(1)

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agent"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/engine"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
@@ -14,6 +15,7 @@ type LoopConfig struct {
 	ContextResolver *ModelContextResolver
 	MaxTokens       int
 	Temperature     float64
+	Engine          engine.Control
 
 	StreamIdleTimeout time.Duration
 
@@ -33,6 +35,7 @@ type LoopConfig struct {
 	PreserveRecentTokens           *int
 	CompactionReserved             *int
 	ModelLimitInput                int
+	MaxToolCallDepth               int
 	EnablePruning                  bool
 	ToolOutputMaxLines             int
 	ToolOutputMaxBytes             int

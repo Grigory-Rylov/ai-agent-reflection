@@ -69,6 +69,9 @@ type agentLoop struct {
 	thinkingCallback func(peerID int64, content string) error
 	currentAlias     string
 	modelMu          sync.Mutex
+	engineGate       *engineGate
+	watchdogCancel   context.CancelFunc
+	shutdownMu       sync.Mutex
 	slots            *SlotClient
 	slotMgr          *SlotManager
 }
@@ -152,6 +155,7 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 		dispatcher:   NewEventDispatcher(),
 		log:          l,
 		currentAlias: alias,
+		engineGate:   newEngineGate(),
 		slots:        newSlotClient(),
 		slotMgr:      slotMgr,
 	}, nil
@@ -183,35 +187,103 @@ func resolveMaxTokens(h *modelsconfig.Holder, alias string, fallback int) int {
 	return fallback
 }
 
-func (al *agentLoop) syncCurrentModel() error {
+func (al *agentLoop) syncCurrentModel(ctx context.Context, peerID int64) error {
 	al.modelMu.Lock()
-	defer al.modelMu.Unlock()
-
 	if al.config.ModelHolder == nil {
+		al.modelMu.Unlock()
 		return nil
 	}
+	alias, _, _ := al.config.ModelHolder.GetCurrent()
+	if alias == al.currentAlias {
+		al.modelMu.Unlock()
+		return nil
+	}
+	needEngine := al.engineDecisionNeeded(alias)
+	al.currentAlias = alias
+	al.modelMu.Unlock()
 
-	alias, modelName, llamaURL := al.config.ModelHolder.GetCurrent()
+	if needEngine {
+		if err := al.awaitEngineTransition(ctx, alias, peerID); err != nil {
+			return err
+		}
+	}
+
+	al.refreshModelResources(alias)
+	return nil
+}
+
+func (al *agentLoop) engineDecisionNeeded(alias string) bool {
+	if al.config.Engine == nil {
+		return false
+	}
+	return al.config.ModelHolder.GetModelStartScript(alias) != ""
+}
+
+func (al *agentLoop) awaitEngineTransition(ctx context.Context, alias string, peerID int64) error {
+	notify := func(status string) {
+		al.notifyEngineStatus(ctx, peerID, status)
+	}
+	return al.engineGate.AwaitTransition(ctx, alias, func(runCtx context.Context) error {
+		return al.config.Engine.Transition(runCtx, alias, notify)
+	})
+}
+
+func (al *agentLoop) notifyEngineStatus(_ context.Context, peerID int64, status string) {
+	if al.log != nil {
+		al.log.InfoLogf("[ENGINE] %s", status)
+	}
+	text, toUser := engineStatusMessage(status)
+	if !toUser {
+		return
+	}
+	if al.vk == nil {
+		return
+	}
+	target := peerID
+	if target <= 0 {
+		target = al.config.ThinkingPeerID
+	}
+	if target <= 0 {
+		return
+	}
+	if _, err := al.vk.SendMessage(target, text); err != nil && al.log != nil {
+		al.log.WarnLogf("[ENGINE] failed to deliver status to peer %d: %v", target, err)
+	}
+}
+
+func engineStatusMessage(status string) (string, bool) {
+	switch {
+	case strings.Contains(status, "Engine ready"):
+		return "✅ Движок модели готов, продолжаю работу.", true
+	case strings.Contains(status, "failed") || strings.Contains(status, "failure"):
+		return "⚠️ Автоматический перезапуск движка не удался — возможно, нужен ручной вход.", true
+	default:
+		return "", false
+	}
+}
+
+func (al *agentLoop) refreshModelResources(alias string) {
+	al.modelMu.Lock()
+	defer al.modelMu.Unlock()
+	if alias != al.currentAlias {
+		return
+	}
+	_, modelName, llamaURL := al.config.ModelHolder.GetCurrent()
 	if llamaURL == "" {
 		llamaURL = "http://127.0.0.1:8081"
 	}
 	if modelName == "" {
 		modelName = "local-model"
 	}
-	if alias == al.currentAlias {
-		return nil
-	}
-
-	al.currentAlias = alias
 
 	if al.config.ContextResolver != nil {
-		ctx, err := al.config.ContextResolver.Resolve()
+		resolvedCtx, err := al.config.ContextResolver.Resolve()
 		if err != nil {
 			if al.log != nil {
 				al.log.WarnLogf("Could not resolve model context for %s: %v (keeping maxTokens=%d)", alias, err, al.config.MaxTokens)
 			}
 		} else {
-			al.config.MaxTokens = ctx
+			al.config.MaxTokens = resolvedCtx
 		}
 	} else {
 		al.config.MaxTokens = resolveMaxTokens(al.config.ModelHolder, alias, al.config.MaxTokens)
@@ -229,7 +301,6 @@ func (al *agentLoop) syncCurrentModel() error {
 	}
 
 	al.syncVisionTool()
-	return nil
 }
 
 func (al *agentLoop) syncVisionTool() bool {
@@ -383,7 +454,7 @@ func (al *agentLoop) ProcessPromptWithSystemPrompt(ctx context.Context, prompt s
 }
 
 func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID int64) (string, error) {
-	if err := al.syncCurrentModel(); err != nil {
+	if err := al.syncCurrentModel(ctx, peerID); err != nil {
 		return "", err
 	}
 	sess := al.getOrCreateSession(peerID)
@@ -762,6 +833,7 @@ func (al *agentLoop) buildAgentConfig() agent.Config {
 		ToolOutputMaxBytes:             al.config.ToolOutputMaxBytes,
 		Debug:                          al.config.Debug,
 		SkipShellPermissionForPathless: al.config.SkipShellPermissionForPathless,
+		MaxToolCallDepth:               al.config.MaxToolCallDepth,
 	}
 
 	if al.registry != nil {
@@ -1065,6 +1137,8 @@ func (al *agentLoop) Start(ctx context.Context) {
 		al.log.InfoLog("AgentLoop started")
 	}
 
+	al.startEngineWatchdog(ctx)
+
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -1074,6 +1148,22 @@ func (al *agentLoop) Start(ctx context.Context) {
 	}()
 }
 
+func (al *agentLoop) startEngineWatchdog(ctx context.Context) {
+	if al.config.Engine == nil {
+		return
+	}
+	al.shutdownMu.Lock()
+	defer al.shutdownMu.Unlock()
+	if al.watchdogCancel != nil {
+		return
+	}
+	notify := func(status string) {
+		peerID := al.config.ThinkingPeerID
+		al.notifyEngineStatus(ctx, peerID, status)
+	}
+	al.watchdogCancel = al.config.Engine.StartWatchdog(ctx, notify)
+}
+
 func (al *agentLoop) Stop() {
 	al.mu.Lock()
 	al.isRunning = false
@@ -1081,8 +1171,19 @@ func (al *agentLoop) Stop() {
 
 	close(al.stopCh)
 
+	al.stopEngineWatchdog()
+
 	if al.log != nil {
 		al.log.InfoLog("AgentLoop stopped")
+	}
+}
+
+func (al *agentLoop) stopEngineWatchdog() {
+	al.shutdownMu.Lock()
+	defer al.shutdownMu.Unlock()
+	if al.watchdogCancel != nil {
+		al.watchdogCancel()
+		al.watchdogCancel = nil
 	}
 }
 
