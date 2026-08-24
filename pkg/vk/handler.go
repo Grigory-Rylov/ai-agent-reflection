@@ -77,6 +77,8 @@ type BotHandler struct {
 	queueMu       sync.Mutex
 	waitingCounts map[int64]int
 	generations   map[int64]uint64
+
+	targetQueue *agentloop.TargetQueue
 }
 
 const maxConcurrentHandlers = 10
@@ -122,6 +124,45 @@ func (h *BotHandler) agentNames() []string {
 		return h.orchestrator.ListAgentNames()
 	}
 	return nil
+}
+
+func (h *BotHandler) SetTargetQueue(q *agentloop.TargetQueue) {
+	h.targetQueue = q
+}
+
+func (h *BotHandler) handleTarget(input string, peerID int64) string {
+	fields := strings.Fields(input)
+	nameToken := ""
+	var promptWords []string
+	if len(fields) > 1 {
+		nameToken = strings.TrimPrefix(fields[1], "#")
+		promptWords = fields[2:]
+	}
+	prompt := strings.TrimSpace(strings.Join(promptWords, " "))
+	if nameToken == "" || prompt == "" {
+		return "Использование: /target #<имя_агента> <задача>\nДоступные: " + strings.Join(h.agentNames(), ", ")
+	}
+	if h.targetQueue == nil {
+		return "❌ Целевая маршрутизация недоступна (очередь не инициализирована)"
+	}
+	resolved, ok := h.findAgentByName(nameToken)
+	if !ok {
+		return "❌ Неизвестный агент \"" + nameToken + "\". Доступные: " + strings.Join(h.agentNames(), ", ")
+	}
+	pos := h.targetQueue.Submit(resolved, prompt, peerID)
+	if pos == 0 {
+		return "▶️ Передаю #" + resolved + ": " + stringutil.Truncate(prompt, 120, "...")
+	}
+	return "⏳ Добавлено в очередь (#" + resolved + ", позиция " + fmt.Sprintf("%d", pos) + "): будет обработано последовательно"
+}
+
+func (h *BotHandler) findAgentByName(name string) (string, bool) {
+	for _, candidate := range h.agentNames() {
+		if strings.EqualFold(candidate, name) {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 func ParseAgentHashMention(text string, knownNames []string) (agentName string, task string) {
@@ -435,6 +476,9 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 		}
 		h.writeSignalFile(".agent-branch", branch)
 		return fmt.Sprintf("Переключение на ветку %s...", branch)
+
+	case "/target":
+		return h.handleTarget(input, peerID)
 
 	default:
 		return ""
