@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -38,6 +40,7 @@ type Config struct {
 	ModelLimitInput     int                             `json:"model_limit_input"`
 	Temperature         float64                         `json:"temperature"`
 	StreamIdleTimeoutSec int                            `json:"stream_idle_timeout_sec"`
+	MaxToolCallDepth    int                             `json:"max_tool_call_depth"`
 	MCPConfigPath       string                          `json:"mcp_config_path"`
 	AllowedDirs         []string                        `json:"allowed_dirs"`
 	DBPath              string                          `json:"db_path"`
@@ -62,6 +65,8 @@ func main() {
 	workDir := flag.String("w", "", "Force working directory (default: current dir)")
 	initialPrompt := flag.String("p", "", "Send initial prompt after startup")
 	flag.Parse()
+
+	startPprofServer("127.0.0.1:6060")
 
 	agentDir, _ := os.Getwd()
 
@@ -228,6 +233,7 @@ func main() {
 	loopConfig.MaxTokens = maxTokens
 	loopConfig.ModelLimitInput = config.ModelLimitInput
 	loopConfig.Temperature = config.Temperature
+	loopConfig.MaxToolCallDepth = config.MaxToolCallDepth
 	if config.StreamIdleTimeoutSec != 0 {
 		loopConfig.StreamIdleTimeout = time.Duration(config.StreamIdleTimeoutSec) * time.Second
 	}
@@ -290,6 +296,7 @@ func main() {
 		ModelLimitInput:     config.ModelLimitInput,
 		Temperature:         config.Temperature,
 		EnableTools:         true,
+		MaxToolCallDepth:    config.MaxToolCallDepth,
 		ToolOutputMaxLines:  config.ToolOutput.MaxLines,
 		ToolOutputMaxBytes:  config.ToolOutput.MaxBytes,
 		Debug:               *debug,
@@ -324,6 +331,7 @@ func main() {
 		ModelLimitInput:     config.ModelLimitInput,
 		Temperature:         config.Temperature,
 		ToolRegistry:        toolRegistry,
+		MaxToolCallDepth:    config.MaxToolCallDepth,
 		ToolOutputMaxLines:  config.ToolOutput.MaxLines,
 		ToolOutputMaxBytes:  config.ToolOutput.MaxBytes,
 		Debug:               *debug,
@@ -625,6 +633,14 @@ func registerTools(r *tools.Registry) {
 	r.Register(&tools.QuestionTool{})
 	r.Register(&tools.SendFileTool{})
 	r.Register(tools.GlobalTodo)
+}
+
+func startPprofServer(addr string) {
+	go func() {
+		if err := http.ListenAndServe(addr, nil); err != nil {
+			fmt.Printf("[WARN] pprof server on %s failed: %v\n", addr, err)
+		}
+	}()
 }
 
 func loadConfig(path string) (Config, error) {

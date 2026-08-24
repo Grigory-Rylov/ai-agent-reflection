@@ -10,11 +10,14 @@ import (
 )
 
 type ModelEntry struct {
-	Name     string `json:"name"`
-	Host     string `json:"host"`
-	Context  int    `json:"context,omitempty"`   
-	Vision   bool   `json:"vision,omitempty"`    
-	SlotSave bool   `json:"slot-save,omitempty"` 
+	Name        string `json:"name"`
+	Host        string `json:"host"`
+	Context     int    `json:"context,omitempty"`
+	Vision      bool   `json:"vision,omitempty"`
+	SlotSave    bool   `json:"slot-save,omitempty"`
+	Type        string `json:"type,omitempty"`
+	StartScript string `json:"start-script,omitempty"`
+	StopScript  string `json:"stop-script,omitempty"`
 }
 
 type ModelsConfig struct {
@@ -189,6 +192,42 @@ func (h *Holder) GetModelHost(alias string) (ModelEntry, bool) {
 	defer h.mu.RUnlock()
 	entry, ok := h.config.Models[alias]
 	return entry, ok
+}
+
+func (h *Holder) GetCurrentEngineType() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.config.Models[h.config.Default].Type
+}
+
+func (h *Holder) GetModelEngineType(alias string) string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.config.Models[alias].Type
+}
+
+func (h *Holder) GetCurrentStartScript() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.config.Models[h.config.Default].StartScript
+}
+
+func (h *Holder) GetModelStartScript(alias string) string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.config.Models[alias].StartScript
+}
+
+func (h *Holder) GetCurrentStopScript() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.config.Models[h.config.Default].StopScript
+}
+
+func (h *Holder) GetModelStopScript(alias string) string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.config.Models[alias].StopScript
 }
 
 func (h *Holder) listAliasesLocked() string {
