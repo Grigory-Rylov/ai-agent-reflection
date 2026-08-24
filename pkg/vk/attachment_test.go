@@ -1,15 +1,13 @@
 package vk
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -701,7 +699,11 @@ func TestEnrichVideosViaRetry_AllFailReturnsOriginal(t *testing.T) {
 	if elapsed > 3*time.Second {
 		t.Errorf("budget exceeded: %v", elapsed)
 	}
-	if got[0] != poor {
+	if !deepEqualAttachments(got[0], poor) {
 		t.Errorf("attachment mutated despite all failures: %+v", got[0])
 	}
+}
+
+func deepEqualAttachments(a, b VKAttachment) bool {
+	return a.Type == b.Type && reflect.DeepEqual(a.Raw, b.Raw)
 }
