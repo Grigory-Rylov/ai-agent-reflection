@@ -18,22 +18,18 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-
 type mockAgentLoop struct {
-	lastMessage       string
-	lastPeerID        int64
-	lastSystemPrompt  string
-	sessions          map[int64]*session.Session
-	mu                sync.Mutex
-	returnErr         error
-	
-	
-	
+	lastMessage      string
+	lastPeerID       int64
+	lastSystemPrompt string
+	sessions         map[int64]*session.Session
+	mu               sync.Mutex
+	returnErr        error
+
 	blockCh chan struct{}
-	
+
 	cancelled bool
-	
-	
+
 	slowDelay time.Duration
 }
 
@@ -47,7 +43,6 @@ func (m *mockAgentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID
 	m.lastMessage = prompt
 	m.lastPeerID = peerID
 
-	
 	sess := m.getOrCreateSession(peerID)
 	sess.AddUserMessage(prompt)
 	sess.AddAssistantMessage("processed: " + prompt)
@@ -59,14 +54,14 @@ func (m *mockAgentLoop) ProcessMessage(ctx context.Context, prompt string, peerI
 	if m.returnErr != nil {
 		return "", m.returnErr
 	}
-	
+
 	if m.blockCh != nil {
 		select {
 		case <-ctx.Done():
 			m.cancelled = true
 			return "", ctx.Err()
 		case <-m.blockCh:
-			
+
 		}
 	}
 	if m.slowDelay > 0 {
@@ -77,7 +72,7 @@ func (m *mockAgentLoop) ProcessMessage(ctx context.Context, prompt string, peerI
 			m.cancelled = true
 			return "", ctx.Err()
 		case <-timer.C:
-			
+
 		}
 	}
 	return m.ProcessPrompt(ctx, prompt, peerID)
@@ -88,8 +83,8 @@ func (m *mockAgentLoop) ProcessPromptWithSystemPrompt(ctx context.Context, promp
 	return m.ProcessPrompt(ctx, prompt, peerID)
 }
 
-func (m *mockAgentLoop) Start(ctx context.Context)      {}
-func (m *mockAgentLoop) Stop()                              {}
+func (m *mockAgentLoop) Start(ctx context.Context) {}
+func (m *mockAgentLoop) Stop()                     {}
 func (m *mockAgentLoop) ResetSession(peerID int64) {
 	m.mu.Lock()
 	delete(m.sessions, peerID)
@@ -129,7 +124,6 @@ func (m *mockAgentLoop) GetContextStats(peerID int64) (int, int, error) {
 		charCount += len(msg.Content)
 	}
 
-	
 	tokenCount := charCount / 4
 
 	return charCount, tokenCount, nil
@@ -159,7 +153,6 @@ func (m *mockAgentLoop) getOrCreateSession(peerID int64) *session.Session {
 	m.sessions[peerID] = sess
 	return sess
 }
-
 
 type mockOrchestrator struct {
 	mu            sync.Mutex
@@ -249,7 +242,6 @@ func (m *mockOrchestrator) ResumeActiveChainsForPeer(ctx context.Context, peerID
 	return nil
 }
 
-
 func TestCommandsDoNotReachModel(t *testing.T) {
 	log, _ := logger.New(logger.DefaultConfig())
 	mock := newMockAgentLoop()
@@ -318,8 +310,8 @@ func TestRestarterCommandsDoNotReachLLM(t *testing.T) {
 	handler := NewBotHandler(nil, mock, log)
 
 	tests := []struct {
-		cmd            string
-		expectedResp   bool 
+		cmd          string
+		expectedResp bool
 	}{
 		{"/restart", true},
 		{"/update", true},
@@ -365,7 +357,6 @@ func TestCommandResponseFormats(t *testing.T) {
 		})
 	}
 }
-
 
 func TestPinCommand(t *testing.T) {
 	log, _ := logger.New(logger.DefaultConfig())
@@ -435,18 +426,13 @@ func TestStatusShowsCorrectMessageCount(t *testing.T) {
 
 	peerID := int64(12345)
 
-	
 	_ = handler.ProcessMessage("Привет, как дела?", peerID)
 	_ = handler.ProcessMessage("Расскажи анекдот", peerID)
 
-	
 	status := handler.ProcessMessage("/status", peerID)
 
 	t.Logf("Status output:\n%s", status)
 
-	
-	
-	
 	if strings.Contains(status, "Сообщений: 0") {
 		t.Error("BUG: Status shows 0 messages but should show > 0 after processing messages")
 	}
@@ -459,15 +445,12 @@ func TestStatusShowsCorrectTokenCount(t *testing.T) {
 
 	peerID := int64(12345)
 
-	
 	_ = handler.ProcessMessage("Привет, это тестовое сообщение для проверки подсчёта токенов", peerID)
 
-	
 	status := handler.ProcessMessage("/status", peerID)
 
 	t.Logf("Status output:\n%s", status)
 
-	
 	if strings.Contains(status, "Токенов в контексте: 0") {
 		t.Error("BUG: Status shows 0 tokens but should show > 0 after processing messages")
 	}
@@ -497,20 +480,16 @@ func TestStatusShowsCorrectCharCount(t *testing.T) {
 
 	peerID := int64(12345)
 
-	
 	_ = handler.ProcessMessage("Тестовое сообщение", peerID)
 
-	
 	status := handler.ProcessMessage("/status", peerID)
 
 	t.Logf("Status output:\n%s", status)
 
-	
 	if strings.Contains(status, "Символов в контексте: 0") {
 		t.Error("BUG: Status shows 0 chars but should show > 0 after processing messages")
 	}
 }
-
 
 func TestPrimaryAgentSharesMainContext(t *testing.T) {
 	log, _ := logger.New(logger.DefaultConfig())
@@ -519,8 +498,13 @@ func TestPrimaryAgentSharesMainContext(t *testing.T) {
 	mockOrch.primaryAgents = map[string]bool{"lead": true}
 	mockOrch.systemPrompts = map[string]string{"lead": "You are a Lead Agent."}
 	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, mockOrch, nil)
+	handler.SetTargetQueue(agentloop.NewTargetQueue(
+		func(ctx context.Context, name, prompt string, peerID int64) (string, error) {
+			return "queued-resp", nil
+		},
+		func(name string, peerID int64, response string, err error) {},
+	))
 
-	
 	response := handler.ProcessMessage("#lead создай проект", 12345)
 	if !strings.Contains(response, "processed: ") {
 		t.Fatalf("expected main-agent response, got: %s", response)
@@ -529,7 +513,6 @@ func TestPrimaryAgentSharesMainContext(t *testing.T) {
 		t.Errorf("expected lead system prompt to be passed, got: %q", mock.lastSystemPrompt)
 	}
 
-	
 	sess := mock.GetSession(12345)
 	if sess == nil {
 		t.Fatal("expected shared session")
@@ -544,7 +527,6 @@ func TestPrimaryAgentSharesMainContext(t *testing.T) {
 		t.Error("expected #lead task in shared session history")
 	}
 
-	
 	mock.lastMessage = ""
 	handler.ProcessMessage("расскажи про проект", 12345)
 	if !strings.Contains(mock.lastMessage, "расскажи про проект") {
@@ -552,7 +534,7 @@ func TestPrimaryAgentSharesMainContext(t *testing.T) {
 	}
 }
 
-func TestNonPrimaryAgentUsesRunAgent(t *testing.T) {
+func TestNonPrimaryAgentRoutedThroughQueue(t *testing.T) {
 	log, _ := logger.New(logger.DefaultConfig())
 	mock := newMockAgentLoop()
 	mockOrch := newMockOrchestrator("ephemeral result")
@@ -560,11 +542,47 @@ func TestNonPrimaryAgentUsesRunAgent(t *testing.T) {
 	mockOrch.primaryAgents = map[string]bool{"lead": true}
 	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, mockOrch, nil)
 
-	
-	_ = handler.ProcessMessage("#worker сделай задачу", 12345)
-	if mockOrch.lastTask != "сделай задачу" {
-		t.Errorf("expected RunAgent to be called with task, got lastTask=%q", mockOrch.lastTask)
+	ran := make(chan string, 1)
+	deliveredResp := make(chan string, 1)
+	handler.SetTargetQueue(agentloop.NewTargetQueue(
+		func(ctx context.Context, name, prompt string, peerID int64) (string, error) {
+			select {
+			case ran <- name + "|" + prompt:
+			default:
+			}
+			return "queued-result", nil
+		},
+		func(name string, peerID int64, resp string, err error) {
+			select {
+			case deliveredResp <- resp:
+			default:
+			}
+		},
+	))
+
+	reply := handler.ProcessMessage("#worker сделай задачу", 12345)
+	if !strings.HasPrefix(reply, "▶️") {
+		t.Fatalf("expected queued ack, got %q", reply)
 	}
+
+	select {
+	case routed := <-ran:
+		if routed != "worker|сделай задачу" {
+			t.Errorf("unexpected route %q", routed)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("queue runner never invoked")
+	}
+
+	select {
+	case resp := <-deliveredResp:
+		if resp != "queued-result" {
+			t.Errorf("delivery resp = %q", resp)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("queue delivery never fired")
+	}
+
 	if mock.lastMessage != "" {
 		t.Errorf("expected non-primary agent NOT to reach main agent, got lastMessage=%q", mock.lastMessage)
 	}
@@ -572,10 +590,10 @@ func TestNonPrimaryAgentUsesRunAgent(t *testing.T) {
 
 func TestParseAgentHashMention(t *testing.T) {
 	tests := []struct {
-		name       string
-		input      string
-		wantName   string
-		wantTask   string
+		name     string
+		input    string
+		wantName string
+		wantTask string
 	}{
 		{
 			name:     "empty string",
@@ -634,7 +652,6 @@ func TestParseAgentHashMention(t *testing.T) {
 	}
 }
 
-
 func TestClearCancelsPendingQuestionAndGrants(t *testing.T) {
 	log, _ := logger.New(logger.DefaultConfig())
 	mock := newMockAgentLoop()
@@ -644,7 +661,6 @@ func TestClearCancelsPendingQuestionAndGrants(t *testing.T) {
 
 	peerID := int64(987)
 
-	
 	ch := tools.RegisterPendingQuestion(peerID)
 	tools.ApplyPathGrant(peerID, "/some/path/")
 
@@ -655,9 +671,6 @@ func TestClearCancelsPendingQuestionAndGrants(t *testing.T) {
 		t.Fatal("expected path grant to be applied")
 	}
 
-	
-	
-	
 	waitDone := make(chan struct{})
 	go func() {
 		<-ch
@@ -690,8 +703,6 @@ func TestProcessMessageResolvesPendingQuestionWithoutMutex(t *testing.T) {
 
 	peerID := int64(555)
 
-	
-	
 	mu := handler.getPeerMutex(peerID)
 	mu.Lock()
 	defer mu.Unlock()
@@ -699,9 +710,6 @@ func TestProcessMessageResolvesPendingQuestionWithoutMutex(t *testing.T) {
 	ch := tools.RegisterPendingQuestion(peerID)
 	defer tools.UnregisterPendingQuestion(peerID)
 
-	
-	
-	
 	resultCh := make(chan string, 1)
 	go func() {
 		resultCh <- handler.ProcessMessage("✅ Allow", peerID)
@@ -735,7 +743,6 @@ func TestClearCancelsRunningAgent(t *testing.T) {
 
 	peerID := int64(456)
 
-	
 	sess := mock.GetSession(peerID)
 	if sess == nil {
 		t.Fatal("expected session after /clear")
@@ -747,7 +754,6 @@ func TestClearCancelsRunningAgent(t *testing.T) {
 		t.Error("expected ClearActiveSessions called for peer 456")
 	}
 
-	
 	sessAfter := mock.GetSession(peerID)
 	if sessAfter == nil {
 		t.Fatal("session should exist after /clear (recreated)")
@@ -791,8 +797,8 @@ func TestHandleNewSession(t *testing.T) {
 	handler := NewBotHandler(nil, mock, log)
 
 	tests := []struct {
-		name        string
-		message     string
+		name            string
+		message         string
 		checkWorkingDir func(t *testing.T, dir string)
 	}{
 		{
@@ -896,4 +902,3 @@ func TestOtherAgentErrorStillShown(t *testing.T) {
 		t.Errorf("Expected error message, got %q", response)
 	}
 }
-

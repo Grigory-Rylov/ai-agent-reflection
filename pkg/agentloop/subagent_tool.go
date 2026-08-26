@@ -376,7 +376,7 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 		}
 	}
 
-	a := agent.NewAgent(cfg)
+	var a agent.Agent = agent.NewAgent(cfg)
 	a.GetSession(t.PeerID).UpdateSystemPrompt(systemPrompt)
 
 	
@@ -402,7 +402,29 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 		t.Store.SaveAgentChain(t.PeerID, chain)
 	}
 
+	if t.Store != nil && t.AgentSessionID != "" {
+		if cs, ok := a.(agent.CheckpointSetter); ok {
+			cs.SetCheckpoint(func(lastToolCall string) { t.persistChildCheckpoint(a, lastToolCall) })
+		}
+	}
+
 	return a, nil
+}
+
+
+func (t *SubAgentTool) persistChildCheckpoint(a agent.Agent, lastToolCall string) {
+	data, err := json.Marshal(a.GetSession(t.PeerID).GetHistory())
+	if err != nil {
+		if t.Log != nil {
+			t.Log.DebugLogf("[SUBAGENT] checkpoint marshal for %s failed: %v", t.AgentSessionID, err)
+		}
+		return
+	}
+	if err := t.Store.SaveAgentCheckpoint(t.AgentSessionID, lastToolCall, string(data)); err != nil {
+		if t.Log != nil {
+			t.Log.DebugLogf("[SUBAGENT] checkpoint save for %s failed: %v", t.AgentSessionID, err)
+		}
+	}
 }
 
 func (t *SubAgentTool) registerMainTools(a agent.Agent) {

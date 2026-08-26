@@ -118,6 +118,14 @@ func (s *sqliteDB) UpdateAgentSession(id, lastPrompt, messages string) error {
 	return err
 }
 
+func (s *sqliteDB) SaveAgentCheckpoint(id, lastToolCall, messages string) error {
+	if _, err := s.db.Exec(`UPDATE agent_sessions SET last_tool_call = ?, messages = ?, updated_at = ? WHERE id = ?`,
+		lastToolCall, messages, time.Now().UTC().Format(time.RFC3339), id); err != nil {
+		return fmt.Errorf("save agent checkpoint: %w", err)
+	}
+	return nil
+}
+
 func (s *sqliteDB) GetAgentChain(peerID int64) (*AgentChainData, error) {
 	row := s.db.QueryRow(`SELECT peer_id, chain, updated_at FROM active_agent_chain WHERE peer_id = ?`, peerID)
 

@@ -440,6 +440,7 @@ func (m *mockStoreWorkingDir) CompleteAgentSession(id string) error        { ret
 func (m *mockStoreWorkingDir) CancelAgentSession(id string) error          { return nil }
 func (m *mockStoreWorkingDir) DeleteAgentSession(id string) error          { return nil }
 func (m *mockStoreWorkingDir) UpdateAgentSession(id, lp, msg string) error { return nil }
+func (m *mockStoreWorkingDir) SaveAgentCheckpoint(id, ltc, msg string) error { return nil }
 func (m *mockStoreWorkingDir) GetAgentChain(peerID int64) (*store.AgentChainData, error) {
 	return nil, nil
 }

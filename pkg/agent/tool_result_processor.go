@@ -54,6 +54,8 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		session.AddToolMessage(tr.ToolCallID, tr.ToolName, tr.Content)
 	}
 
+	a.fireCheckpoint(toolCallNames(toolCalls))
+
 	var messages []Message
 	if a.promoteSteers(ctx, session) {
 		messages = a.buildToolResultMessagesFromSession(session)
@@ -99,6 +101,7 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 				for _, tr := range toolResults {
 					session.AddToolMessage(tr.ToolCallID, tr.ToolName, compress.TruncateToolOutput(tr.Content))
 				}
+				a.fireCheckpoint(toolCallNames(toolCalls))
 			}
 
 			if shouldAddAutoContinue(session) {

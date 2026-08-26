@@ -349,6 +349,21 @@ func main() {
 	botHandler := vk.NewBotHandlerWithPeerID(vkClient, agentLoop, log,
 		config.PeerID, config.ThinkingPeerID, orchestrator, modelHolder)
 
+	if orchestrator != nil {
+		botHandler.SetTargetQueue(agentloop.NewTargetQueue(
+			func(ctx context.Context, name, prompt string, peerID int64) (string, error) {
+				return orchestrator.RunAgent(ctx, name, prompt, peerID)
+			},
+			func(name string, peerID int64, resp string, err error) {
+				if err != nil {
+					vkClient.SendMessage(peerID, fmt.Sprintf("❌ #%s: %s", name, err.Error()))
+					return
+				}
+				vkClient.SendMessage(peerID, fmt.Sprintf("✅ #%s: %s", name, resp))
+			},
+		))
+	}
+
 	if config.PeerID > 0 && !*reset {
 		botHandler.ScheduleResume(config.PeerID)
 	}
