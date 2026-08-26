@@ -97,3 +97,71 @@ func TestSourceLabelMatching(t *testing.T) {
 		t.Fatal("fixture lost label")
 	}
 }
+
+const sampleWithActiveGeneration = sampleBody + `
+# HELP vllm:num_requests_running Number of requests currently running.
+# TYPE vllm:num_requests_running gauge
+vllm:num_requests_running{engine="0",model_name="qwen3.8-27b"} 3.0
+# HELP vllm:gpu_cache_usage_perc Fraction of GPU cache occupied by KV blocks.
+# TYPE vllm:gpu_cache_usage_perc gauge
+vllm:gpu_cache_usage_perc{engine="0",model_name="qwen3.8-27b"} 0.42
+`
+
+func TestParseMetricsActiveGeneration(t *testing.T) {
+	stats := ParseMetrics(sampleWithActiveGeneration)
+
+	if stats.NumRequestsRunning != 3 {
+		t.Errorf("NumRequestsRunning = %d, want 3", stats.NumRequestsRunning)
+	}
+	if stats.GPUCacheUsagePercent < 41.9 || stats.GPUCacheUsagePercent > 42.1 {
+		t.Errorf("GPUCacheUsagePercent = %v, want ~42", stats.GPUCacheUsagePercent)
+	}
+}
+
+func TestParseMetricsIdleEngine(t *testing.T) {
+	body := `
+vllm:num_requests_running{engine="0",model_name="m"} 0.0
+vllm:gpu_cache_usage_perc{engine="0",model_name="m"} 0.0
+`
+	stats := ParseMetrics(body)
+	if stats.NumRequestsRunning != 0 || stats.GPUCacheUsagePercent != 0 {
+		t.Errorf("expected idle stats, got %+v", stats)
+	}
+}
+
+func TestParseMetricsSumsRunningAndMaxesCacheAcrossEngines(t *testing.T) {
+	body := `
+vllm:num_requests_running{engine="0",model_name="m"} 1.0
+vllm:num_requests_running{engine="1",model_name="m"} 2.0
+vllm:gpu_cache_usage_perc{engine="0",model_name="m"} 0.10
+vllm:gpu_cache_usage_perc{engine="1",model_name="m"} 0.90
+`
+	stats := ParseMetrics(body)
+	if stats.NumRequestsRunning != 3 {
+		t.Errorf("NumRequestsRunning = %d, want 3", stats.NumRequestsRunning)
+	}
+	if stats.GPUCacheUsagePercent < 89.9 || stats.GPUCacheUsagePercent > 90.1 {
+		t.Errorf("GPUCacheUsagePercent = %v, want ~90", stats.GPUCacheUsagePercent)
+	}
+}
+
+func TestFormatShowsActiveGeneration(t *testing.T) {
+	out := Format(ParseMetrics(sampleWithActiveGeneration))
+	if !strings.Contains(out, "активно") {
+		t.Errorf("format should mark generation as active, got:\n%s", out)
+	}
+	if !strings.Contains(out, "3") {
+		t.Errorf("format should show running request count, got:\n%s", out)
+	}
+	if !strings.Contains(out, "42") {
+		t.Errorf("format should show GPU cache percent, got:\n%s", out)
+	}
+}
+
+func TestFormatShowsIdleGeneration(t *testing.T) {
+	idle := Stats{RequestsTotal: 5, GenerationTokens: 10}
+	out := Format(idle)
+	if !strings.Contains(out, "нет активных") {
+		t.Errorf("format should mark generation as idle, got:\n%s", out)
+	}
+}

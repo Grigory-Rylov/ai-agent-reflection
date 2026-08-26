@@ -11,12 +11,14 @@ import (
 )
 
 type Stats struct {
-	RequestsTotal     int
-	PromptTokensTotal int
-	ComputedTokens    int
-	CacheHitTokens    int
-	ExternalKVTokens  int
-	GenerationTokens  int
+	RequestsTotal        int
+	PromptTokensTotal    int
+	ComputedTokens       int
+	CacheHitTokens       int
+	ExternalKVTokens     int
+	GenerationTokens     int
+	NumRequestsRunning   int
+	GPUCacheUsagePercent float64
 }
 
 func metricValue(line, namePrefix string) (float64, bool) {
@@ -83,17 +85,46 @@ func sumCounterBySource(lines []string, namePrefix, sourceLabel string) int {
 	return total
 }
 
+func sumGauge(lines []string, namePrefix string) float64 {
+	total := 0.0
+	for _, line := range lines {
+		if value, ok := metricValue(line, namePrefix); ok {
+			total += value
+		}
+	}
+	return total
+}
+
+func maxGauge(lines []string, namePrefix string) float64 {
+	peak := 0.0
+	found := false
+	for _, line := range lines {
+		value, ok := metricValue(line, namePrefix)
+		if !ok {
+			continue
+		}
+		if !found || value > peak {
+			peak = value
+			found = true
+		}
+	}
+	return peak
+}
+
 func ParseMetrics(body string) Stats {
 	lines := strings.Split(body, "\n")
 
 	const sourcePrefix = "vllm:prompt_tokens_by_source_total"
+	cacheFraction := maxGauge(lines, "vllm:gpu_cache_usage_perc")
 	return Stats{
-		RequestsTotal:     sumCounter(lines, "vllm:request_success_total"),
-		PromptTokensTotal: sumCounter(lines, "vllm:prompt_tokens_total"),
-		ComputedTokens:    sumCounterBySource(lines, sourcePrefix, "local_compute"),
-		CacheHitTokens:    sumCounterBySource(lines, sourcePrefix, "local_cache_hit"),
-		ExternalKVTokens:  sumCounterBySource(lines, sourcePrefix, "external_kv_transfer"),
-		GenerationTokens:  sumCounter(lines, "vllm:generation_tokens_total"),
+		RequestsTotal:        sumCounter(lines, "vllm:request_success_total"),
+		PromptTokensTotal:    sumCounter(lines, "vllm:prompt_tokens_total"),
+		ComputedTokens:       sumCounterBySource(lines, sourcePrefix, "local_compute"),
+		CacheHitTokens:       sumCounterBySource(lines, sourcePrefix, "local_cache_hit"),
+		ExternalKVTokens:     sumCounterBySource(lines, sourcePrefix, "external_kv_transfer"),
+		GenerationTokens:     sumCounter(lines, "vllm:generation_tokens_total"),
+		NumRequestsRunning:   int(sumGauge(lines, "vllm:num_requests_running")),
+		GPUCacheUsagePercent: cacheFraction * 100,
 	}
 }
 
@@ -134,12 +165,25 @@ func formatCompact(count int) string {
 	}
 }
 
+func formatPercent(fraction float64) string {
+	return strconv.FormatInt(int64(fraction*100+0.5), 10)
+}
+
 func Format(stats Stats) string {
 	status := "Статистика vLLM:" +
 		"\nЗапросов всего: " + strconv.Itoa(stats.RequestsTotal) +
 		"\nInput токенов: " + formatCompact(stats.PromptTokensTotal) +
 		"\n├─ вычислено: " + formatCompact(stats.ComputedTokens) +
 		"\n└─ из KV-кэша: " + formatCompact(stats.CacheHitTokens) +
-		"\nOutput токенов: " + formatCompact(stats.GenerationTokens)
+		"\nOutput токенов: " + formatCompact(stats.GenerationTokens) +
+		formatGenerationState(stats)
 	return status
+}
+
+func formatGenerationState(stats Stats) string {
+	if stats.NumRequestsRunning <= 0 {
+		return "\nГенерация: нет активных запросов"
+	}
+	return "\nГенерация: активно, " + strconv.Itoa(stats.NumRequestsRunning) +
+		" запрос(а), GPU-кэш " + formatPercent(stats.GPUCacheUsagePercent/100) + "%"
 }
