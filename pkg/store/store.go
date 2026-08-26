@@ -103,6 +103,7 @@ type Store interface {
 	CancelAgentSession(id string) error
 	DeleteAgentSession(id string) error
 	UpdateAgentSession(id, lastPrompt, messages string) error
+	SaveAgentCheckpoint(id, lastToolCall, messages string) error
 	GetAgentChain(peerID int64) (*AgentChainData, error)
 	SaveAgentChain(peerID int64, chain []string) error
 	ClearAgentChain(peerID int64) error

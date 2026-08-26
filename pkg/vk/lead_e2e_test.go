@@ -1,6 +1,7 @@
 package vk
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,11 +20,9 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 )
 
-
 func TestLeadHashEndToEnd(t *testing.T) {
 	const leadContent = "You are a Lead Agent. Delegate tasks to worker and qa via the task tool."
 
-	
 	var mu sync.Mutex
 	var capturedSystem string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +77,6 @@ func TestLeadHashEndToEnd(t *testing.T) {
 		t.Fatalf("NewAgentLoop: %v", err)
 	}
 
-	
 	am := agentpolicy.NewAgentManager()
 	am.LoadFromConfig(map[string]agentpolicy.AgentCfg{
 		"lead": {Mode: "primary", Prompt: leadContent},
@@ -94,6 +92,12 @@ func TestLeadHashEndToEnd(t *testing.T) {
 
 	log, _ := logger.New(logger.DefaultConfig())
 	handler := NewBotHandlerWithPeerID(nil, loop, log, 0, 0, orch, holder)
+	handler.SetTargetQueue(agentloop.NewTargetQueue(
+		func(ctx context.Context, name, prompt string, peerID int64) (string, error) {
+			return "queued-resp", nil
+		},
+		func(name string, peerID int64, response string, err error) {},
+	))
 
 	_ = handler.ProcessMessage("#lead build a project", 12345)
 

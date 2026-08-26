@@ -35,6 +35,12 @@ type QuestionTool = tools.QuestionTool
 
 type ThinkingCallback func(peerID int64, content string) error
 
+type CheckpointFn func(lastToolCall string)
+
+type CheckpointSetter interface {
+	SetCheckpoint(fn CheckpointFn)
+}
+
 type agentImpl struct {
 	config            Config
 	sessions          map[int64]*session.Session
@@ -49,6 +55,7 @@ type agentImpl struct {
 	debugLog          debug.Logger
 	permissionChecker PermissionChecker
 	responseLoops     map[int64]*responseLoopState
+	checkpointFn      CheckpointFn
 }
 
 type PermissionChecker interface {
@@ -385,6 +392,22 @@ func (a *agentImpl) SetPermissionChecker(checker PermissionChecker) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.permissionChecker = checker
+}
+
+func (a *agentImpl) SetCheckpoint(fn CheckpointFn) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.checkpointFn = fn
+}
+
+func (a *agentImpl) fireCheckpoint(roundLabel string) {
+	a.mu.RLock()
+	fn := a.checkpointFn
+	a.mu.RUnlock()
+	if fn == nil {
+		return
+	}
+	fn(roundLabel)
 }
 
 func (a *agentImpl) getSession(peerID int64) *session.Session {

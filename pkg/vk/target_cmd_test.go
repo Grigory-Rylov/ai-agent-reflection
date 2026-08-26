@@ -13,16 +13,16 @@ import (
 
 func newTargetTestHandler(names []string) *BotHandler {
 	log, _ := logger.New(logger.DefaultConfig())
-	mock := &mockAgentLoop{}
+	mock := newMockAgentLoop()
 	orch := &mockOrchestrator{agentNames: names}
 	return NewBotHandlerWithPeerID(nil, mock, log, 0, 0, orch, nil)
 }
 
-func TestTargetCommandAcceptsValidSubmission(t *testing.T) {
+func TestHashMentionRoutesKnownAgentToQueue(t *testing.T) {
 	handler := newTargetTestHandler([]string{"worker"})
 	handler.SetTargetQueue(agentloop.NewTargetQueue(targetTestRunner, targetTestDeliver))
 
-	reply := handler.handleCommand("/target #worker do x", 42)
+	reply := handler.ProcessMessage("#worker do x", 42)
 
 	if !strings.HasPrefix(reply, "▶️") {
 		t.Fatalf("expected immediate ack, got %q", reply)
@@ -32,86 +32,62 @@ func TestTargetCommandAcceptsValidSubmission(t *testing.T) {
 	}
 }
 
-func TestTargetCommandAcceptsNameWithoutHash(t *testing.T) {
+func TestHashMentionMatchesCaseInsensitively(t *testing.T) {
 	handler := newTargetTestHandler([]string{"worker"})
 	handler.SetTargetQueue(agentloop.NewTargetQueue(targetTestRunner, targetTestDeliver))
 
-	reply := handler.handleCommand("/target worker do x", 42)
+	reply := handler.ProcessMessage("#WORKER do x", 42)
 
-	if !strings.HasPrefix(reply, "▶️") {
-		t.Fatalf("expected immediate ack, got %q", reply)
-	}
 	if !strings.Contains(reply, "#worker") {
 		t.Errorf("expected canonical name in ack, got %q", reply)
 	}
 }
 
-func TestTargetCommandRejectsUnknownName(t *testing.T) {
-	handler := newTargetTestHandler([]string{"worker", "qa"})
-	handler.SetTargetQueue(agentloop.NewTargetQueue(targetTestRunner, targetTestDeliver))
-
-	reply := handler.handleCommand("/target #nosuch do x", 42)
-
-	if !strings.Contains(reply, "Неизвестный агент") {
-		t.Fatalf("expected unknown-agent rejection, got %q", reply)
-	}
-	if !strings.Contains(reply, "worker") || !strings.Contains(reply, "qa") {
-		t.Errorf("expected available-names list, got %q", reply)
-	}
-}
-
-func TestTargetCommandReportsUsageOnMissingArgs(t *testing.T) {
+func TestHashMentionEmptyTaskAsksForTask(t *testing.T) {
 	handler := newTargetTestHandler([]string{"worker"})
 	handler.SetTargetQueue(agentloop.NewTargetQueue(targetTestRunner, targetTestDeliver))
 
-	tests := []struct {
-		name  string
-		input string
-	}{
-		{"bare command", "/target"},
-		{"name only", "/target #worker"},
-		{"hash only", "/target #"},
+	reply := handler.ProcessMessage("#worker", 42)
+
+	if !strings.Contains(reply, "Укажите задачу") {
+		t.Fatalf("expected usage hint for empty task, got %q", reply)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			reply := handler.handleCommand(tc.input, 42)
-			if !strings.Contains(reply, "Использование:") {
-				t.Errorf("expected usage message, got %q", reply)
-			}
-			if !strings.Contains(reply, "worker") {
-				t.Errorf("usage should list available agents, got %q", reply)
-			}
-		})
+	if !strings.Contains(reply, "#worker") {
+		t.Errorf("expected agent name in usage hint, got %q", reply)
 	}
 }
 
-func TestTargetCommandUnavailableWithoutQueue(t *testing.T) {
+func TestHashMentionFallbackReachesMainAgentWithoutQueue(t *testing.T) {
 	handler := newTargetTestHandler([]string{"worker"})
+	mock := handler.aiAgent.(*mockAgentLoop)
 
-	reply := handler.handleCommand("/target #worker do x", 42)
+	reply := handler.ProcessMessage("#worker do x", 42)
 
-	if !strings.Contains(reply, "недоступна") {
-		t.Fatalf("expected unavailable message, got %q", reply)
+	if mock.lastMessage == "" {
+		t.Fatalf("expected message forwarded to main agent, got empty")
+	}
+	if !strings.Contains(reply, "processed:") {
+		t.Errorf("expected main-agent response, got %q", reply)
 	}
 }
 
-func TestTargetCommandQueuedPositionReporting(t *testing.T) {
+func TestHashMentionQueuedPositionReporting(t *testing.T) {
 	handler := newTargetTestHandler([]string{"worker"})
 
-	holdEnter := make(chan struct{})
-	releaseHold := make(chan struct{})
-	blockEnter := make(chan struct{})
-	releaseBlock := make(chan struct{})
+	heldEnter := make(chan struct{})
+	releaseHeld := make(chan struct{})
+	blockedEnter := make(chan struct{})
+	releaseBlocked := make(chan struct{})
 
 	queue := agentloop.NewTargetQueue(
 		func(ctx context.Context, name, prompt string, peerID int64) (string, error) {
 			switch prompt {
-			case "hold":
-				close(holdEnter)
-				<-releaseHold
-			case "block":
-				close(blockEnter)
-				<-releaseBlock
+			case "held":
+				close(heldEnter)
+				<-releaseHeld
+			case "blocked":
+				close(blockedEnter)
+				<-releaseBlocked
 			}
 			return "ok", nil
 		},
@@ -119,28 +95,28 @@ func TestTargetCommandQueuedPositionReporting(t *testing.T) {
 	)
 	handler.SetTargetQueue(queue)
 
-	first := handler.handleCommand("/target #worker hold", 1)
-	<-holdEnter
-	second := handler.handleCommand("/target #worker block", 1)
-	third := handler.handleCommand("/target #worker tail", 1)
-	fourth := handler.handleCommand("/target #worker last", 1)
+	first := handler.ProcessMessage("#worker held", 1)
+	<-heldEnter
+	second := handler.ProcessMessage("#worker blocked", 1)
+	third := handler.ProcessMessage("#worker tail", 1)
+	fourth := handler.ProcessMessage("#worker last", 1)
 
 	assertReplyPosition(t, first, "")
 	assertReplyPosition(t, second, "1")
 	assertReplyPosition(t, third, "2")
 	assertReplyPosition(t, fourth, "3")
 
-	close(releaseHold)
-	<-blockEnter
-	close(releaseBlock)
+	close(releaseHeld)
+	<-blockedEnter
+	close(releaseBlocked)
 }
 
-func TestTargetCommandTruncatesLongPromptInAck(t *testing.T) {
+func TestHashMentionTruncatesLongPromptInAck(t *testing.T) {
 	handler := newTargetTestHandler([]string{"worker"})
 	handler.SetTargetQueue(agentloop.NewTargetQueue(targetTestRunner, targetTestDeliver))
 
 	longPrompt := strings.Repeat("x", 300)
-	reply := handler.handleCommand("/target #worker "+longPrompt, 42)
+	reply := handler.ProcessMessage("#worker "+longPrompt, 42)
 
 	if len(reply) > 300 {
 		t.Errorf("ack exceeded truncation budget, got %d chars", len(reply))
@@ -150,13 +126,13 @@ func TestTargetCommandTruncatesLongPromptInAck(t *testing.T) {
 	}
 }
 
-func TestTargetCommandQueuesBehindExistingWorkersInvocation(t *testing.T) {
+func TestHashMentionQueuesBehindSpawnedSubagent(t *testing.T) {
 	var mu sync.Mutex
 	seen := []string{}
 	inflight := 0
 	maxInfl := 0
-	leadEntered := make(chan struct{})
-	releaseLead := make(chan struct{})
+	spawnedEntered := make(chan struct{})
+	releaseSpawned := make(chan struct{})
 
 	queue := agentloop.NewTargetQueue(
 		func(ctx context.Context, name, task string, peerID int64) (string, error) {
@@ -166,11 +142,11 @@ func TestTargetCommandQueuesBehindExistingWorkersInvocation(t *testing.T) {
 			if inflight > maxInfl {
 				maxInfl = inflight
 			}
-			isLeader := task == "lead-spawned"
+			isSpawned := task == "spawned-task"
 			mu.Unlock()
-			if isLeader {
-				close(leadEntered)
-				<-releaseLead
+			if isSpawned {
+				close(spawnedEntered)
+				<-releaseSpawned
 			}
 			mu.Lock()
 			inflight--
@@ -183,19 +159,19 @@ func TestTargetCommandQueuesBehindExistingWorkersInvocation(t *testing.T) {
 	handler := newTargetTestHandler([]string{"lead", "worker"})
 	handler.SetTargetQueue(queue)
 
-	pos0 := queue.Submit("worker", "lead-spawned", 100)
+	pos0 := queue.Submit("worker", "spawned-task", 100)
 	if pos0 != 0 {
-		t.Fatalf("lead-spawned position = %d, want 0", pos0)
+		t.Fatalf("spawned-task position = %d, want 0", pos0)
 	}
-	<-leadEntered
+	<-spawnedEntered
 
-	first := handler.handleCommand("/target #worker follow-up-from-human", 200)
+	first := handler.ProcessMessage("#worker follow-up-from-human", 200)
 	assertReplyPosition(t, first, "1")
 
-	second := handler.handleCommand("/target #worker yet-another", 200)
+	second := handler.ProcessMessage("#worker yet-another", 200)
 	assertReplyPosition(t, second, "2")
 
-	close(releaseLead)
+	close(releaseSpawned)
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -211,7 +187,7 @@ func TestTargetCommandQueuesBehindExistingWorkersInvocation(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	want := []string{
-		"worker@lead-spawned",
+		"worker@spawned-task",
 		"worker@follow-up-from-human",
 		"worker@yet-another",
 	}
@@ -228,7 +204,7 @@ func TestTargetCommandQueuesBehindExistingWorkersInvocation(t *testing.T) {
 	}
 }
 
-func TestTargetCommandDifferentAgentNotAffectedByBlockedWorker(t *testing.T) {
+func TestHashMentionIndependentLanesPerAgent(t *testing.T) {
 	var mu sync.Mutex
 	workersStarted := 0
 	qaCompleted := 0
@@ -262,7 +238,7 @@ func TestTargetCommandDifferentAgentNotAffectedByBlockedWorker(t *testing.T) {
 	handler.SetTargetQueue(queue)
 
 	queue.Submit("worker", "occupies-worker-lane", 100)
-	replyQA := handler.handleCommand("/target #qa quick-check", 200)
+	replyQA := handler.ProcessMessage("#qa quick-check", 200)
 	assertReplyPosition(t, replyQA, "")
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -281,7 +257,7 @@ func TestTargetCommandDifferentAgentNotAffectedByBlockedWorker(t *testing.T) {
 		t.Fatalf("qa lane did not complete while worker lane was blocked")
 	}
 
-	queued := handler.handleCommand("/target #worker second-for-worker", 200)
+	queued := handler.ProcessMessage("#worker second-for-worker", 200)
 	assertReplyPosition(t, queued, "1")
 
 	close(releaseWorker)

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util/stringutil"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/vllmmetrics"
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
@@ -130,30 +132,36 @@ func (h *BotHandler) SetTargetQueue(q *agentloop.TargetQueue) {
 	h.targetQueue = q
 }
 
-func (h *BotHandler) handleTarget(input string, peerID int64) string {
-	fields := strings.Fields(input)
-	nameToken := ""
-	var promptWords []string
-	if len(fields) > 1 {
-		nameToken = strings.TrimPrefix(fields[1], "#")
-		promptWords = fields[2:]
+func (h *BotHandler) runInlineAgent(ctx context.Context, agentName, task string, peerID int64) (string, error) {
+	agentPrompt, err := h.orchestrator.GetSystemPrompt(agentName)
+	if err != nil {
+		if h.log != nil {
+			h.log.ErrorLogf("Failed to load system prompt for #%s: %v", agentName, err)
+		}
+		return "", fmt.Errorf("Ошибка при выполнении задачи через #%s: %v", agentName, err)
 	}
-	prompt := strings.TrimSpace(strings.Join(promptWords, " "))
-	if nameToken == "" || prompt == "" {
-		return "Использование: /target #<имя_агента> <задача>\nДоступные: " + strings.Join(h.agentNames(), ", ")
+	response, err := h.aiAgent.ProcessPromptWithSystemPrompt(ctx, task, peerID, agentPrompt)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "context canceled") {
+			return "", context.Canceled
+		}
+		if h.log != nil {
+			h.log.ErrorLogf("Main agent error for #%s: %v", agentName, err)
+		}
+		return "", fmt.Errorf("Ошибка при выполнении задачи через #%s: %v", agentName, err)
 	}
-	if h.targetQueue == nil {
-		return "❌ Целевая маршрутизация недоступна (очередь не инициализирована)"
+	return response, nil
+}
+
+func (h *BotHandler) submitTargeted(agentName, task string, peerID int64) string {
+	pos := h.targetQueue.Submit(agentName, task, peerID)
+	if h.log != nil {
+		h.log.InfoLogf("Agent #%s targeted by peer %d (position %d): %s", agentName, peerID, pos, stringutil.Truncate(task, 100, "..."))
 	}
-	resolved, ok := h.findAgentByName(nameToken)
-	if !ok {
-		return "❌ Неизвестный агент \"" + nameToken + "\". Доступные: " + strings.Join(h.agentNames(), ", ")
-	}
-	pos := h.targetQueue.Submit(resolved, prompt, peerID)
 	if pos == 0 {
-		return "▶️ Передаю #" + resolved + ": " + stringutil.Truncate(prompt, 120, "...")
+		return "\u25B6\uFE0F Передаю #" + agentName + ": " + stringutil.Truncate(task, 120, "...")
 	}
-	return "⏳ Добавлено в очередь (#" + resolved + ", позиция " + fmt.Sprintf("%d", pos) + "): будет обработано последовательно"
+	return "\u23F3 Добавлено в очередь (#" + agentName + ", позиция " + strconv.Itoa(pos) + "): будет обработано последовательно"
 }
 
 func (h *BotHandler) findAgentByName(name string) (string, bool) {
@@ -242,52 +250,36 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 			return fmt.Sprintf("Укажите задачу для #%s. Например: #%s создай простой HTTP сервер", agentName, agentName)
 		}
 
-		if h.orchestrator != nil && h.orchestrator.IsPrimary(agentName) {
-
-			agentPrompt, err := h.orchestrator.GetSystemPrompt(agentName)
-			logger.DebugToFile("[#%s] GetSystemPrompt -> %d chars, err=%v", agentName, len(agentPrompt), err)
+		switch {
+		case h.orchestrator != nil && h.orchestrator.IsPrimary(agentName):
+			resp, err := h.runInlineAgent(ctx, agentName, task, peerID)
 			if err != nil {
-				if h.log != nil {
-					h.log.ErrorLogf("Failed to load system prompt for #%s: %v", agentName, err)
-				}
-				return fmt.Sprintf("❌ Ошибка при выполнении задачи через #%s: %v", agentName, err)
-			}
-			response, err := h.aiAgent.ProcessPromptWithSystemPrompt(ctx, task, peerID, agentPrompt)
-			if err != nil {
-				if errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "context canceled") {
+				if errors.Is(err, context.Canceled) {
 					return ""
 				}
-				if h.log != nil {
-					h.log.ErrorLogf("Main agent error for #%s: %v", agentName, err)
-				}
-				return fmt.Sprintf("❌ Ошибка при выполнении задачи через #%s: %v", agentName, err)
+				return err.Error()
 			}
-			return response
-		}
-
-		if h.orchestrator != nil {
-			response, err := h.orchestrator.RunAgent(ctx, agentName, task, peerID)
+			return resp
+		case h.targetQueue != nil:
+			return h.submitTargeted(agentName, task, peerID)
+		default:
+			message = fmt.Sprintf("[Задача для #%s]\n\n%s", agentName, task)
+			sess := h.aiAgent.GetSession(peerID)
+			if sess != nil && sess.IsLoopDetected() {
+				alert := sess.GetLoopAlertMessage()
+				if alert != "" {
+					message = "[LOOP DETECTED] " + alert + "\n\n" + message
+				}
+			}
+			resp, err := h.aiAgent.ProcessMessage(ctx, message, peerID)
 			if err != nil {
-				if errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "context canceled") {
+				if errors.Is(err, context.Canceled) {
 					return ""
 				}
-				if h.log != nil {
-					h.log.ErrorLogf("Orchestrator error for #%s: %v", agentName, err)
-				}
-				return fmt.Sprintf("❌ Ошибка при выполнении задачи через #%s: %v", agentName, err)
+				return err.Error()
 			}
-			return response
+			return resp
 		}
-
-		message = fmt.Sprintf("[Задача для #%s]\n\n%s", agentName, task)
-		response, err := h.aiAgent.ProcessMessage(ctx, message, peerID)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return ""
-			}
-			return fmt.Sprintf("❌ Ошибка: %v", err)
-		}
-		return response
 	} else {
 		s := h.aiAgent.GetSession(peerID)
 		if s != nil && s.IsLoopDetected() {
@@ -439,6 +431,9 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 			alias, modelName, host := h.modelHolder.GetCurrent()
 			status += "\nМодель: " + alias + " (" + modelName + ")"
 			status += "\nСервер: " + host
+			if stats, err := vllmmetrics.Fetch(host); err == nil {
+				status += "\n" + vllmmetrics.Format(stats)
+			}
 		}
 		if h.orchestrator != nil {
 			agentName := h.orchestrator.GetCurrentAgent()
@@ -476,9 +471,6 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 		}
 		h.writeSignalFile(".agent-branch", branch)
 		return fmt.Sprintf("Переключение на ветку %s...", branch)
-
-	case "/target":
-		return h.handleTarget(input, peerID)
 
 	default:
 		return ""

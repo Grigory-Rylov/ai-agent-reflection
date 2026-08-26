@@ -455,21 +455,43 @@ func (o *Orchestrator) runResumedAgent(ctx context.Context, sd *store.AgentSessi
 		o.releaseAgentSlot(sessionID)
 		return "", fmt.Errorf("setup tools for resumed agent %q: %w", sd.AgentName, err)
 	}
-	o.restoreSessionMessages(a.GetSession(sd.PeerID), sd.Messages)
+	s := a.GetSession(sd.PeerID)
+	o.restoreSessionMessages(s, sd.Messages)
 
-	prompt := "The process was restarted. Continue your task from where you left off."
-	switch {
-	case childResult != "":
-		prompt = fmt.Sprintf("Your sub-agent completed with this result:\n\n%s\n\nContinue your task from where you left off.", childResult)
-	case sd.LastPrompt != "":
-		prompt = fmt.Sprintf("Continue your task: %s", sd.LastPrompt)
-	}
+	prompt := pickResumeContinuationPrompt(childResult, lastRestoredRole(s), sd.LastToolCall, sd.LastPrompt)
 	result, err := a.ProcessMessage(ctx, prompt, sd.PeerID)
 	o.releaseAgentSlot(sessionID)
 	if err != nil {
 		return "", fmt.Errorf("resumed agent %q failed: %w", sd.AgentName, err)
 	}
 	return result, nil
+}
+
+
+func lastRestoredRole(s *session.Session) session.Role {
+	history := s.GetHistory()
+	if len(history) == 0 {
+		return ""
+	}
+	return history[len(history)-1].Role
+}
+
+
+func pickResumeContinuationPrompt(childResult string, lastRole session.Role, lastToolCall, lastPrompt string) string {
+	switch {
+	case childResult != "":
+		return fmt.Sprintf("Your sub-agent completed with this result:\n\n%s\n\nContinue your task from where you left off.", childResult)
+	case lastRole == session.ToolRole:
+		label := lastToolCall
+		if label == "" {
+			label = "your previous tool calls"
+		}
+		return fmt.Sprintf("Your previous tool calls finished executing; review their results above and continue. Last batch: %s.", label)
+	case lastPrompt != "":
+		return fmt.Sprintf("Continue your task: %s", lastPrompt)
+	default:
+		return "The process was restarted. Continue your task from where you left off."
+	}
 }
 
 
@@ -484,7 +506,25 @@ func (o *Orchestrator) restoreSessionMessages(s *session.Session, messagesJSON s
 	}
 	
 	
-	s.RestoreMessages(msgs)
+	s.RestoreMessages(sanitizeRestoredMessages(msgs))
+}
+
+
+func sanitizeRestoredMessages(msgs []session.Message) []session.Message {
+	out := make([]session.Message, len(msgs))
+	copy(out, msgs)
+	for {
+		n := len(out)
+		if n == 0 {
+			break
+		}
+		last := out[n-1]
+		if !(last.Role == session.AssistantRole && len(last.ToolCalls) > 0) {
+			break
+		}
+		out = out[:n-1]
+	}
+	return out
 }
 
 func (o *Orchestrator) isLeafAgent(name string) bool {
@@ -632,7 +672,30 @@ func (o *Orchestrator) makeSubAgent(name, systemPrompt string, peerID int64) (ag
 	o.setupAgentPermissions(a, name)
 	a.SetThinkingCallback(o.makeThinkingCallback(name))
 	a.GetSession(peerID).UpdateSystemPrompt(systemPrompt)
+	o.attachCheckpointSaving(a, sessionID, peerID)
 	return a, sessionID, nil
+}
+
+
+func (o *Orchestrator) attachCheckpointSaving(a agent.Agent, sessionID string, peerID int64) {
+	if o.config.Store == nil || sessionID == "" {
+		return
+	}
+	if cs, ok := a.(agent.CheckpointSetter); ok {
+		cs.SetCheckpoint(func(lastToolCall string) { o.persistCheckpoint(a, sessionID, peerID, lastToolCall) })
+	}
+}
+
+
+func (o *Orchestrator) persistCheckpoint(a agent.Agent, sessionID string, peerID int64, lastToolCall string) {
+	data, err := json.Marshal(a.GetSession(peerID).GetHistory())
+	if err != nil {
+		o.debugLog("checkpoint marshal for %s failed: %v", sessionID, err)
+		return
+	}
+	if err := o.config.Store.SaveAgentCheckpoint(sessionID, lastToolCall, string(data)); err != nil {
+		o.debugLog("checkpoint save for %s failed: %v", sessionID, err)
+	}
 }
 
 
