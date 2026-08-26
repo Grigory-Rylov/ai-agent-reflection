@@ -172,11 +172,11 @@ func rolesOf(msgs []sess.Message) []sess.Role {
 func TestRestoreSessionMessages_TrimsCrashedTail(t *testing.T) {
 	o := makeOrcWithPromptFiles(t, "http://127.0.0.1:1", nil, nil)
 
-	dangling := assistantWithToolCalls(t, `{"path":"/crashed"}`)
+	dangling := assistantWithCalls(mkCall("tc-crash", "file_read", `{"path":"/crashed"}`))
 	payload := serializeSessionForTest(t, []sess.Message{
 		{Role: sess.SystemRole, Content: "You are a helpful assistant."},
 		{Role: sess.UserRole, Content: "do X"},
-		assistantWithToolCalls(t, `{"path":"/a"}`),
+		assistantWithCalls(mkCall("tc-a", "file_read", `{"path":"/a"}`)),
 		toolResultMsg("tc-a", "file_read"),
 		dangling,
 	})
@@ -214,12 +214,18 @@ func TestRestoreSessionMessages_UnparsablePayloadLeavesSessionUntouched(t *testi
 	s.AddUserMessage("pre-existing")
 	s.AddAssistantMessage("kept")
 
+	before := s.GetHistory()
 	o.restoreSessionMessages(s, "{broken-json")
 	o.restoreSessionMessages(s, "")
 
-	history := s.GetHistory()
-	if len(history) != 2 {
-		t.Fatalf("history mutated despite bad payload: roles=%v", rolesOf(history))
+	after := s.GetHistory()
+	if len(after) != len(before) {
+		t.Fatalf("history mutated despite bad payload: before=%v after=%v", rolesOf(before), rolesOf(after))
+	}
+	for i := range before {
+		if after[i].Role != before[i].Role || after[i].Content != before[i].Content {
+			t.Fatalf("message %d changed: %+v -> %+v", i, before[i], after[i])
+		}
 	}
 }
 
@@ -282,11 +288,11 @@ func TestRunResumedAgent_ToolTailGetsAdaptivePrompt(t *testing.T) {
 	dbStore := newSubAgentToolTestStore(t)
 	orchestrator := makeOrcWithPromptFiles(t, server.url, dbStore, vkClient)
 
-	crashedTail := assistantWithToolCalls(t, `{"path":"/never-finished"}`)
+	crashedTail := assistantWithCalls(mkCall("tc-crash", "file_read", `{"path":"/never-finished"}`))
 	msgsJSON := serializeSessionForTest(t, []sess.Message{
 		{Role: sess.SystemRole, Content: "You are a helpful assistant."},
 		{Role: sess.UserRole, Content: "analyze the code"},
-		assistantWithToolCalls(t, `{"path":"/done"}`),
+		assistantWithCalls(mkCall("tc-a", "file_read", `{"path":"/done"}`)),
 		toolResultMsg("tc-a", "file_read"),
 		crashedTail,
 	})

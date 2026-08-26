@@ -478,6 +478,7 @@ func lastRestoredRole(s *session.Session) session.Role {
 
 
 func pickResumeContinuationPrompt(childResult string, lastRole session.Role, lastToolCall, lastPrompt string) string {
+	const defaultText = "The process was restarted. Continue your task from where you left off."
 	switch {
 	case childResult != "":
 		return fmt.Sprintf("Your sub-agent completed with this result:\n\n%s\n\nContinue your task from where you left off.", childResult)
@@ -487,10 +488,12 @@ func pickResumeContinuationPrompt(childResult string, lastRole session.Role, las
 			label = "your previous tool calls"
 		}
 		return fmt.Sprintf("Your previous tool calls finished executing; review their results above and continue. Last batch: %s.", label)
+	case lastRole == "":
+		return defaultText
 	case lastPrompt != "":
 		return fmt.Sprintf("Continue your task: %s", lastPrompt)
 	default:
-		return "The process was restarted. Continue your task from where you left off."
+		return defaultText
 	}
 }
 
