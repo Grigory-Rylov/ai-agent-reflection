@@ -522,3 +522,72 @@ func TestServerInfoClient_DebugMode(t *testing.T) {
 		}
 	})
 }
+
+
+// Fixture captured from a real llama-server router (multi-instance mode, b10669).
+// Quirks that previously broke parsing:
+//  1. meta.vocabulary_type arrives as a boolean ("vocab_type": true), which made
+//     json.Decode fail -> fallthrough to /props -> router reports n_ctx=0.
+//  2. /props behind a router has default_generation_settings.n_ctx == 0, so the
+//     authoritative value is meta.n_ctx from /v1/models.
+func TestRouterFormat_RealFixture(t *testing.T) {
+	modelsJSON := `{
+		"data": [
+			{
+				"id": "qwen3.8-next-flash-iq4_xs",
+				"aliases": [],
+				"tags": [],
+				"object": "model",
+				"owned_by": "llamacpp",
+				"created": 1787857076,
+				"status": {
+					"value": "loaded",
+					"args": ["--ctx-size", "262144"]
+				},
+				"meta": {
+					"vocab_type": true,
+					"n_vocab": 248320,
+					"n_ctx": 262144,
+					"n_ctx_train": 262144,
+					"n_embd": 2560,
+					"n_params": 176943899520,
+					"size": 93671559680,
+					"ftype": "IQ4_XS - 4.25 bpw"
+				}
+			}
+		]
+	}`
+
+	routerProps := `{"role":"router","default_generation_settings":{"params":null,"n_ctx":0},"build_info":"b10669-6c5afc86a"}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/models":
+			fmt.Fprint(w, modelsJSON)
+		case "/props":
+			fmt.Fprint(w, routerProps)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewServerInfoClient(server.URL)
+
+	info, err := client.GetModelInfo()
+	if err != nil {
+		t.Fatalf("GetModelInfo failed on real router fixture: %v", err)
+	}
+	if info.Meta == nil {
+		t.Fatal("Expected meta to parse despite vocab_type=true")
+	}
+	if info.Meta.NCtx != 262144 {
+		t.Errorf("Expected meta.n_ctx 262144, got %d", info.Meta.NCtx)
+	}
+
+	ctxLen := client.GetModelContextLength("qwen3.8-next-flash-iq4_xs")
+	if ctxLen != 262144 {
+		t.Errorf("Expected context length 262144, got %d", ctxLen)
+	}
+}
