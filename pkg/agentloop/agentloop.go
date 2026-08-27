@@ -707,6 +707,9 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 	agentConfig := al.buildAgentConfig()
 	agentConfig.SessionConfig.Store = nil
 	agentConfig.SessionConfig.SessionFile = ""
+	if liveWD := sess.GetWorkingDir(); liveWD != "" {
+		agentConfig.SessionConfig.WorkingDir = liveWD
+	}
 
 	agentConfig.SlotID = slotID
 	if slotID >= 0 && al.currentModelSlotSave() {
@@ -918,17 +921,17 @@ func (al *agentLoop) processToolCalls(ctx context.Context, toolCalls []map[strin
 					args = make(map[string]string)
 				}
 
-			toolResult, err := tool.Execute(ctx, args)
-			if err != nil {
-				result = tools.MarshalToolResult(toolResult)
-				execErr = err
-			} else {
-				result = tools.MarshalToolResult(toolResult)
-				if !toolResult.Success {
-					execErr = fmt.Errorf("%s", toolResult.Error)
+				toolResult, err := tool.Execute(ctx, args)
+				if err != nil {
+					result = tools.MarshalToolResult(toolResult)
+					execErr = err
+				} else {
+					result = tools.MarshalToolResult(toolResult)
+					if !toolResult.Success {
+						execErr = fmt.Errorf("%s", toolResult.Error)
+					}
 				}
-			}
-			result = al.truncateToolOutput(result)
+				result = al.truncateToolOutput(result)
 			}
 		} else {
 			result = fmt.Sprintf(`{"success": false, "error": "no tool registry"}`)
@@ -1230,13 +1233,17 @@ func (al *agentLoop) ResetSession(peerID int64) {
 }
 
 func (al *agentLoop) ClearPeerSession(peerID int64) {
+	preservedWD := ""
+	if val, ok := al.sessionM.Load(peerID); ok {
+		preservedWD = val.(*session.Session).GetWorkingDir()
+	}
 	al.ResetSession(peerID)
-	if err := al.clearPeerStore(peerID); err != nil && al.log != nil {
+	if err := al.clearPeerStore(peerID, preservedWD); err != nil && al.log != nil {
 		al.log.WarnLogf("ClearPeerSession: clear store for peer %d: %v", peerID, err)
 	}
 }
 
-func (al *agentLoop) clearPeerStore(peerID int64) error {
+func (al *agentLoop) clearPeerStore(peerID int64, preservedWD string) error {
 	st := al.config.SessionConfig.Store
 	if st == nil {
 		return nil
@@ -1244,11 +1251,15 @@ func (al *agentLoop) clearPeerStore(peerID int64) error {
 	if err := st.ClearMessages(peerID); err != nil {
 		return err
 	}
+	workDir := preservedWD
+	if workDir == "" {
+		workDir = al.config.SessionConfig.WorkingDir
+	}
 	return st.SaveSession(&store.SessionData{
 		PeerID:     peerID,
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
-		WorkingDir: al.config.SessionConfig.WorkingDir,
+		WorkingDir: workDir,
 	})
 }
 
