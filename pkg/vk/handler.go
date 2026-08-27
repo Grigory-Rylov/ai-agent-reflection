@@ -68,13 +68,13 @@ type BotHandler struct {
 	cancelMu       sync.RWMutex
 	attachmentsDir string
 
-	peerProcessors     map[int64]*sync.Mutex
-	peerProcessorsMu   sync.RWMutex
+	peerProcessors   map[int64]*sync.Mutex
+	peerProcessorsMu sync.RWMutex
 
 	semaphore chan struct{}
 
-	pendingKeyboards    map[int64]map[string]interface{}
-	pendingKeyboardMu   sync.RWMutex
+	pendingKeyboards  map[int64]map[string]interface{}
+	pendingKeyboardMu sync.RWMutex
 
 	queueMu       sync.Mutex
 	waitingCounts map[int64]int
@@ -673,6 +673,13 @@ func (h *BotHandler) isAccessibleDir(dir string) bool {
 	return err == nil && info.IsDir()
 }
 
+func (h *BotHandler) commitSessionWorkingDir(workDir string, peerID int64) {
+	if s := h.aiAgent.EnsureSession(peerID); s != nil {
+		s.SetWorkingDir(workDir)
+	}
+	tools.SetWorkingDir(workDir)
+}
+
 func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 	newPath := ""
 	parts := strings.SplitN(input, " ", 2)
@@ -700,6 +707,8 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 		return fmt.Sprintf("Ошибка: не удалось получить абсолютный путь: %v", err)
 	}
 
+	h.commitSessionWorkingDir(absPath, peerID)
+
 	h.cancelActiveRequest(peerID)
 	if h.orchestrator != nil {
 		h.orchestrator.ClearActiveSessions(peerID)
@@ -723,11 +732,7 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 	}
 	tools.GlobalTodo.Reset()
 
-	if s := h.aiAgent.GetSession(peerID); s != nil {
-		s.SetWorkingDir(absPath)
-	}
-
-	tools.SetWorkingDir(absPath)
+	h.commitSessionWorkingDir(absPath, peerID)
 
 	if ctrl := tools.GetAccessController(); ctrl != nil {
 		ctrl.AddAllowedDir(absPath)
