@@ -26,16 +26,18 @@ type AccessResult struct {
 
 
 type Controller struct {
-	mu          sync.RWMutex
-	allowedDirs []string 
-	sessionDirs []string 
+	mu           sync.RWMutex
+	allowedDirs  []string
+	globalDirs   []string
+	sessionPeers map[int64][]string
 }
 
 
 func NewController(allowedDirs []string) *Controller {
 	c := &Controller{
-		allowedDirs: make([]string, 0),
-		sessionDirs: make([]string, 0),
+		allowedDirs:  make([]string, 0),
+		globalDirs:   make([]string, 0),
+		sessionPeers: make(map[int64][]string),
 	}
 	for _, dir := range allowedDirs {
 		c.addAllowedDir(dir)
@@ -45,16 +47,11 @@ func NewController(allowedDirs []string) *Controller {
 
 
 func (c *Controller) addAllowedDir(dir string) {
-	dir = os.ExpandEnv(dir)
-	absPath, err := filepath.Abs(dir)
+	canonical, err := resolveCanonical(dir)
 	if err != nil {
 		return
 	}
-	canonical, err := filepath.EvalSymlinks(absPath)
-	if err != nil {
-		canonical = absPath
-	}
-	c.allowedDirs = append(c.allowedDirs, canonical)
+	c.allowedDirs = appendUnique(c.allowedDirs, canonical)
 }
 
 
@@ -66,50 +63,155 @@ func (c *Controller) AddAllowedDir(dir string) {
 
 
 func (c *Controller) GrantPath(path string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	path = os.ExpandEnv(path)
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return
-	}
-	canonical, err := filepath.EvalSymlinks(absPath)
-	if err != nil {
-		canonical = absPath
-	}
-	c.sessionDirs = append(c.sessionDirs, canonical)
+	c.grantTo(&c.globalDirs, path)
 }
 
 
 func (c *Controller) RevokePath(path string) {
+	c.revokeFrom(&c.globalDirs, path)
+}
+
+
+func (c *Controller) grantTo(store *[]string, path string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	absPath, err := filepath.Abs(path)
+	canonical, err := resolveCanonical(path)
 	if err != nil {
 		return
 	}
-	canonical, err := filepath.EvalSymlinks(absPath)
+	*store = appendUnique(*store, deepestExistingAncestor(canonical))
+}
+
+
+func (c *Controller) revokeFrom(store *[]string, path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	canonical, err := resolveCanonical(path)
 	if err != nil {
-		canonical = absPath
+		return
 	}
-	for i, d := range c.sessionDirs {
-		if d == canonical {
-			c.sessionDirs = append(c.sessionDirs[:i], c.sessionDirs[i+1:]...)
+	target := deepestExistingAncestor(canonical)
+	for i, d := range *store {
+		if d == target {
+			*store = append((*store)[:i], (*store)[i+1:]...)
 			return
 		}
 	}
 }
 
 
+func (c *Controller) GrantPathForPeer(peerID int64, path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	canonical, err := resolveCanonical(path)
+	if err != nil {
+		return
+	}
+	dir := deepestExistingAncestor(canonical)
+	existing, ok := c.sessionPeers[peerID]
+	if !ok {
+		c.sessionPeers[peerID] = []string{dir}
+		return
+	}
+	c.sessionPeers[peerID] = appendUnique(existing, dir)
+}
+
+
+func (c *Controller) RevokePathForPeer(peerID int64, path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	canonical, err := resolveCanonical(path)
+	if err != nil {
+		return
+	}
+	target := deepestExistingAncestor(canonical)
+	existing, ok := c.sessionPeers[peerID]
+	if !ok {
+		return
+	}
+	var kept []string
+	for _, d := range existing {
+		if d != target {
+			kept = append(kept, d)
+		}
+	}
+	c.sessionPeers[peerID] = kept
+}
+
+
+func (c *Controller) ClearPeer(peerID int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.sessionPeers, peerID)
+}
+
+
+func (c *Controller) CheckAccessForPeer(peerID int64, path string) AccessResult {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	canonical, err := resolveCanonical(path)
+	if err != nil {
+		return AccessResult{Allowed: false, Reason: err.Error()}
+	}
+
+	if isPathInAllowed(canonical, c.allowedDirs) {
+		return AccessResult{Allowed: true, Reason: "path is within allowed directories"}
+	}
+
+	if isPathInAllowed(canonical, c.sessionPeers[peerID]) {
+		return AccessResult{Allowed: true, Reason: "path is within peer-granted directories"}
+	}
+
+	all := c.allEffectiveDirs()
+	return AccessResult{
+		Allowed: false,
+		Reason:  fmt.Sprintf("access denied: path %q is outside allowed directories %v", canonical, all),
+	}
+}
+
+
+func (c *Controller) CheckAccess(path string) AccessResult {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	canonical, err := resolveCanonical(path)
+	if err != nil {
+		return AccessResult{Allowed: false, Reason: err.Error()}
+	}
+
+	if isPathInAllowed(canonical, c.allowedDirs) {
+		return AccessResult{Allowed: true, Reason: "path is within allowed directories"}
+	}
+
+	if isPathInAllowed(canonical, c.globalDirs) {
+		return AccessResult{Allowed: true, Reason: "path is within globally-granted directories"}
+	}
+
+	all := c.allEffectiveDirs()
+	return AccessResult{
+		Allowed: false,
+		Reason:  fmt.Sprintf("access denied: path %q is outside allowed directories %v", canonical, all),
+	}
+}
+
+
+func (c *Controller) allEffectiveDirs() []string {
+	result := make([]string, 0, len(c.allowedDirs)+len(c.globalDirs))
+	result = append(result, c.allowedDirs...)
+	result = append(result, c.globalDirs...)
+	return result
+}
+
+
 func (c *Controller) AllowedDirs() []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	result := make([]string, 0, len(c.allowedDirs)+len(c.sessionDirs))
-	result = append(result, c.allowedDirs...)
-	result = append(result, c.sessionDirs...)
-	return result
+	return c.allEffectiveDirs()
 }
 
 
@@ -123,6 +225,32 @@ func isPathInAllowed(canonical string, dirs []string) bool {
 		}
 	}
 	return false
+}
+
+
+func appendUnique(list []string, val string) []string {
+	for _, v := range list {
+		if v == val {
+			return list
+		}
+	}
+	return append(list, val)
+}
+
+
+func deepestExistingAncestor(p string) string {
+	cur := p
+	for {
+		info, err := os.Stat(cur)
+		if err == nil && info.IsDir() {
+			return cur
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return cur
+		}
+		cur = parent
+	}
 }
 
 
@@ -160,41 +288,9 @@ func resolveCanonical(path string) (string, error) {
 }
 
 
-func (c *Controller) CheckAccess(path string) AccessResult {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	canonical, err := resolveCanonical(path)
-	if err != nil {
-		return AccessResult{
-			Allowed: false,
-			Reason:  err.Error(),
-		}
-	}
-
-	if isPathInAllowed(canonical, c.allowedDirs) {
-		return AccessResult{
-			Allowed: true,
-			Reason:  "path is within allowed directories",
-		}
-	}
-
-	if isPathInAllowed(canonical, c.sessionDirs) {
-		return AccessResult{
-			Allowed: true,
-			Reason:  "path is within session-granted directories",
-		}
-	}
-
-	allowedDirs := append([]string{}, c.allowedDirs...)
-	allowedDirs = append(allowedDirs, c.sessionDirs...)
-
-	return AccessResult{
-		Allowed: false,
-		Reason:  fmt.Sprintf("access denied: path %q is outside allowed directories %v", canonical, allowedDirs),
-	}
+func CanonicalPath(path string) (string, error) {
+	return resolveCanonical(path)
 }
-
 
 
 func (c *Controller) CheckWriteAccess(path string) AccessResult {

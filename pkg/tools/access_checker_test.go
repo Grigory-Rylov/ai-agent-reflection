@@ -114,22 +114,29 @@ func TestResolvePathWithAccessControl(t *testing.T) {
 }
 
 func TestFileToolsWithAccessControl(t *testing.T) {
-	t.Run("FileReadTool blocks read outside allowed dir", func(t *testing.T) {
+	t.Run("FileReadTool allows read outside allowed dir", func(t *testing.T) {
 		dir, _ := setupAccessTest(t)
 		defer cleanupAccessTest(t, dir)
 
+		outsideFile, err := os.MkdirTemp("", "read_outside_*")
+		if err != nil {
+			t.Fatalf("create outside dir: %v", err)
+		}
+		defer os.RemoveAll(outsideFile)
+		readMe := filepath.Join(outsideFile, "readme.txt")
+		if err := os.WriteFile(readMe, []byte("public"), 0644); err != nil {
+			t.Fatalf("write readme: %v", err)
+		}
+
 		tool := &FileReadTool{}
 		result, err := tool.Execute(context.Background(), map[string]string{
-			"path": "/etc/passwd",
+			"path": readMe,
 		})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		if result.Success {
-			t.Error("expected failure for read outside allowed dir")
-		}
-		if result.Error == "" {
-			t.Error("expected error message")
+		if !result.Success {
+			t.Errorf("expected success for read outside allowed dir (reads unrestricted), got: %s", result.Error)
 		}
 	})
 
@@ -206,7 +213,7 @@ func TestFileToolsWithAccessControl(t *testing.T) {
 		}
 	})
 
-	t.Run("DirListTool blocks list outside allowed dir", func(t *testing.T) {
+	t.Run("DirListTool allows list outside allowed dir", func(t *testing.T) {
 		dir, _ := setupAccessTest(t)
 		defer cleanupAccessTest(t, dir)
 
@@ -217,8 +224,8 @@ func TestFileToolsWithAccessControl(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		if result.Success {
-			t.Error("expected failure for list outside allowed dir")
+		if !result.Success {
+			t.Errorf("expected success for list outside allowed dir (reads unrestricted), got: %s", result.Error)
 		}
 	})
 
@@ -278,7 +285,7 @@ func TestToolErrorsUseDeniedMessage(t *testing.T) {
 }
 
 func TestGlobWithAccessControl(t *testing.T) {
-	t.Run("GlobTool blocks path outside allowed dir", func(t *testing.T) {
+	t.Run("GlobTool works outside allowed dir", func(t *testing.T) {
 		dir, _ := setupAccessTest(t)
 		defer cleanupAccessTest(t, dir)
 
@@ -290,8 +297,8 @@ func TestGlobWithAccessControl(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		if result.Success {
-			t.Error("expected failure for glob outside allowed dir")
+		if !result.Success {
+			t.Errorf("expected success for glob outside allowed dir (reads unrestricted), got: %s", result.Error)
 		}
 	})
 
@@ -347,7 +354,7 @@ func TestGlobWithAccessControl(t *testing.T) {
 }
 
 func TestSearchCodeWithAccessControl(t *testing.T) {
-	t.Run("GrepTool blocks search outside allowed dir", func(t *testing.T) {
+	t.Run("GrepTool works outside allowed dir", func(t *testing.T) {
 		dir, _ := setupAccessTest(t)
 		defer cleanupAccessTest(t, dir)
 
@@ -359,8 +366,8 @@ func TestSearchCodeWithAccessControl(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		if result.Success {
-			t.Error("expected failure for grep outside allowed dir")
+		if !result.Success {
+			t.Errorf("expected success for grep outside allowed dir (reads unrestricted), got: %s", result.Error)
 		}
 	})
 

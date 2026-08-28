@@ -33,7 +33,7 @@ func (t *Video2TextTool) Execute(ctx context.Context, inputs map[string]string) 
 		return ToolResult{Success: false, Error: "path parameter is required"}, nil
 	}
 
-	resolvedPath, err := resolvePath(path)
+	resolvedPath, err := resolveReadPath(path)
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("Invalid path: %v", err)}, nil
 	}

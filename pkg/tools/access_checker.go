@@ -49,6 +49,41 @@ func formatDirs(dirs []string) string {
 	return strings.Join(quoted, ", ")
 }
 
+func CheckPathAllowedForPeer(peerID int64, resolvedPath string) error {
+	if globalAccessController == nil {
+		return nil
+	}
+	result := globalAccessController.CheckAccessForPeer(peerID, resolvedPath)
+	if !result.Allowed {
+		allowedDirs := globalAccessController.AllowedDirs()
+		return fmt.Errorf(
+			"access denied: you do not have permission to access %q. "+
+				"Allowed directories: %v. "+
+				"You can only work with files inside these directories. "+
+				"If you need access to a different directory, ask the user to grant it.",
+			resolvedPath, formatDirs(allowedDirs),
+		)
+	}
+	return nil
+}
+
+func PathsAllAllowedForPeer(peerID int64, paths []string) bool {
+	ctrl := GetAccessController()
+	if ctrl == nil {
+		return true
+	}
+	for _, p := range paths {
+		resolved, err := resolvePath(p)
+		if err != nil {
+			return false
+		}
+		if err := CheckPathAllowedForPeer(peerID, resolved); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
 type FileToolKind int
 
 const (
@@ -767,15 +802,16 @@ func IsReadOnlySubcommand(sub string) bool {
 }
 
 func headTailSafe(parts []string) bool {
-	for _, tok := range parts[1:] {
-		if strings.HasPrefix(tok, "-") {
-			continue
-		}
-		if isAbsolutePath(tok) || strings.HasPrefix(tok, "~") || tok == ".." {
-			return false
-		}
-	}
 	return true
+}
+
+func CollectShellSubCommandPaths(sub string) []string {
+	parts := permission.Tokenize(sub)
+	if len(parts) == 0 {
+		return nil
+	}
+	devPaths := collectDevicePaths(permission.SplitCommands(sub))
+	return collectFilePaths(sub, devPaths)
 }
 
 func ShellCommandFilesystemSafe(command string) bool {
@@ -840,11 +876,6 @@ func absoluteProgramSafe(rest []string) bool {
 	}
 	for _, target := range redirectionTargets(sub) {
 		if !isDiscardPath(target) && !PathsAllAllowed([]string{target}) {
-			return false
-		}
-	}
-	for _, token := range rest[1:] {
-		if isAbsolutePath(token) && !PathsAllAllowed([]string{token}) {
 			return false
 		}
 	}

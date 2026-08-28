@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
+	"path/filepath"
 	"sync"
 )
 
@@ -16,16 +16,12 @@ var (
 	pendingQuestions   map[int64]chan map[string]interface{}
 	pendingQuestionsMu sync.Mutex
 
-	grantedPaths   map[int64][]string
-	grantedPathsMu sync.RWMutex
-
 	grantPersistPath func(peerID int64, path string)
 	grantRemove      func(peerID int64)
 )
 
 func init() {
 	pendingQuestions = make(map[int64]chan map[string]interface{})
-	grantedPaths = make(map[int64][]string)
 }
 
 func HasPendingQuestion(peerID int64) bool {
@@ -51,9 +47,6 @@ func ResolvePendingQuestion(peerID int64, text string) bool {
 
 	select {
 	case ch <- answer:
-		
-		
-		
 		delete(pendingQuestions, peerID)
 		return true
 	default:
@@ -76,10 +69,6 @@ func UnregisterPendingQuestion(peerID int64) {
 	ch, ok := pendingQuestions[peerID]
 	delete(pendingQuestions, peerID)
 	if ok {
-		
-		
-		
-		
 		close(ch)
 	}
 }
@@ -88,25 +77,22 @@ func IsPathGranted(peerID int64, toolPath string) bool {
 	if toolPath == "" {
 		return false
 	}
-	grantedPathsMu.RLock()
-	defer grantedPathsMu.RUnlock()
-	prefixes, ok := grantedPaths[peerID]
-	if !ok {
+	ctrl := GetAccessController()
+	if ctrl == nil {
 		return false
 	}
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(toolPath, prefix) {
-			return true
-		}
+	resolved, err := resolveRawPath(toolPath)
+	if err != nil {
+		return false
 	}
-	return false
+	return ctrl.CheckAccessForPeer(peerID, resolved).Allowed
 }
 
 func ClearGrants(peerID int64) {
-	grantedPathsMu.Lock()
-	delete(grantedPaths, peerID)
-	grantedPathsMu.Unlock()
-
+	ctrl := GetAccessController()
+	if ctrl != nil {
+		ctrl.ClearPeer(peerID)
+	}
 	if grantRemove != nil {
 		grantRemove(peerID)
 	}
@@ -116,10 +102,10 @@ func GrantPath(peerID int64, path string) {
 	if path == "" {
 		return
 	}
-	grantedPathsMu.Lock()
-	grantedPaths[peerID] = addPathPrefix(grantedPaths[peerID], path)
-	grantedPathsMu.Unlock()
-
+	ctrl := GetAccessController()
+	if ctrl != nil {
+		ctrl.GrantPathForPeer(peerID, path)
+	}
 	if grantPersistPath != nil {
 		grantPersistPath(peerID, path)
 	}
@@ -129,31 +115,18 @@ func ApplyPathGrant(peerID int64, path string) {
 	if path == "" {
 		return
 	}
-	grantedPathsMu.Lock()
-	defer grantedPathsMu.Unlock()
-	grantedPaths[peerID] = addPathPrefix(grantedPaths[peerID], path)
+	ctrl := GetAccessController()
+	if ctrl != nil {
+		ctrl.GrantPathForPeer(peerID, path)
+	}
 }
 
-func addPathPrefix(prefixes []string, newPath string) []string {
-	
-	if !strings.HasSuffix(newPath, "/") {
-		newPath += "/"
+func resolveRawPath(path string) (string, error) {
+	cleaned := filepath.Clean(path)
+	if !filepath.IsAbs(cleaned) {
+		cleaned = filepath.Join(WorkingDir, cleaned)
 	}
-	for _, p := range prefixes {
-		if p == newPath {
-			return prefixes
-		}
-	}
-	
-	var filtered []string
-	for _, p := range prefixes {
-		if strings.HasPrefix(p, newPath) {
-			continue
-		}
-		filtered = append(filtered, p)
-	}
-	filtered = append(filtered, newPath)
-	return filtered
+	return filepath.Clean(cleaned), nil
 }
 
 func SetGrantPersistence(persistPath func(peerID int64, path string), remove func(peerID int64)) {

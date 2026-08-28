@@ -204,8 +204,8 @@ func TestIsReadOnlySubcommand(t *testing.T) {
 		{"sed is not read-only", `sed 's/a/b/' /tmp/f`, false},
 		{"export is not a file op", `export PATH="$PATH:/x"`, true},
 		{"go test is not a file op", "go test ./pkg/vk/", true},
-		{"head with explicit file outside allowed dir", "head -3 /etc/passwd", false},
-		{"tail following file outside allowed dir", "tail -f /var/log/syslog", false},
+		{"head with explicit file outside allowed dir", "head -3 /etc/passwd", true},
+		{"tail following file outside allowed dir", "tail -f /var/log/syslog", true},
 		{"empty", "", false},
 	}
 
