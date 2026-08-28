@@ -36,7 +36,7 @@ func SetWorkingDir(dir string) {
 }
 
 
-func resolvePath(path string) (string, error) {
+func cleanWorkingRelative(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("path is empty")
 	}
@@ -48,7 +48,20 @@ func resolvePath(path string) (string, error) {
 		cleaned = filepath.Join(WorkingDir, cleaned)
 	}
 
-	cleaned = filepath.Clean(cleaned)
+	return filepath.Clean(cleaned), nil
+}
+
+
+func resolveReadPath(path string) (string, error) {
+	return cleanWorkingRelative(path)
+}
+
+
+func resolvePath(path string) (string, error) {
+	cleaned, err := cleanWorkingRelative(path)
+	if err != nil {
+		return "", err
+	}
 
 	
 	if err := CheckPathAllowed(cleaned); err != nil {
@@ -94,7 +107,7 @@ func (t *FileReadTool) Execute(ctx context.Context, inputs map[string]string) (T
 		return ToolResult{Success: false, Error: "path parameter is required"}, nil
 	}
 
-	resolvedPath, err := resolvePath(path)
+	resolvedPath, err := resolveReadPath(path)
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("Invalid path: %v", err)}, nil
 	}
@@ -406,7 +419,7 @@ func (t *DirListTool) Execute(ctx context.Context, inputs map[string]string) (To
 		path = p
 	}
 
-	resolvedPath, err := resolvePath(path)
+	resolvedPath, err := resolveReadPath(path)
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("Invalid path: %v", err)}, nil
 	}
@@ -721,7 +734,7 @@ func (t *GlobTool) Execute(ctx context.Context, inputs map[string]string) (ToolR
 		searchPath = p
 	}
 
-	resolvedPath, err := resolvePath(searchPath)
+	resolvedPath, err := resolveReadPath(searchPath)
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("Invalid path: %v", err)}, nil
 	}
@@ -785,7 +798,7 @@ func (t *GrepTool) Execute(ctx context.Context, inputs map[string]string) (ToolR
 		include = inc
 	}
 
-	resolvedPath, err := resolvePath(searchPath)
+	resolvedPath, err := resolveReadPath(searchPath)
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("Invalid path: %v", err)}, nil
 	}

@@ -80,6 +80,7 @@ type Store interface {
 
 	GetSession(peerID int64) (*SessionData, error)
 	SaveSession(s *SessionData) error
+	ReplaceSessionMessages(sd *SessionData, msgs []MessageData) error
 	ClearSession(peerID int64) error
 
 	AddMessage(peerID int64, msg MessageData) error

@@ -114,22 +114,25 @@ func TestResolvePathWithAccessControl(t *testing.T) {
 }
 
 func TestFileToolsWithAccessControl(t *testing.T) {
-	t.Run("FileReadTool blocks read outside allowed dir", func(t *testing.T) {
+	t.Run("FileReadTool reads outside allowed dir without grant", func(t *testing.T) {
 		dir, _ := setupAccessTest(t)
 		defer cleanupAccessTest(t, dir)
 
+		outsideDir := t.TempDir()
+		target := filepath.Join(outsideDir, "readable.txt")
+		if err := os.WriteFile(target, []byte("open"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
 		tool := &FileReadTool{}
 		result, err := tool.Execute(context.Background(), map[string]string{
-			"path": "/etc/passwd",
+			"path": target,
 		})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		if result.Success {
-			t.Error("expected failure for read outside allowed dir")
-		}
-		if result.Error == "" {
-			t.Error("expected error message")
+		if !result.Success {
+			t.Errorf("reads must work everywhere per spec, got error: %s", result.Error)
 		}
 	})
 
@@ -206,19 +209,21 @@ func TestFileToolsWithAccessControl(t *testing.T) {
 		}
 	})
 
-	t.Run("DirListTool blocks list outside allowed dir", func(t *testing.T) {
+	t.Run("DirListTool lists outside allowed dir", func(t *testing.T) {
 		dir, _ := setupAccessTest(t)
 		defer cleanupAccessTest(t, dir)
 
+		outsideDir := t.TempDir()
+
 		tool := &DirListTool{}
 		result, err := tool.Execute(context.Background(), map[string]string{
-			"path": "/etc",
+			"path": outsideDir,
 		})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		if result.Success {
-			t.Error("expected failure for list outside allowed dir")
+		if !result.Success {
+			t.Errorf("dir_list must work everywhere per spec, got error: %s", result.Error)
 		}
 	})
 
@@ -278,20 +283,25 @@ func TestToolErrorsUseDeniedMessage(t *testing.T) {
 }
 
 func TestGlobWithAccessControl(t *testing.T) {
-	t.Run("GlobTool blocks path outside allowed dir", func(t *testing.T) {
+	t.Run("GlobTool works on paths outside allowed dir", func(t *testing.T) {
 		dir, _ := setupAccessTest(t)
 		defer cleanupAccessTest(t, dir)
 
+		outsideDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(outsideDir, "x.go"), []byte("package x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
 		tool := &GlobTool{}
 		result, err := tool.Execute(context.Background(), map[string]string{
-			"pattern": "*",
-			"path":    "/etc",
+			"pattern": "*.go",
+			"path":    outsideDir,
 		})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		if result.Success {
-			t.Error("expected failure for glob outside allowed dir")
+		if !result.Success {
+			t.Errorf("glob must work everywhere per spec, got error: %s", result.Error)
 		}
 	})
 
@@ -347,20 +357,25 @@ func TestGlobWithAccessControl(t *testing.T) {
 }
 
 func TestSearchCodeWithAccessControl(t *testing.T) {
-	t.Run("GrepTool blocks search outside allowed dir", func(t *testing.T) {
+	t.Run("GrepTool works on paths outside allowed dir", func(t *testing.T) {
 		dir, _ := setupAccessTest(t)
 		defer cleanupAccessTest(t, dir)
+
+		outsideDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(outsideDir, "a.txt"), []byte("root user\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
 
 		tool := &GrepTool{}
 		result, err := tool.Execute(context.Background(), map[string]string{
 			"pattern": "root",
-			"path":    "/etc",
+			"path":    outsideDir,
 		})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		if result.Success {
-			t.Error("expected failure for grep outside allowed dir")
+		if !result.Success {
+			t.Errorf("grep must work everywhere per spec, got error: %s", result.Error)
 		}
 	})
 
@@ -391,7 +406,7 @@ func TestSearchCodeWithAccessControl(t *testing.T) {
 }
 
 func TestSessionGrantIntegration(t *testing.T) {
-	t.Run("GrantPath allows file tool access", func(t *testing.T) {
+	t.Run("read-only tools work outside allowed dirs without grants", func(t *testing.T) {
 		dir, _ := setupAccessTest(t)
 		defer cleanupAccessTest(t, dir)
 
@@ -401,37 +416,85 @@ func TestSessionGrantIntegration(t *testing.T) {
 		}
 		defer os.RemoveAll(outsideDir)
 
-		
-		tool := &FileReadTool{}
-		result, err := tool.Execute(context.Background(), map[string]string{
-			"path": filepath.Join(outsideDir, "test.txt"),
-		})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		if result.Success {
-			t.Error("expected failure before grant")
-		}
-
-		
-		ctrl := GetAccessController()
-		ctrl.GrantPath(outsideDir)
-
-		
 		testFile := filepath.Join(outsideDir, "granted.txt")
-		if err := os.WriteFile(testFile, []byte("granted"), 0644); err != nil {
+		if err := os.WriteFile(testFile, []byte("data"), 0644); err != nil {
 			t.Fatalf("failed to create test file: %v", err)
 		}
 
-		
-		result, err = tool.Execute(context.Background(), map[string]string{
-			"path": testFile,
+		result, err := (&FileReadTool{}).Execute(context.Background(), map[string]string{"path": testFile})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !result.Success {
+			t.Errorf("file_read outside allowed dir should be allowed without grant: %s", result.Error)
+		}
+
+		result, err = (&DirListTool{}).Execute(context.Background(), map[string]string{"path": outsideDir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !result.Success {
+			t.Errorf("dir_list outside allowed dir should be allowed without grant: %s", result.Error)
+		}
+
+		result, err = (&GrepTool{}).Execute(context.Background(), map[string]string{"pattern": "data", "path": outsideDir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !result.Success {
+			t.Errorf("grep outside allowed dir should be allowed without grant: %s", result.Error)
+		}
+
+		result, err = (&FileWriteTool{}).Execute(context.Background(), map[string]string{"path": filepath.Join(outsideDir, "new.txt"), "content": "x"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Success {
+			t.Error("file_write outside allowed dir must still require grant")
+		}
+	})
+
+	t.Run("GrantPath allows write access to sibling files", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+
+		outsideDir, err := os.MkdirTemp("", "session_grant_*")
+		if err != nil {
+			t.Fatalf("failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(outsideDir)
+
+		ctrl := GetAccessController()
+		ctrl.GrantPath(filepath.Join(outsideDir, "pending.txt"))
+
+		testFile := filepath.Join(outsideDir, "granted.txt")
+		result, err := (&FileWriteTool{}).Execute(context.Background(), map[string]string{
+			"path":    testFile,
+			"content": "granted",
 		})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		if !result.Success {
-			t.Errorf("expected success after grant, got: %s", result.Error)
+			t.Errorf("expected write success after dir grant (missing-file path), got: %s", result.Error)
+		}
+	})
+
+	t.Run("peer GrantPath propagates to access controller", func(t *testing.T) {
+		dir, _ := setupAccessTest(t)
+		defer cleanupAccessTest(t, dir)
+
+		outsideDir, err := os.MkdirTemp("", "grant_propagate_*")
+		if err != nil {
+			t.Fatalf("failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(outsideDir)
+
+		var peerID int64 = 987654
+		GrantPath(peerID, filepath.Join(outsideDir, "newfile.txt"))
+
+		if err := CheckPathAllowed(filepath.Join(outsideDir, "other.txt")); err != nil {
+			t.Errorf("controller gate should accept dir after peer always-allow grant: %v", err)
 		}
 	})
 }

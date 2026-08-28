@@ -707,6 +707,9 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 	agentConfig := al.buildAgentConfig()
 	agentConfig.SessionConfig.Store = nil
 	agentConfig.SessionConfig.SessionFile = ""
+	if wd := sess.GetWorkingDir(); wd != "" {
+		agentConfig.SessionConfig.WorkingDir = wd
+	}
 
 	agentConfig.SlotID = slotID
 	if slotID >= 0 && al.currentModelSlotSave() {

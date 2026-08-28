@@ -12,19 +12,11 @@ func ScanCommand(command string) Scan {
 		if len(tokens) == 0 {
 			continue
 		}
-		cmd := tokens[0]
-		if cwdCommands[cmd] {
-			continue
-		}
 		scan.addUniquePattern(source)
 		scan.addUniqueAlways(strings.Join(Prefix(tokens), " ") + " *")
 		scan.nested(source)
 	}
 	return scan
-}
-
-var cwdCommands = map[string]bool{
-	"cd": true, "chdir": true, "popd": true, "pushd": true,
 }
 
 type heredocRange struct {

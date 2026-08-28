@@ -163,3 +163,162 @@ func TestCheckPathAccessGrantsAccess(t *testing.T) {
 		t.Errorf("expected outside dir to be allowed after grant, got: %v", err)
 	}
 }
+
+func TestCheckPathAccessReadOnlyNeverAsks(t *testing.T) {
+	allowedDir := t.TempDir()
+	outsideDir := t.TempDir()
+
+	ctrl := access.NewController([]string{allowedDir})
+	tools.SetAccessController(ctrl)
+	defer tools.SetAccessController(nil)
+
+	oldWD := tools.WorkingDir
+	tools.WorkingDir = allowedDir
+	defer func() { tools.WorkingDir = oldWD }()
+
+	asked := 0
+	tools.SetQuestionCallback(func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+		asked++
+		return map[string]interface{}{"selected": []interface{}{"Allow"}}, nil
+	})
+	defer tools.SetQuestionCallback(nil)
+
+	ex := &agentToolExecutor{
+		agent: &agentImpl{thinkingCallback: func(int64, string) error { return nil }},
+	}
+
+	for _, toolName := range []string{"file_read", "dir_list", "glob", "search_code"} {
+		if !ex.checkPathAccess(context.Background(), toolName, map[string]string{"path": outsideDir}, 0) {
+			t.Errorf("%s should be allowed without asking on read-only access", toolName)
+		}
+	}
+	if asked != 0 {
+		t.Errorf("expected no permission questions for read tools, got %d", asked)
+	}
+}
+
+func TestCheckPathAccessOneTimeAllowDoesNotPersist(t *testing.T) {
+	run := func(answer string, expectPersisted bool) {
+		outsideDir := t.TempDir()
+		ctrl := access.NewController(nil)
+		tools.SetAccessController(ctrl)
+		defer tools.SetAccessController(nil)
+
+		oldWD := tools.WorkingDir
+		tools.WorkingDir = outsideDir
+		defer func() { tools.WorkingDir = oldWD }()
+
+		askCount := 0
+		tools.SetQuestionCallback(func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+			askCount++
+			return map[string]interface{}{"selected": []interface{}{answer}}, nil
+		})
+		defer tools.SetQuestionCallback(nil)
+
+		ex := &agentToolExecutor{
+			agent: &agentImpl{thinkingCallback: func(int64, string) error { return nil }},
+		}
+
+		target := outsideDir + "/new.txt"
+		if !ex.checkPathAccess(context.Background(), "file_write", map[string]string{"path": target}, 0) {
+			t.Fatalf("expected tool call allowed after answer %q", answer)
+		}
+		errAfterGrant := tools.CheckPathAllowed(target + "-sibling")
+
+		if expectPersisted && errAfterGrant != nil {
+			t.Errorf("answer %q should persist session grant: %v", answer, errAfterGrant)
+		}
+		if !expectPersisted && errAfterGrant == nil {
+			t.Errorf("one-time Allow must not persist grants")
+		}
+
+		if !ex.checkPathAccess(context.Background(), "file_write", map[string]string{"path": target}, 0) {
+			t.Fatalf("second call should proceed (ask again or allowed via grant)")
+		}
+		expectedAsks := 2
+		if expectPersisted {
+			expectedAsks = 1
+		}
+		if askCount != expectedAsks {
+			t.Errorf("answer %q: expected %d questions, got %d", answer, expectedAsks, askCount)
+		}
+	}
+
+	run("Allow", false)
+	run("Allow always", true)
+}
+
+func TestCheckPathAccessAlwaysAllowGrantsDirectoryTree(t *testing.T) {
+	baseDir := t.TempDir()
+	ctrl := access.NewController(nil)
+	tools.SetAccessController(ctrl)
+	defer tools.SetAccessController(nil)
+
+	oldWD := tools.WorkingDir
+	tools.WorkingDir = baseDir
+	defer func() { tools.WorkingDir = oldWD }()
+
+	tools.SetQuestionCallback(func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+		return map[string]interface{}{"selected": []interface{}{"Allow always"}}, nil
+	})
+	defer tools.SetQuestionCallback(nil)
+
+	ex := &agentToolExecutor{
+		agent: &agentImpl{thinkingCallback: func(int64, string) error { return nil }},
+	}
+	peerID := int64(42)
+
+	if err := os.MkdirAll(baseDir+"/sub", 0o755); err != nil {
+		t.Fatalf("failed to create sub dir: %v", err)
+	}
+
+	filePath := baseDir + "/sub/file.txt"
+	if !ex.checkPathAccess(context.Background(), "file_write", map[string]string{"path": filePath}, peerID) {
+		t.Fatal("expected tool call allowed after Allow always")
+	}
+
+	for _, sibling := range []string{
+		baseDir + "/sub/other.txt",
+		baseDir + "/sub/deep/nested.txt",
+	} {
+		if err := tools.CheckPathAllowed(sibling); err != nil {
+			t.Errorf("expected %s allowed within granted directory tree: %v", sibling, err)
+		}
+		if !tools.IsPathGranted(peerID, sibling) {
+			t.Errorf("expected peer grant to cover %s inside the path", sibling)
+		}
+	}
+
+	if err := tools.CheckPathAllowed(baseDir + "/top.txt"); err == nil {
+		t.Error("expected baseDir/top.txt to remain outside the granted sub directory")
+	}
+}
+
+func TestCheckPathAccessOneTimeAllowDoesNotGrantPeer(t *testing.T) {
+	baseDir := t.TempDir()
+	ctrl := access.NewController(nil)
+	tools.SetAccessController(ctrl)
+	defer tools.SetAccessController(nil)
+
+	oldWD := tools.WorkingDir
+	tools.WorkingDir = baseDir
+	defer func() { tools.WorkingDir = oldWD }()
+
+	tools.SetQuestionCallback(func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+		return map[string]interface{}{"selected": []interface{}{"Allow"}}, nil
+	})
+	defer tools.SetQuestionCallback(nil)
+
+	ex := &agentToolExecutor{
+		agent: &agentImpl{thinkingCallback: func(int64, string) error { return nil }},
+	}
+	peerID := int64(7)
+
+	filePath := baseDir + "/once.txt"
+	if !ex.checkPathAccess(context.Background(), "file_write", map[string]string{"path": filePath}, peerID) {
+		t.Fatal("expected one-time allow to proceed")
+	}
+	if tools.IsPathGranted(peerID, baseDir+"/once.txt") {
+		t.Error("one-time Allow must not store a persistent peer grant")
+	}
+}

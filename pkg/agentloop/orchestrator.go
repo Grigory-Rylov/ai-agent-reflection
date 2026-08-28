@@ -514,20 +514,7 @@ func (o *Orchestrator) restoreSessionMessages(s *session.Session, messagesJSON s
 
 
 func sanitizeRestoredMessages(msgs []session.Message) []session.Message {
-	out := make([]session.Message, len(msgs))
-	copy(out, msgs)
-	for {
-		n := len(out)
-		if n == 0 {
-			break
-		}
-		last := out[n-1]
-		if !(last.Role == session.AssistantRole && len(last.ToolCalls) > 0) {
-			break
-		}
-		out = out[:n-1]
-	}
-	return out
+	return session.TrimDanglingTrailingToolCalls(msgs)
 }
 
 func (o *Orchestrator) isLeafAgent(name string) bool {

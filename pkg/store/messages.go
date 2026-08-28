@@ -1,7 +1,7 @@
 package store
 
-func (s *sqliteDB) AddMessage(peerID int64, msg MessageData) error {
-	_, err := s.db.Exec(`
+func addMessageTo(e execer, peerID int64, msg MessageData) error {
+	_, err := e.Exec(`
 		INSERT INTO messages (peer_id, role, content, tool_call_id,
 		                      tool_name, tool_calls, timestamp,
 		                      summary, compacted, tail_start_id)
@@ -10,6 +10,10 @@ func (s *sqliteDB) AddMessage(peerID int64, msg MessageData) error {
 		msg.ToolName, msg.ToolCalls, msg.Timestamp,
 		boolToInt(msg.Summary), boolToInt(msg.Compacted), msg.TailStartID)
 	return err
+}
+
+func (s *sqliteDB) AddMessage(peerID int64, msg MessageData) error {
+	return addMessageTo(s.db, peerID, msg)
 }
 
 func (s *sqliteDB) GetMessages(peerID int64) ([]MessageData, error) {

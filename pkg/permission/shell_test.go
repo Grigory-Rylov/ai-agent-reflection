@@ -38,16 +38,16 @@ func TestScanCommandPatterns(t *testing.T) {
 			always:   []string{"true *", "false *", "cat *"},
 		},
 		{
-			name:     "cd command is not a pattern",
+			name:     "cd command is a pattern",
 			command:  "cd .",
-			patterns: nil,
-			always:   nil,
+			patterns: []string{"cd ."},
+			always:   []string{"cd *"},
 		},
 		{
 			name:     "cd with other command",
 			command:  "cd ../ && pwd",
-			patterns: []string{"pwd"},
-			always:   []string{"pwd *"},
+			patterns: []string{"cd ../", "pwd"},
+			always:   []string{"cd *", "pwd *"},
 		},
 		{
 			name:     "git uses two token prefix",

@@ -448,3 +448,71 @@ func TestCheckAccess_Symlink(t *testing.T) {
 		}
 	})
 }
+
+func TestGrantPath_MissingFileThroughSymlink(t *testing.T) {
+	root := setupTempDir(t)
+	defer cleanupTempDir(t, root)
+
+	realDir := filepath.Join(root, "real")
+	if err := os.MkdirAll(realDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sibling := filepath.Join(realDir, "file.txt")
+	if err := os.WriteFile(sibling, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	linkPath := filepath.Join(root, "link")
+	if err := os.Symlink(realDir, linkPath); err != nil {
+		t.Skip("symlink not supported on this system")
+	}
+
+	controller := NewController([]string{})
+	target := filepath.Join(linkPath, "newfile.txt")
+
+	if controller.CheckAccess(target).Allowed {
+		t.Fatal("expected denied before grant")
+	}
+
+	controller.GrantPath(target)
+
+	if !controller.CheckAccess(target).Allowed {
+		t.Error("same path should be allowed after grant through symlink to missing file")
+	}
+	viaReal := filepath.Join(realDir, "newfile.txt")
+	if !controller.CheckAccess(viaReal).Allowed {
+		t.Error("real path of granted target should be allowed")
+	}
+	if !controller.CheckAccess(sibling).Allowed {
+		t.Error("sibling file in same directory should be allowed after write grant (parent dir)")
+	}
+
+	controller.RevokePath(target)
+	if controller.CheckAccess(viaReal).Allowed {
+		t.Error("expected denied after revoke")
+	}
+}
+
+func TestGrantPath_ExistingFile_GrantsParentDir(t *testing.T) {
+	dir := setupTempDir(t)
+	defer cleanupTempDir(t, dir)
+
+	file := filepath.Join(dir, "existing.txt")
+	if err := os.WriteFile(file, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	controller := NewController([]string{})
+	controller.GrantPath(file)
+
+	sibling := filepath.Join(dir, "sibling.txt")
+	if !controller.CheckAccess(sibling).Allowed {
+		t.Error("grant on existing file should cover its parent directory (write scenario)")
+	}
+
+	elsewhere := setupTempDir(t)
+	defer cleanupTempDir(t, elsewhere)
+	if controller.CheckAccess(filepath.Join(elsewhere, "x.txt")).Allowed {
+		t.Error("unrelated dir must stay denied")
+	}
+}

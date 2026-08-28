@@ -381,13 +381,14 @@ func main() {
 	go func() {
 		<-sigChan
 		log.InfoLog("Shutting down...")
+		cancel()
+		time.Sleep(2 * time.Second)
 		if mcpManager != nil {
 			mcpManager.Close()
 		}
 		if dbStore != nil {
 			dbStore.Close()
 		}
-		cancel()
 	}()
 
 	if config.PeerID > 0 {

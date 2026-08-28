@@ -390,3 +390,58 @@ func TestDBFileCreated(t *testing.T) {
 		t.Error("db file should exist")
 	}
 }
+
+func TestReplaceSessionMessages(t *testing.T) {
+	st := newTestStore(t)
+	now := time.Now()
+
+	if err := st.AddMessage(7, MessageData{Role: "user", Content: "old1", Timestamp: now.Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMessage(7, MessageData{Role: "assistant", Content: "old2", Timestamp: now.Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+
+	msgs := []MessageData{
+		{Role: "user", Content: "new1", Timestamp: now.Format(time.RFC3339)},
+		{Role: "assistant", Content: "new2", ToolCalls: `[{"id":"c1"}]`, Timestamp: now.Format(time.RFC3339)},
+	}
+	sd := &SessionData{PeerID: 7, CreatedAt: now, UpdatedAt: now, WorkingDir: "/wd"}
+
+	if err := st.ReplaceSessionMessages(sd, msgs); err != nil {
+		t.Fatalf("ReplaceSessionMessages: %v", err)
+	}
+
+	got, err := st.GetMessages(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Content != "new1" || got[1].ToolCalls == "" {
+		t.Errorf("expected replaced messages [new1, new2+tool_calls], got %+v", got)
+	}
+
+	sess, err := st.GetSession(7)
+	if err != nil || sess == nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if sess.WorkingDir != "/wd" {
+		t.Errorf("expected working dir persisted in same call, got %q", sess.WorkingDir)
+	}
+
+	replaced := []MessageData{{Role: "user", Content: "only", Timestamp: now.Format(time.RFC3339)}}
+	if err := st.ReplaceSessionMessages(sd, replaced); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = st.GetMessages(7)
+	if len(got) != 1 || got[0].Content != "only" {
+		t.Errorf("expected full replacement (old rows gone), got %+v", got)
+	}
+
+	if err := st.ReplaceSessionMessages(sd, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = st.GetMessages(7)
+	if len(got) != 0 {
+		t.Errorf("expected empty history after replace with nil, got %+v", got)
+	}
+}

@@ -88,7 +88,7 @@ func (ap *agentProc) killLocked() {
 	}()
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		ap.cmd.Process.Kill()
 		<-done
 	}

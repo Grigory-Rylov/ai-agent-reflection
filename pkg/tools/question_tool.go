@@ -112,6 +112,12 @@ func ClearGrants(peerID int64) {
 	}
 }
 
+func propagateGrantToController(path string) {
+	if ctrl := GetAccessController(); ctrl != nil {
+		ctrl.GrantPath(path)
+	}
+}
+
 func GrantPath(peerID int64, path string) {
 	if path == "" {
 		return
@@ -119,6 +125,8 @@ func GrantPath(peerID int64, path string) {
 	grantedPathsMu.Lock()
 	grantedPaths[peerID] = addPathPrefix(grantedPaths[peerID], path)
 	grantedPathsMu.Unlock()
+
+	propagateGrantToController(path)
 
 	if grantPersistPath != nil {
 		grantPersistPath(peerID, path)
@@ -130,8 +138,10 @@ func ApplyPathGrant(peerID int64, path string) {
 		return
 	}
 	grantedPathsMu.Lock()
-	defer grantedPathsMu.Unlock()
 	grantedPaths[peerID] = addPathPrefix(grantedPaths[peerID], path)
+	grantedPathsMu.Unlock()
+
+	propagateGrantToController(path)
 }
 
 func addPathPrefix(prefixes []string, newPath string) []string {

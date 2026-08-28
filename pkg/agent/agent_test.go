@@ -384,6 +384,10 @@ func (m *mockStoreWorkingDir) SaveSession(s *store.SessionData) error {
 	return nil
 }
 
+func (m *mockStoreWorkingDir) ReplaceSessionMessages(sd *store.SessionData, msgs []store.MessageData) error {
+	return nil
+}
+
 func (m *mockStoreWorkingDir) ClearSession(peerID int64) error {
 	return nil
 }

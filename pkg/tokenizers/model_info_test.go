@@ -499,6 +499,49 @@ func TestServerInfoClient_GetModelContextLength_MetaNCtxFallback(t *testing.T) {
 	}
 }
 
+func TestServerInfoClient_GetModelContextLength_RouterBoolVocabType(t *testing.T) {
+	t.Run("parses status args with bool vocab_type", func(t *testing.T) {
+		response := `{
+			"object": "list",
+			"data": [{
+				"id": "test-model",
+				"status": {"value": "loaded", "args": ["--ctx-size", "262144"]},
+				"meta": {"vocab_type": true, "n_vocab": 248320, "n_ctx": 262144, "n_ctx_train": 262144}
+			}]
+		}`
+
+		server := createMockServer(response)
+		defer server.Close()
+
+		client := NewServerInfoClient(server.URL)
+		ctxLen := client.GetModelContextLength("test-model")
+
+		if ctxLen != 262144 {
+			t.Errorf("Expected 262144, got %d", ctxLen)
+		}
+	})
+
+	t.Run("falls back to meta n_ctx with bool vocab_type and no args", func(t *testing.T) {
+		response := `{
+			"object": "list",
+			"data": [{
+				"id": "test-model",
+				"meta": {"vocab_type": true, "n_ctx": 262144}
+			}]
+		}`
+
+		server := createMockServer(response)
+		defer server.Close()
+
+		client := NewServerInfoClient(server.URL)
+		ctxLen := client.GetModelContextLength("test-model")
+
+		if ctxLen != 262144 {
+			t.Errorf("Expected meta.n_ctx 262144, got %d", ctxLen)
+		}
+	})
+}
+
 func TestServerInfoClient_DebugMode(t *testing.T) {
 	t.Run("debug logs are enabled", func(t *testing.T) {
 		response := `{

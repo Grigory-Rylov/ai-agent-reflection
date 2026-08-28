@@ -45,14 +45,9 @@ func NewController(allowedDirs []string) *Controller {
 
 
 func (c *Controller) addAllowedDir(dir string) {
-	dir = os.ExpandEnv(dir)
-	absPath, err := filepath.Abs(dir)
+	canonical, err := resolveCanonical(dir)
 	if err != nil {
 		return
-	}
-	canonical, err := filepath.EvalSymlinks(absPath)
-	if err != nil {
-		canonical = absPath
 	}
 	c.allowedDirs = append(c.allowedDirs, canonical)
 }
@@ -65,20 +60,30 @@ func (c *Controller) AddAllowedDir(dir string) {
 }
 
 
+func grantTarget(canonical string) string {
+	info, err := os.Stat(canonical)
+	if err != nil || !info.IsDir() {
+		return filepath.Dir(canonical)
+	}
+	return canonical
+}
+
+
 func (c *Controller) GrantPath(path string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	path = os.ExpandEnv(path)
-	absPath, err := filepath.Abs(path)
+	canonical, err := resolveCanonical(path)
 	if err != nil {
 		return
 	}
-	canonical, err := filepath.EvalSymlinks(absPath)
-	if err != nil {
-		canonical = absPath
+	target := grantTarget(canonical)
+	for _, d := range c.sessionDirs {
+		if d == target {
+			return
+		}
 	}
-	c.sessionDirs = append(c.sessionDirs, canonical)
+	c.sessionDirs = append(c.sessionDirs, target)
 }
 
 
@@ -86,16 +91,13 @@ func (c *Controller) RevokePath(path string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	absPath, err := filepath.Abs(path)
+	canonical, err := resolveCanonical(path)
 	if err != nil {
 		return
 	}
-	canonical, err := filepath.EvalSymlinks(absPath)
-	if err != nil {
-		canonical = absPath
-	}
+	target := grantTarget(canonical)
 	for i, d := range c.sessionDirs {
-		if d == canonical {
+		if d == target || d == canonical {
 			c.sessionDirs = append(c.sessionDirs[:i], c.sessionDirs[i+1:]...)
 			return
 		}

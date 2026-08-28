@@ -51,7 +51,27 @@ func (s *Session) loadFromStore(st store.Store) error {
 		}
 	}
 
+	s.messages = TrimDanglingTrailingToolCalls(s.messages)
+
 	return nil
+}
+
+
+func TrimDanglingTrailingToolCalls(msgs []Message) []Message {
+	out := make([]Message, len(msgs))
+	copy(out, msgs)
+	for {
+		n := len(out)
+		if n == 0 {
+			break
+		}
+		last := out[n-1]
+		if !(last.Role == AssistantRole && len(last.ToolCalls) > 0) {
+			break
+		}
+		out = out[:n-1]
+	}
+	return out
 }
 
 func (s *Session) saveToStore(st store.Store) error {
@@ -72,22 +92,12 @@ func (s *Session) saveToStore(st store.Store) error {
 		}
 	}
 
-	if err := st.SaveSession(sd); err != nil {
-		return fmt.Errorf("save session: %w", err)
-	}
-
-	if err := st.ClearMessages(s.config.PeerID); err != nil {
-		return fmt.Errorf("clear messages: %w", err)
-	}
-
+	msgs := make([]store.MessageData, 0, len(s.messages))
 	for _, msg := range s.messages {
-		d := messageToStoreMsg(msg)
-		if err := st.AddMessage(s.config.PeerID, d); err != nil {
-			return fmt.Errorf("add message: %w", err)
-		}
+		msgs = append(msgs, messageToStoreMsg(msg))
 	}
 
-	return nil
+	return st.ReplaceSessionMessages(sd, msgs)
 }
 
 func messageToStoreMsg(msg Message) store.MessageData {

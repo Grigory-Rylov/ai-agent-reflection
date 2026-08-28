@@ -29,13 +29,12 @@ type ModelStatus struct {
 
 
 type ModelMeta struct {
-	VocabType int `json:"vocab_type"`
-	NVocab    int `json:"n_vocab"`
-	NCtxTrain int `json:"n_ctx_train"` 
-	NCtx      int `json:"n_ctx"`       
-	NEmbd     int `json:"n_embd"`
-	NParams   int `json:"n_params"`
-	Size      int `json:"size"`
+	NVocab    int  `json:"n_vocab"`
+	NCtxTrain int  `json:"n_ctx_train"` 
+	NCtx      int  `json:"n_ctx"`       
+	NEmbd     int  `json:"n_embd"`
+	NParams   int  `json:"n_params"`
+	Size      int  `json:"size"`
 }
 
 

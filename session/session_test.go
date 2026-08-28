@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/store"
 )
@@ -347,6 +348,10 @@ func (m *mockWorkingDirStore) SaveSession(s *store.SessionData) error {
 }
 
 func (m *mockWorkingDirStore) ClearSession(peerID int64) error                            { return nil }
+func (m *mockWorkingDirStore) ReplaceSessionMessages(sd *store.SessionData, msgs []store.MessageData) error {
+	m.workingDir = sd.WorkingDir
+	return nil
+}
 func (m *mockWorkingDirStore) AddMessage(peerID int64, msg store.MessageData) error       { return nil }
 func (m *mockWorkingDirStore) GetMessages(peerID int64) ([]store.MessageData, error)      { return nil, nil }
 func (m *mockWorkingDirStore) ClearMessages(peerID int64) error                           { return nil }
@@ -813,4 +818,66 @@ func TestPinnedWithCompactedMessagesInHistory(t *testing.T) {
 			t.Errorf("context messages should not include compacted messages, got: %v", msg)
 		}
 	}
+}
+
+func TestLoadFromStoreTrimsDanglingToolCallTail(t *testing.T) {
+	newCfg := func(t *testing.T, msgs []store.MessageData) Config {
+		t.Helper()
+		st, err := store.NewStore(filepath.Join(t.TempDir(), "s.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { st.Close() })
+		now := time.Now()
+		if err := st.SaveSession(&store.SessionData{PeerID: 42, CreatedAt: now, UpdatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range msgs {
+			if err := st.AddMessage(42, m); err != nil {
+				t.Fatal(err)
+			}
+		}
+		cfg := DefaultConfig()
+		cfg.PeerID = 42
+		cfg.Store = st
+		return cfg
+	}
+
+	danglingAssistant := store.MessageData{Role: "assistant", ToolCalls: `[{"id":"c1","function":{"name":"x","arguments":"{}"}}]`, Timestamp: "2026-08-27T10:00:03+03:00"}
+
+	t.Run("trims assistant with tool_calls lacking results", func(t *testing.T) {
+		cfg := newCfg(t, []store.MessageData{
+			{Role: "user", Content: "hi", Timestamp: "2026-08-27T10:00:01+03:00"},
+			danglingAssistant,
+		})
+
+		sess := NewSession(cfg)
+		if sess.HistoryLength() != 1 {
+			t.Errorf("expected dangling assistant(tool_calls) trimmed, history=%d", sess.HistoryLength())
+		}
+	})
+
+	t.Run("trims repeated dangling rows at tail", func(t *testing.T) {
+		cfg := newCfg(t, []store.MessageData{
+			danglingAssistant,
+			danglingAssistant,
+		})
+
+		sess := NewSession(cfg)
+		if sess.HistoryLength() != 0 {
+			t.Errorf("expected all dangling trimmed to empty, history=%d", sess.HistoryLength())
+		}
+	})
+
+	t.Run("keeps completed tool exchanges", func(t *testing.T) {
+		cfg := newCfg(t, []store.MessageData{
+			danglingAssistant,
+			{Role: "tool", Content: `{"ok":true}`, ToolCallID: "c1", Timestamp: "2026-08-27T10:00:04+03:00"},
+		})
+
+		sess := NewSession(cfg)
+		if sess.HistoryLength() != 2 {
+			t.Errorf("expected completed exchange kept, history=%d", sess.HistoryLength())
+		}
+	})
 }

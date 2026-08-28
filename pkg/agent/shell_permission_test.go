@@ -186,6 +186,133 @@ func TestCheckShellPermissionCdOnly(t *testing.T) {
 	}
 }
 
+func TestCheckShellPermissionAlwaysAllowGrantsPath(t *testing.T) {
+	baseDir := t.TempDir()
+	outsideDir := t.TempDir()
+	prevWD := tools.WorkingDir
+	tools.SetWorkingDir(baseDir)
+	ctrl := access.NewController([]string{baseDir})
+	tools.SetAccessController(ctrl)
+	peerID := int64(24682)
+	t.Cleanup(func() {
+		tools.ClearGrants(peerID)
+		tools.SetAccessController(nil)
+		tools.SetWorkingDir(prevWD)
+	})
+
+	askCount := 0
+	withQuestionCallback(t, func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+		askCount++
+		return map[string]interface{}{
+			"selected": []interface{}{"✅ Always allow"},
+		}, nil
+	})
+
+	a := newShellTestAgent(permission.Ruleset{
+		{Permission: "bash", Pattern: "*", Action: permission.Ask},
+	})
+	e := newAgentToolExecutor(a)
+
+	writeCmd := "cp " + outsideDir + "/a.txt " + outsideDir + "/b.txt"
+	first := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		"command": writeCmd,
+	}, peerID)
+	if !first {
+		t.Fatal("expected first write command allowed after Always allow")
+	}
+
+	second := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		"command": "cp " + outsideDir + "/c.txt " + outsideDir + "/d.txt",
+	}, peerID)
+	if !second {
+		t.Error("expected second write command to same path tree allowed without re-asking")
+	}
+	if askCount != 1 {
+		t.Errorf("expected exactly 1 question (path grant persists), got %d", askCount)
+	}
+	if err := tools.CheckPathAllowed(outsideDir + "/e.txt"); err != nil {
+		t.Errorf("expected outside dir to be writable after Always allow: %v", err)
+	}
+}
+
+func TestCheckShellPermissionAlwaysAllowGrantsCdPath(t *testing.T) {
+	baseDir := t.TempDir()
+	outsideDir := t.TempDir()
+	prevWD := tools.WorkingDir
+	tools.SetWorkingDir(baseDir)
+	ctrl := access.NewController([]string{baseDir})
+	tools.SetAccessController(ctrl)
+	peerID := int64(24685)
+	t.Cleanup(func() {
+		tools.ClearGrants(peerID)
+		tools.SetAccessController(nil)
+		tools.SetWorkingDir(prevWD)
+	})
+
+	askCount := 0
+	withQuestionCallback(t, func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+		askCount++
+		return map[string]interface{}{
+			"selected": []interface{}{"✅ Always allow"},
+		}, nil
+	})
+
+	a := newShellTestAgent(permission.Ruleset{
+		{Permission: "bash", Pattern: "*", Action: permission.Ask},
+	})
+	e := newAgentToolExecutor(a)
+
+	first := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		"command": "cd " + outsideDir,
+	}, peerID)
+	if !first {
+		t.Fatal("expected first cd into outside dir allowed after Always allow")
+	}
+
+	second := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		"command": "cd " + outsideDir + "/sub",
+	}, peerID)
+	if !second {
+		t.Error("expected cd into subdirectory to be allowed without re-asking")
+	}
+	if askCount != 1 {
+		t.Errorf("expected exactly 1 question (cd path grant persists), got %d", askCount)
+	}
+}
+
+func TestCheckShellPermissionReadOnlyAllowedAnywhere(t *testing.T) {
+	baseDir := t.TempDir()
+	prevWD := tools.WorkingDir
+	tools.SetWorkingDir(baseDir)
+	ctrl := access.NewController([]string{baseDir})
+	tools.SetAccessController(ctrl)
+	t.Cleanup(func() {
+		tools.SetAccessController(nil)
+		tools.SetWorkingDir(prevWD)
+	})
+
+	asked := false
+	withQuestionCallback(t, func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+		asked = true
+		return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
+	})
+
+	a := newShellTestAgent(permission.Ruleset{
+		{Permission: "bash", Pattern: "*", Action: permission.Ask},
+	})
+	e := newAgentToolExecutor(a)
+
+	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		"command": "cat /etc/passwd",
+	}, 12345)
+	if !result {
+		t.Error("expected read-only command allowed on any path without asking")
+	}
+	if asked {
+		t.Error("read-only command must not trigger a permission question")
+	}
+}
+
 func TestCheckShellPermissionAlwaysUsesPrefixOnly(t *testing.T) {
 	dir := t.TempDir()
 	prevWD := tools.WorkingDir
@@ -212,7 +339,7 @@ func TestCheckShellPermissionAlwaysUsesPrefixOnly(t *testing.T) {
 
 	_ = e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
 		"command": "cp /etc/passwd /tmp/x",
-	}, 12345)
+	}, 24684)
 
 	found := false
 	for _, rule := range *checker.P {
@@ -324,7 +451,7 @@ func TestCheckShellPermissionStillAsksForFileCommandWhenEnabled(t *testing.T) {
 
 	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
 		"command": "echo hi > /etc/file",
-	}, 12345)
+	}, 24680)
 	if !result {
 		t.Error("expected command with redirect outside dir to be asked and approved")
 	}
@@ -421,7 +548,7 @@ func TestCheckShellPermissionStillAsksForADBHostPushOutsideWhenEnabled(t *testin
 
 	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
 		"command": "adb push /etc/passwd /sdcard/",
-	}, 12345)
+	}, 24681)
 	if !result {
 		t.Error("expected host push to be asked and approved")
 	}

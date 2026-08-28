@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -225,7 +226,8 @@ func (e *agentToolExecutor) checkShellPermission(ctx context.Context, checker pe
 		display = strings.Join(problematic, " && ")
 	}
 	e.agent.sendThinking(peerID, fmt.Sprintf("[PERMISSION] Asking user for bash command '%s'...", display))
-	return askShellPermission(ctx, checker, scan, problematic, peerID)
+
+	return askShellPermission(ctx, checker, scan, problematic, command, peerID)
 }
 
 func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName string, args map[string]string, peerID int64) bool {
@@ -255,6 +257,11 @@ func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName str
 	case "ask":
 		
 		
+		if tools.IsReadOnlyFileTool(toolName) {
+			logger.DebugToFile("[checkPermissionAsk] %s: read-only file tool, reading is allowed everywhere", toolName)
+			return true
+		}
+		
 		if paths := tools.FileToolPaths(toolName, args); len(paths) > 0 {
 			if tools.PathsAllAllowed(paths) {
 				logger.DebugToFile("[checkPermissionAsk] %s: all %d paths in allowed dirs, skip ask", toolName, len(paths))
@@ -282,6 +289,10 @@ func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName str
 }
 
 func (e *agentToolExecutor) checkPathAccess(ctx context.Context, toolName string, args map[string]string, peerID int64) bool {
+	if tools.IsReadOnlyFileTool(toolName) {
+		return true
+	}
+
 	paths := tools.FileToolPaths(toolName, args)
 	if len(paths) == 0 {
 		return true
@@ -331,10 +342,14 @@ func (e *agentToolExecutor) checkPathAccess(ctx context.Context, toolName string
 			}
 
 			choice, _ := selected[0].(string)
-			switch choice {
-			case "Allow", "allow", "Allow always", "allow always":
-				ctrl.GrantPath(resolved)
-				e.agent.sendThinking(peerID, fmt.Sprintf("[ACCESS] Access granted to: %s", resolved))
+			lower := strings.ToLower(choice)
+			switch {
+			case strings.Contains(lower, "always"):
+				grantDir := resolveGrantDir(resolved)
+				tools.GrantPath(peerID, grantDir)
+				e.agent.sendThinking(peerID, fmt.Sprintf("[ACCESS] Access granted for session to: %s", grantDir))
+			case strings.Contains(lower, "allow") || strings.EqualFold(lower, "разрешить"):
+				logger.DebugToFile("[checkPathAccess] one-time allow for %s (no grant stored)", resolved)
 			default:
 				return false
 			}
@@ -344,6 +359,55 @@ func (e *agentToolExecutor) checkPathAccess(ctx context.Context, toolName string
 	return true
 }
 
+
+func resolveGrantDir(path string) string {
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return path
+	}
+	return filepath.Dir(path)
+}
+
+var cdCommands = map[string]bool{
+	"cd": true, "chdir": true, "pushd": true, "popd": true,
+}
+
+func grantShellPaths(peerID int64, command string) {
+	tokens := tools.ExtractShellPaths(command)
+	tokens = append(tokens, extractCdTargets(command)...)
+
+	seen := make(map[string]bool)
+	for _, token := range tokens {
+		if seen[token] {
+			continue
+		}
+		seen[token] = true
+
+		resolved, err := resolveToolPath(token)
+		if err != nil {
+			continue
+		}
+		if tools.CheckPathAllowed(resolved) == nil {
+			continue
+		}
+		tools.GrantPath(peerID, resolveGrantDir(resolved))
+		logger.DebugToFile("[grantShellPaths] granted path %s for peer %d", resolved, peerID)
+	}
+}
+
+func extractCdTargets(command string) []string {
+	parts := strings.Fields(command)
+	if len(parts) == 0 || !cdCommands[parts[0]] {
+		return nil
+	}
+	var targets []string
+	for _, p := range parts[1:] {
+		if strings.HasPrefix(p, "-") {
+			continue
+		}
+		targets = append(targets, p)
+	}
+	return targets
+}
 
 func resolveToolPath(path string) (string, error) {
 	if path == "" {
@@ -437,7 +501,7 @@ func getQuestionState() (func(int64, map[string]interface{}) (map[string]interfa
 }
 
 
-func askShellPermission(ctx context.Context, checker permissionChecker, scan permission.Scan, problematic []string, peerID int64) bool {
+func askShellPermission(ctx context.Context, checker permissionChecker, scan permission.Scan, problematic []string, command string, peerID int64) bool {
 	cb, _ := getQuestionState()
 	if cb == nil {
 		logger.DebugToFile("[askShellPermission] cb is nil, allowing command without asking")
@@ -487,6 +551,7 @@ func askShellPermission(ctx context.Context, checker permissionChecker, scan per
 			checker.Approve("bash", prefix)
 			logger.DebugToFile("[askShellPermission] approved always rule bash %q", prefix)
 		}
+		grantShellPaths(peerID, command)
 		return true
 	case strings.Contains(choice, "Allow"), strings.Contains(choice, "allow"), strings.Contains(choice, "Разрешить"):
 		return true

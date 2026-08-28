@@ -38,8 +38,40 @@ func (s *sqliteDB) GetSession(peerID int64) (*SessionData, error) {
 }
 
 func (s *sqliteDB) SaveSession(sd *SessionData) error {
+	return upsertSession(s.db, sd)
+}
+
+func (s *sqliteDB) ClearSession(peerID int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM messages WHERE peer_id = ?`, peerID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM sessions WHERE peer_id = ?`, peerID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+type execer interface {
+	Exec(query string, args ...interface{}) (sql.Result, error)
+}
+
+
+func upsertSession(e execer, sd *SessionData) error {
 	pinnedJSON, _ := json.Marshal(sd.Pinned)
-	_, err := s.db.Exec(`
+	_, err := e.Exec(`
 		INSERT INTO sessions (peer_id, created_at, updated_at, working_dir,
 		                      loop_count, is_looped, last_looped, pinned, resume_prompt)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -64,25 +96,27 @@ func (s *sqliteDB) SaveSession(sd *SessionData) error {
 	return err
 }
 
-func (s *sqliteDB) ClearSession(peerID int64) error {
+
+func (s *sqliteDB) ReplaceSessionMessages(sd *SessionData, msgs []MessageData) error {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return err
+		return fmt.Errorf("begin replace: %w", err)
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`DELETE FROM messages WHERE peer_id = ?`, peerID); err != nil {
-		return err
+	if err := upsertSession(tx, sd); err != nil {
+		return fmt.Errorf("upsert session: %w", err)
 	}
-	if _, err := tx.Exec(`DELETE FROM sessions WHERE peer_id = ?`, peerID); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
 
-func boolToInt(b bool) int {
-	if b {
-		return 1
+	if _, err := tx.Exec(`DELETE FROM messages WHERE peer_id = ?`, sd.PeerID); err != nil {
+		return fmt.Errorf("clear messages: %w", err)
 	}
-	return 0
+
+	for _, msg := range msgs {
+		if err := addMessageTo(tx, sd.PeerID, msg); err != nil {
+			return fmt.Errorf("add message: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }

@@ -908,7 +908,22 @@ func ProblematicShellSubCommands(command string) []string {
 	return problematic
 }
 
+var readOnlyFileTools = map[string]bool{
+	"file_read": true, "read_file": true,
+	"file_list": true, "list_dir": true, "dir_list": true,
+	"glob": true, "find_files": true,
+	"search_code": true, "grep": true, "grep_search": true,
+}
+
+func IsReadOnlyFileTool(toolName string) bool {
+	return readOnlyFileTools[toolName]
+}
+
+
 func CheckToolArgs(toolName string, args map[string]string) error {
+	if IsReadOnlyFileTool(toolName) {
+		return nil
+	}
 	paths := FileToolPaths(toolName, args)
 	for _, p := range paths {
 		resolved, err := resolvePath(p)
