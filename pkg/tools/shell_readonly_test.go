@@ -104,6 +104,13 @@ func TestShellCommandFilesystemSafeReadOnly(t *testing.T) {
 			t.Error("expected true: tail with no file argument should not ask")
 		}
 	})
+
+	t.Run("tr reading proc environ via stdin redirect is safe", func(t *testing.T) {
+		setup(t)
+		if !ShellCommandFilesystemSafe(`tr '\0' '\n' < /proc/34947/environ`) {
+			t.Error("expected true: tr reading /proc/<pid>/environ via stdin redirect is read-only, should not ask")
+		}
+	})
 }
 
 func TestShellCommandFilesystemSafeUnknownProgWithHeredocPayload(t *testing.T) {

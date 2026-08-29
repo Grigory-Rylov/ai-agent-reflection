@@ -137,6 +137,39 @@ func TestSpecShellReadOnlyCatOutsideDoesNotAsk(t *testing.T) {
 	}
 }
 
+func TestSpecShellTrReadingProcEnvironDoesNotAsk(t *testing.T) {
+	dir := t.TempDir()
+	prevWD := tools.WorkingDir
+	tools.SetWorkingDir(dir)
+	tools.SetAccessController(access.NewController([]string{dir}))
+	t.Cleanup(func() {
+		tools.SetAccessController(nil)
+		tools.SetWorkingDir(prevWD)
+	})
+
+	called := false
+	withQuestionCallback(t, func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+		called = true
+		return map[string]interface{}{"selected": []interface{}{"✅ Allow"}}, nil
+	})
+
+	a := newShellTestAgent(permission.Ruleset{
+		{Permission: "bash", Pattern: "*", Action: permission.Ask},
+	})
+	e := newAgentToolExecutor(a)
+
+	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		"command": `tr '\0' '\n' < /proc/34947/environ`,
+	}, 666666)
+
+	if !result {
+		t.Error("expected read-only tr reading /proc/<pid>/environ to be allowed")
+	}
+	if called {
+		t.Error("expected NO question: stdin redirect is a read, not a write outside allowed dirs")
+	}
+}
+
 func TestSpecShellTeeOutsideAsksOnceThenGrantCoversRepeat(t *testing.T) {
 	allowedDir := t.TempDir()
 	outsideDir := t.TempDir()

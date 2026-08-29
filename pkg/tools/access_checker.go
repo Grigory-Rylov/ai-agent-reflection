@@ -709,6 +709,27 @@ func redirectionTargets(sub string) []string {
 	return targets
 }
 
+func outputRedirectionTargets(sub string) []string {
+	var targets []string
+	tokens := permission.Tokenize(sub)
+	for i := 0; i < len(tokens); i++ {
+		opPos := unquotedRedirOperatorAt(tokens[i])
+		if opPos < 0 || tokens[i][opPos] != '>' {
+			continue
+		}
+		target := strings.TrimLeft(tokens[i][opPos+1:], "&0123456789")
+		if target != "" && looksLikePath(target) {
+			targets = append(targets, target)
+			continue
+		}
+		if opPos == len(tokens[i])-1 && i+1 < len(tokens) && looksLikePath(tokens[i+1]) {
+			targets = append(targets, tokens[i+1])
+			i++
+		}
+	}
+	return targets
+}
+
 func unquotedRedirOperatorAt(token string) int {
 	inSingle, inDouble := false, false
 	lastUnquoted := -1
@@ -837,7 +858,7 @@ func isSubcommandSafe(sub string, devPaths map[string]bool) bool {
 	if isAbsolutePath(rest[0]) {
 		return absoluteProgramSafe(rest)
 	}
-	for _, target := range redirectionTargets(sub) {
+	for _, target := range outputRedirectionTargets(sub) {
 		if !devPaths[target] && !isDiscardPath(target) {
 			if !PathsAllAllowed([]string{target}) {
 				return false
