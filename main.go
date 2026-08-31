@@ -291,6 +291,7 @@ func main() {
 	sysPromptDir := filepath.Join(agentDir, "agents")
 	subAgentCfg := agent.Config{
 		LlamaServerURL:      llamaURL,
+		EngineType:          modelHolder.GetCurrentEngineType(),
 		Model:               modelName,
 		MaxTokens:           maxTokens,
 		ModelLimitInput:     config.ModelLimitInput,

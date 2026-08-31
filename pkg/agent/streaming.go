@@ -126,14 +126,18 @@ func (a *agentImpl) buildBaseRequestJSON(model string, messages []Message, strea
 		maxOutput = a.config.MaxTokens
 	}
 	req := map[string]interface{}{
-		"model":                model,
-		"messages":             messages,
-		"temperature":          a.config.Temperature,
-		"max_tokens":           maxOutput,
-		"stream":               stream,
-		"chat_template_kwargs": map[string]interface{}{
+		"model":       model,
+		"messages":    messages,
+		"temperature": a.config.Temperature,
+		"max_tokens":  maxOutput,
+		"stream":      stream,
+	}
+	if a.config.EngineType == "ninfer" {
+		req["enable_thinking"] = true
+	} else {
+		req["chat_template_kwargs"] = map[string]interface{}{
 			"enable_thinking": true,
-		},
+		}
 	}
 	
 	if a.config.SlotID >= 0 {

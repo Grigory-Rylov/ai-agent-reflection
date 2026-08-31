@@ -822,6 +822,7 @@ func (al *agentLoop) buildAgentConfig() agent.Config {
 	_, modelName, llamaURL := al.config.ModelHolder.GetCurrent()
 	cfg := agent.Config{
 		LlamaServerURL:                 llamaURL,
+		EngineType:                     al.config.ModelHolder.GetCurrentEngineType(),
 		Model:                          modelName,
 		MaxTokens:                      al.config.MaxTokens,
 		Temperature:                    al.config.Temperature,
