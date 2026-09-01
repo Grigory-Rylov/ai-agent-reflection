@@ -155,8 +155,10 @@ func TestTruncateToolResult_HasTaskTool(t *testing.T) {
 
 func TestTruncateToolResult_DefaultDir(t *testing.T) {
 	oldWD := WorkingDir
-	defer func() { WorkingDir = oldWD }()
+	oldBase := BaseDir
+	defer func() { WorkingDir = oldWD; BaseDir = oldBase }()
 	WorkingDir = t.TempDir()
+	BaseDir = t.TempDir()
 
 	content := strings.Repeat("w", 8192)
 	res, err := TruncateToolResult(content, TruncateOptions{MaxLines: 10, MaxBytes: 1024})
@@ -169,7 +171,7 @@ func TestTruncateToolResult_DefaultDir(t *testing.T) {
 	if _, err := os.Stat(res.OutputPath); err != nil {
 		t.Errorf("saved file not found: %v", err)
 	}
-	expectedDir := filepath.Join(WorkingDir, "tool-output")
+	expectedDir := filepath.Join(BaseDir, "tool-output")
 	if filepath.Dir(res.OutputPath) != expectedDir {
 		t.Errorf("expected output in %q, got %q", expectedDir, res.OutputPath)
 	}

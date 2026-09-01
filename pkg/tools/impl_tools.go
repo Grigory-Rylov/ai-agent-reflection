@@ -17,14 +17,17 @@ import (
 
 
 var (
-	
+
 	WorkingDir string
+
+	BaseDir string
 )
 
 func init() {
 	wd, err := os.Getwd()
 	if err == nil {
 		WorkingDir = wd
+		BaseDir = wd
 	}
 }
 

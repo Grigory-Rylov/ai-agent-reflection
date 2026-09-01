@@ -148,7 +148,7 @@ func (a *agentImpl) buildBaseRequestJSON(model string, messages []Message, strea
 
 
 func (a *agentImpl) saveDebugPrompt(jsonData []byte) {
-	debugDir := filepath.Join(tools.WorkingDir, "debug")
+	debugDir := filepath.Join(tools.BaseDir, "debug")
 	promptPath := filepath.Join(debugDir, "debug_prompt.txt")
 	var prettyJSON bytes.Buffer
 	if err := json.Indent(&prettyJSON, jsonData, "", "  "); err != nil {

@@ -673,13 +673,6 @@ func (h *BotHandler) isAccessibleDir(dir string) bool {
 	return err == nil && info.IsDir()
 }
 
-func (h *BotHandler) commitSessionWorkingDir(workDir string, peerID int64) {
-	if s := h.aiAgent.EnsureSession(peerID); s != nil {
-		s.SetWorkingDir(workDir)
-	}
-	tools.SetWorkingDir(workDir)
-}
-
 func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 	newPath := ""
 	parts := strings.SplitN(input, " ", 2)
@@ -707,8 +700,6 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 		return fmt.Sprintf("Ошибка: не удалось получить абсолютный путь: %v", err)
 	}
 
-	h.commitSessionWorkingDir(absPath, peerID)
-
 	h.cancelActiveRequest(peerID)
 	if h.orchestrator != nil {
 		h.orchestrator.ClearActiveSessions(peerID)
@@ -732,14 +723,18 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 	}
 	tools.GlobalTodo.Reset()
 
-	h.commitSessionWorkingDir(absPath, peerID)
-
 	if ctrl := tools.GetAccessController(); ctrl != nil {
 		ctrl.AddAllowedDir(absPath)
 		if h.log != nil {
 			h.log.InfoLogf("Granted access to new working dir: %s", absPath)
 		}
 	}
+
+	sess := h.aiAgent.EnsureSession(peerID)
+	if sess != nil {
+		sess.SetWorkingDir(absPath)
+	}
+	tools.SetWorkingDir(absPath)
 
 	h.clearHandlerSession(peerID)
 

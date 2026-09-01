@@ -73,7 +73,7 @@ func (a *agentImpl) saveDebugResponse(content, reasoning, finishReason string, t
 		sb.WriteString(fmt.Sprintf("  %d. %s: %s\n", i+1, tc.Function.Name, ToolCallArgumentsStr(tc)))
 	}
 
-	debugDir := filepath.Join(tools.WorkingDir, "debug")
+	debugDir := filepath.Join(tools.BaseDir, "debug")
 	responsePath := filepath.Join(debugDir, "debug_response.txt")
 	os.MkdirAll(debugDir, 0755)
 	if err := os.WriteFile(responsePath, []byte(sb.String()), 0644); err != nil {
