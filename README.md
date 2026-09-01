@@ -128,18 +128,3 @@ Remote management via VK when running under `agent-restarter`:
 | `/update` | Git pull, rebuild (`./build.sh`), restart |
 | `/b <branch>` | Checkout branch, pull, rebuild, restart |
 | `/restart` | Restart agent without rebuilding |
-
-## Project Structure
-
-```
-cmd/vk-gateway-restarter/   # Restarter binary
-pkg/agent/                   # LLM streaming + function calling
-pkg/agentloop/               # Conversation orchestration
-pkg/tools/                   # Tool implementations
-pkg/vk/                      # VK Bot API client
-session/                     # Session memory (SQLite)
-system_prompt.txt            # Main system prompt
-agents/*.md                  # Per-agent system prompts
-build.sh                     # Build script (use this, not go build directly)
-debug.log                    # Runtime log file
-```
