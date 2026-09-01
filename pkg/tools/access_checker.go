@@ -922,6 +922,10 @@ func exportStatementPaths(rest []string) []string {
 		if eq <= 0 {
 			continue
 		}
+		name := tok[:eq]
+		if name == "PATH" {
+			continue
+		}
 		value := tok[eq+1:]
 		if isAbsolutePath(value) || strings.HasPrefix(value, "~") {
 			paths = append(paths, value)
@@ -937,7 +941,11 @@ func envAssignmentPaths(rest []string) []string {
 	}
 	var paths []string
 	for i := 0; i < cmdStart; i++ {
-		value := rest[i][strings.IndexByte(rest[i], '=')+1:]
+		eq := strings.IndexByte(rest[i], '=')
+		if rest[i][:eq] == "PATH" {
+			continue
+		}
+		value := rest[i][eq+1:]
 		if isAbsolutePath(value) || strings.HasPrefix(value, "~") {
 			paths = append(paths, value)
 		}

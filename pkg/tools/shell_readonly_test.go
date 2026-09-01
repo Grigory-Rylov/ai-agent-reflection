@@ -237,6 +237,24 @@ func TestShellCommandFilesystemSafeEnvMutations(t *testing.T) {
 		return dir
 	}
 
+	t.Run("export PATH with absolute dir is safe", func(t *testing.T) {
+		// export PATH=... is a pure in-process env mutation: no file is read
+		// or written, so it must not trigger a permission prompt even when
+		// the value contains absolute paths outside the allowed dirs.
+		setup(t)
+		if !ShellCommandFilesystemSafe("export PATH=/home/grishberg/.local/node/bin:$PATH") {
+			t.Error("expected true: export PATH with absolute dir outside allowed dirs does not touch the filesystem")
+		}
+	})
+
+	t.Run("export PATH chained with go version is safe", func(t *testing.T) {
+		setup(t)
+		cmd := `export PATH="/home/grishberg/.local/node/bin:$PATH" && go version`
+		if !ShellCommandFilesystemSafe(cmd) {
+			t.Error("expected true: export PATH plus read-only go version should not ask")
+		}
+	})
+
 	t.Run("env assignment pointing outside allowed dir is not safe", func(t *testing.T) {
 		setup(t)
 		if ShellCommandFilesystemSafe("GOCACHE=/outside/go-cache go build ./...") {
