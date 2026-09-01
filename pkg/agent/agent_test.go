@@ -476,16 +476,19 @@ func TestWorkingDirRestoredFromStore(t *testing.T) {
 
 	agent := NewAgent(config)
 
-	
 	prevDir := tools.WorkingDir
 	tools.SetWorkingDir(fakeDefaultDir)
 	defer tools.SetWorkingDir(prevDir)
 
-	
-	_ = agent.GetSession(12345)
+	s := agent.GetSession(12345)
+	if s.GetWorkingDir() != savedDir {
+		t.Errorf("expected session working dir = %q, got %q (not restored from store)", savedDir, s.GetWorkingDir())
+	}
+
+	_, _ = agent.ProcessMessage(context.Background(), "hi", 12345)
 
 	if tools.WorkingDir != savedDir {
-		t.Errorf("expected tools.WorkingDir = %q, got %q (not restored from store)", savedDir, tools.WorkingDir)
+		t.Errorf("expected tools.WorkingDir = %q, got %q (not synced from session)", savedDir, tools.WorkingDir)
 	}
 }
 
@@ -510,13 +513,11 @@ func TestWorkingDirNotOverwrittenWhenEmpty(t *testing.T) {
 
 	agent := NewAgent(config)
 
-	
 	prevDir := tools.WorkingDir
 	tools.SetWorkingDir(fakeDefaultDir)
 	defer tools.SetWorkingDir(prevDir)
 
-	
-	_ = agent.GetSession(12346)
+	_, _ = agent.ProcessMessage(context.Background(), "hi", 12346)
 
 	if tools.WorkingDir != fakeDefaultDir {
 		t.Errorf("expected tools.WorkingDir unchanged %q, got %q", fakeDefaultDir, tools.WorkingDir)

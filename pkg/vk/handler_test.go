@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/access"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agentloop"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
@@ -659,15 +660,25 @@ func TestClearCancelsPendingQuestionAndGrants(t *testing.T) {
 	orch := &mockOrchestrator{clearedPeers: make(map[int64]bool)}
 	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, orch, nil)
 
+	grantedDir, err := os.MkdirTemp("", "clear_grants_*")
+	if err != nil {
+		t.Fatalf("create granted dir: %v", err)
+	}
+	defer os.RemoveAll(grantedDir)
+
+	ctrl := access.NewController([]string{})
+	tools.SetAccessController(ctrl)
+	defer tools.SetAccessController(nil)
+
 	peerID := int64(987)
 
 	ch := tools.RegisterPendingQuestion(peerID)
-	tools.ApplyPathGrant(peerID, "/some/path/")
+	tools.ApplyPathGrant(peerID, grantedDir)
 
 	if !tools.HasPendingQuestion(peerID) {
 		t.Fatal("expected pending question to be registered")
 	}
-	if !tools.IsPathGranted(peerID, "/some/path/file.txt") {
+	if !tools.IsPathGranted(peerID, filepath.Join(grantedDir, "file.txt")) {
 		t.Fatal("expected path grant to be applied")
 	}
 
@@ -682,7 +693,7 @@ func TestClearCancelsPendingQuestionAndGrants(t *testing.T) {
 	if tools.HasPendingQuestion(peerID) {
 		t.Error("expected pending question cleared after /clear")
 	}
-	if tools.IsPathGranted(peerID, "/some/path/file.txt") {
+	if tools.IsPathGranted(peerID, filepath.Join(grantedDir, "file.txt")) {
 		t.Error("expected path grants cleared after /clear")
 	}
 	if !orch.clearedPeers[peerID] {

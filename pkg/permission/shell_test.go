@@ -99,6 +99,49 @@ func TestScanCommandPatterns(t *testing.T) {
 	}
 }
 
+func TestScanCommandNoPathBinaryWithRedirect(t *testing.T) {
+	scan := ScanCommand(`tr '\0' '\n' < /proc/34947/environ`)
+	wantPatterns := []string{`tr '\0' '\n' < /proc/34947/environ`}
+	wantAlways := []string{"tr *"}
+	if !reflect.DeepEqual(scan.Patterns, wantPatterns) {
+		t.Errorf("patterns = %v, want %v", scan.Patterns, wantPatterns)
+	}
+	if !reflect.DeepEqual(scan.Always, wantAlways) {
+		t.Errorf("always = %v, want %v", scan.Always, wantAlways)
+	}
+}
+
+func TestScanCommandNoPathBinaryAlwaysPattern(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		always  string
+	}{
+		{name: "tr without path", command: "tr -d '\\n'", always: "tr *"},
+		{name: "awk without path", command: "awk '{print $1}'", always: "awk *"},
+		{name: "sed without path", command: "sed -i s/a/b/", always: "sed *"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scan := ScanCommand(tt.command)
+			if len(scan.Always) != 1 || scan.Always[0] != tt.always {
+				t.Errorf("ScanCommand(%q).Always = %v, want [%s]", tt.command, scan.Always, tt.always)
+			}
+		})
+	}
+}
+
+func TestEvaluateNoPathBinaryAllowedByAlwaysPattern(t *testing.T) {
+	ruleset := Ruleset{
+		{Permission: "bash", Pattern: "*", Action: Ask},
+		{Permission: "bash", Pattern: "tr *", Action: Allow},
+	}
+	rule := Evaluate("bash", `tr '\0' '\n' < /proc/34947/environ`, ruleset)
+	if rule.Action != Allow {
+		t.Errorf("Evaluate action = %q, want %q", rule.Action, Allow)
+	}
+}
+
 func TestScanCommandQuotes(t *testing.T) {
 	scan := ScanCommand(`echo "hello world" && cat 'it''s'`)
 	if !reflect.DeepEqual(scan.Patterns, []string{`echo "hello world"`, `cat 'it''s'`}) {

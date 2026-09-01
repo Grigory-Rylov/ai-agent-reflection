@@ -128,6 +128,12 @@ func main() {
 		log.InfoLog("SQLite store initialized: %s", dbPath)
 	}
 
+	allowedDirs := []string{tools.WorkingDir}
+	allowedDirs = append(allowedDirs, config.AllowedDirs...)
+	accessController := access.NewController(allowedDirs)
+	tools.SetAccessController(accessController)
+	log.InfoLogf("Access control: allowed dirs = %v", accessController.AllowedDirs())
+
 	if dbStore != nil {
 		tools.SetGrantPersistence(
 			func(peerID int64, path string) {
@@ -182,12 +188,6 @@ func main() {
 	toolRegistry := tools.NewRegistry()
 	registerTools(toolRegistry)
 	tools.SetSendFileDependencies(vkClient, config.PeerID)
-
-	allowedDirs := []string{tools.WorkingDir}
-	allowedDirs = append(allowedDirs, config.AllowedDirs...)
-	accessController := access.NewController(allowedDirs)
-	tools.SetAccessController(accessController)
-	log.InfoLogf("Access control: allowed dirs = %v", accessController.AllowedDirs())
 
 	var mcpManager *mcp.Manager
 	if config.MCPConfigPath != "" {
@@ -291,6 +291,7 @@ func main() {
 	sysPromptDir := filepath.Join(agentDir, "agents")
 	subAgentCfg := agent.Config{
 		LlamaServerURL:      llamaURL,
+		EngineType:          modelHolder.GetCurrentEngineType(),
 		Model:               modelName,
 		MaxTokens:           maxTokens,
 		ModelLimitInput:     config.ModelLimitInput,

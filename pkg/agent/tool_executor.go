@@ -14,14 +14,11 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util/stringutil"
 )
 
-
 const MaxToolResultSize = 50000
-
 
 type ToolExecutor interface {
 	ExecuteAll(ctx context.Context, toolCalls []ToolCall, peerID int64) FunctionCallResult
 }
-
 
 type agentToolExecutor struct {
 	agent *agentImpl
@@ -116,14 +113,12 @@ func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, 
 		return e.agent.createErrorResult(toolCall.ID, toolName, errMsg), err
 	}
 
-	
 	if !e.checkPermissionAsk(ctx, toolName, args, peerID) {
 		errMsg := fmt.Sprintf("Permission denied for tool '%s' by user", toolName)
 		e.agent.sendThinking(peerID, "[TOOL] Denied: "+toolName)
 		return e.agent.createErrorResult(toolCall.ID, toolName, errMsg), fmt.Errorf("%s", errMsg)
 	}
 
-	
 	if !e.checkPathAccess(ctx, toolName, args, peerID) {
 		errMsg := fmt.Sprintf("Access denied for tool '%s' by user", toolName)
 		e.agent.sendThinking(peerID, "[TOOL] Denied: "+toolName)
@@ -162,10 +157,9 @@ func (e *agentToolExecutor) executeTool(ctx context.Context, toolCall ToolCall, 
 	}, nil
 }
 
-
 func (e *agentToolExecutor) truncateToolOutput(peerID int64, content string) string {
 	opts := tools.TruncateOptions{
-		Dir:         filepath.Join(tools.WorkingDir, "tool-output"),
+		Dir:         filepath.Join(tools.BaseDir, "tool-output"),
 		MaxLines:    e.agent.config.ToolOutputMaxLines,
 		MaxBytes:    e.agent.config.ToolOutputMaxBytes,
 		HasTaskTool: e.agent.toolsRegistry.IsRegistered("task"),
@@ -212,8 +206,6 @@ func (e *agentToolExecutor) checkShellPermission(ctx context.Context, checker pe
 		return true
 	}
 
-	
-	
 	if tools.ShellCommandFilesystemSafe(command) {
 		logger.DebugToFile("[checkPermissionAsk] shell_execute: filesystem-safe command, skip ask")
 		return true
@@ -231,12 +223,16 @@ func (e *agentToolExecutor) checkShellPermission(ctx context.Context, checker pe
 func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName string, args map[string]string, peerID int64) bool {
 	logger.DebugToFile("[checkPermissionAsk] enter: tool=%s, peer=%d, args=%v", toolName, peerID, args)
 
-	
 	if toolPath := extractToolPath(toolName, args); toolPath != "" {
 		if tools.IsPathGranted(peerID, toolPath) {
 			logger.DebugToFile("[checkPermissionAsk] path=%s granted for peer %d, allow all tools", toolPath, peerID)
 			return true
 		}
+	}
+
+	if readOnlyTools[resolveToolAlias(toolName)] {
+		logger.DebugToFile("[checkPermissionAsk] read-only tool=%s, allow without asking", toolName)
+		return true
 	}
 
 	checker := e.agent.getPermissionChecker()
@@ -253,25 +249,22 @@ func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName str
 		e.agent.sendThinking(peerID, fmt.Sprintf("[TOOL] Denied: %s (permission)", toolName))
 		return false
 	case "ask":
-		
-		
+
 		if paths := tools.FileToolPaths(toolName, args); len(paths) > 0 {
 			if tools.PathsAllAllowed(paths) {
 				logger.DebugToFile("[checkPermissionAsk] %s: all %d paths in allowed dirs, skip ask", toolName, len(paths))
 				return true
 			}
 		}
-		
-		
-		
+
 		if toolName == "shell_execute" || toolName == "shell" {
 			if cmd, ok := args["command"]; ok {
 				return e.checkShellPermission(ctx, checker, cmd, peerID)
 			}
 		}
-		
+
 	default:
-		return true 
+		return true
 	}
 
 	e.agent.sendThinking(peerID, fmt.Sprintf("[PERMISSION] Asking user for tool '%s'...", toolName))
@@ -281,7 +274,26 @@ func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName str
 	return result
 }
 
+var readOnlyTools = map[string]bool{
+	"file_read":   true,
+	"read_file":   true,
+	"file_list":   true,
+	"list_dir":    true,
+	"dir_list":    true,
+	"glob":        true,
+	"find_files":  true,
+	"search_code": true,
+	"grep":        true,
+	"grep_search": true,
+	"image2text":  true,
+	"video2text":  true,
+}
+
 func (e *agentToolExecutor) checkPathAccess(ctx context.Context, toolName string, args map[string]string, peerID int64) bool {
+	if readOnlyTools[resolveToolAlias(toolName)] {
+		return true
+	}
+
 	paths := tools.FileToolPaths(toolName, args)
 	if len(paths) == 0 {
 		return true
@@ -297,45 +309,8 @@ func (e *agentToolExecutor) checkPathAccess(ctx context.Context, toolName string
 		if err != nil {
 			continue
 		}
-
-		if err := tools.CheckPathAllowed(resolved); err != nil {
-			e.agent.sendThinking(peerID, fmt.Sprintf("[ACCESS] Need permission to access path: %s", resolved))
-
-			cb, _ := getQuestionState()
-			if cb == nil {
-				return true
-			}
-
-			q := map[string]interface{}{
-				"question": fmt.Sprintf("Allow access to path '%s'?", resolved),
-				"header":   "Access Permission",
-				"options": []map[string]interface{}{
-					{"label": "Allow", "description": "Allow access this one time"},
-					{"label": "Allow always", "description": "Always allow for this session"},
-					{"label": "Deny", "description": "Deny access"},
-				},
-			}
-
-			answer, err := cb(peerID, q)
-			if err != nil {
-				return false
-			}
-
-			selected, _ := answer["selected"].([]interface{})
-			if len(selected) == 0 {
-				rawAnswer, _ := answer["answer"].(string)
-				selected = []interface{}{rawAnswer}
-			}
-			if len(selected) == 0 {
-				return false
-			}
-
-			choice, _ := selected[0].(string)
-			switch choice {
-			case "Allow", "allow", "Allow always", "allow always":
-				ctrl.GrantPath(resolved)
-				e.agent.sendThinking(peerID, fmt.Sprintf("[ACCESS] Access granted to: %s", resolved))
-			default:
+		if err := tools.CheckPathAllowedForPeer(peerID, resolved); err != nil {
+			if !e.askPathAccess(ctx, peerID, resolved) {
 				return false
 			}
 		}
@@ -344,6 +319,49 @@ func (e *agentToolExecutor) checkPathAccess(ctx context.Context, toolName string
 	return true
 }
 
+func (e *agentToolExecutor) askPathAccess(ctx context.Context, peerID int64, resolved string) bool {
+	e.agent.sendThinking(peerID, fmt.Sprintf("[ACCESS] Need permission to access path: %s", resolved))
+
+	cb, _ := getQuestionState()
+	if cb == nil {
+		return true
+	}
+
+	q := map[string]interface{}{
+		"question": fmt.Sprintf("Allow access to path '%s'?", resolved),
+		"header":   "Access Permission",
+		"options": []map[string]interface{}{
+			{"label": "Allow", "description": "Allow access and remember for this path"},
+			{"label": "Deny", "description": "Deny access"},
+		},
+	}
+
+	answer, err := cb(peerID, q)
+	if err != nil {
+		return false
+	}
+
+	selected, _ := answer["selected"].([]interface{})
+	if len(selected) == 0 {
+		rawAnswer, _ := answer["answer"].(string)
+		selected = []interface{}{rawAnswer}
+	}
+	if len(selected) == 0 {
+		return false
+	}
+
+	choice, _ := selected[0].(string)
+	lowerChoice := strings.ToLower(choice)
+	if strings.Contains(lowerChoice, "deny") || strings.Contains(lowerChoice, "denied") || strings.Contains(choice, "Нет") || strings.Contains(choice, "Запрет") {
+		return false
+	}
+	if strings.Contains(lowerChoice, "allow") || strings.Contains(lowerChoice, "permit") || strings.Contains(choice, "Да") || strings.Contains(choice, "Разрешить") {
+		tools.GrantPath(peerID, resolved)
+		e.agent.sendThinking(peerID, fmt.Sprintf("[ACCESS] Access granted to: %s", resolved))
+		return true
+	}
+	return false
+}
 
 func resolveToolPath(path string) (string, error) {
 	if path == "" {
@@ -378,17 +396,14 @@ func askUserPermission(ctx context.Context, peerID int64, toolName string, args 
 
 	logger.DebugToFile("[askUserPermission] asking user for tool=%s, args=%v, peer=%d", toolName, args, peerID)
 
-	
 	detail := buildToolPermissionDetail(toolName, args)
 
-	
 	q := map[string]interface{}{
 		"question": fmt.Sprintf("Allow: %s?", detail),
 		"header":   "🔐 " + toolName,
 		"options": []map[string]interface{}{
-			{"label": "✅ Allow", "description": "Allow this one time"},
-			{"label": "✅ Always allow", "description": "Always allow for this session"},
-			{"label": "❌ Deny", "description": "Deny this time"},
+			{"label": "✅ Allow", "description": "Разрешить и запомнить для этого пути"},
+			{"label": "❌ Deny", "description": "Отклонить"},
 		},
 	}
 
@@ -418,24 +433,27 @@ func askUserPermission(ctx context.Context, peerID int64, toolName string, args 
 	}
 
 	choice, _ := selected[0].(string)
-	switch {
-	case strings.Contains(choice, "Always allow"), strings.Contains(choice, "always allow"), strings.Contains(choice, "Всегда"):
-		if p := extractToolPath(toolName, args); p != "" {
-			tools.GrantPath(peerID, p)
-			logger.DebugToFile("[askUserPermission] path grant for %s on peer %d", toolName, peerID)
-		}
-		return true
-	case strings.Contains(choice, "Allow"), strings.Contains(choice, "allow"), strings.Contains(choice, "Разрешить"):
-		return true
-	default:
+	lowerChoice := strings.ToLower(choice)
+	isDeny := strings.Contains(lowerChoice, "deny") || strings.Contains(lowerChoice, "denied") ||
+		strings.Contains(choice, "Нет") || strings.Contains(choice, "Запрет") || strings.Contains(choice, "Отклонит")
+	if isDeny {
 		return false
 	}
+	isAllow := strings.Contains(lowerChoice, "allow") || strings.Contains(lowerChoice, "permit") ||
+		strings.Contains(choice, "Да") || strings.Contains(choice, "Разрешить") || strings.Contains(choice, "Всегда")
+	if !isAllow {
+		return false
+	}
+	if p := extractToolPath(toolName, args); p != "" {
+		tools.GrantPath(peerID, p)
+		logger.DebugToFile("[askUserPermission] path grant for %s on peer %d", toolName, peerID)
+	}
+	return true
 }
 
 func getQuestionState() (func(int64, map[string]interface{}) (map[string]interface{}, error), int64) {
 	return tools.GetQuestionState()
 }
-
 
 func askShellPermission(ctx context.Context, checker permissionChecker, scan permission.Scan, problematic []string, peerID int64) bool {
 	cb, _ := getQuestionState()
@@ -454,9 +472,8 @@ func askShellPermission(ctx context.Context, checker permissionChecker, scan per
 		"question": fmt.Sprintf("Allow shell command: %s?", stringutil.Truncate(detail, 200, "...")),
 		"header":   "🔐 bash",
 		"options": []map[string]interface{}{
-			{"label": "✅ Allow", "description": "Allow this one time"},
-			{"label": "✅ Always allow", "description": "Always allow this command for this session"},
-			{"label": "❌ Deny", "description": "Deny this time"},
+			{"label": "✅ Allow", "description": "Разрешить и запомнить для этих путей"},
+			{"label": "❌ Deny", "description": "Отклонить"},
 		},
 	}
 
@@ -481,18 +498,34 @@ func askShellPermission(ctx context.Context, checker permissionChecker, scan per
 	}
 
 	choice, _ := selected[0].(string)
-	switch {
-	case strings.Contains(choice, "Always allow"), strings.Contains(choice, "always allow"), strings.Contains(choice, "Всегда"):
-		for _, prefix := range scan.Always {
-			checker.Approve("bash", prefix)
-			logger.DebugToFile("[askShellPermission] approved always rule bash %q", prefix)
-		}
-		return true
-	case strings.Contains(choice, "Allow"), strings.Contains(choice, "allow"), strings.Contains(choice, "Разрешить"):
-		return true
-	default:
+	lowerChoice := strings.ToLower(choice)
+	isDeny := strings.Contains(lowerChoice, "deny") || strings.Contains(lowerChoice, "denied") ||
+		strings.Contains(choice, "Нет") || strings.Contains(choice, "Запрет") || strings.Contains(choice, "Отклонит")
+	if isDeny {
 		return false
 	}
+	isAllow := strings.Contains(lowerChoice, "allow") || strings.Contains(lowerChoice, "permit") ||
+		strings.Contains(choice, "Да") || strings.Contains(choice, "Разрешить") || strings.Contains(choice, "Всегда")
+	if !isAllow {
+		return false
+	}
+	if strings.Contains(lowerChoice, "always") || strings.Contains(choice, "Всегда") {
+		for _, prefix := range scan.Always {
+			checker.Approve("bash", prefix)
+			logger.DebugToFile("[askShellPermission] approved rule bash %q", prefix)
+		}
+	}
+	for _, sub := range problematic {
+		for _, p := range tools.CollectShellSubCommandPaths(sub) {
+			resolved := p
+			if !filepath.IsAbs(resolved) {
+				resolved = filepath.Join(tools.WorkingDir, resolved)
+			}
+			tools.GrantPath(peerID, resolved)
+			logger.DebugToFile("[askShellPermission] path grant %q for peer %d", resolved, peerID)
+		}
+	}
+	return true
 }
 
 func (a *agentImpl) executeAllTools(ctx context.Context, toolCalls []ToolCall, peerID int64) FunctionCallResult {
@@ -507,7 +540,7 @@ func extractToolPath(toolName string, args map[string]string) string {
 		return p
 	}
 	if cmd, ok := args["command"]; ok && cmd != "" {
-		
+
 		parts := strings.Fields(cmd)
 		for i, part := range parts {
 			if strings.HasPrefix(part, "/") || strings.HasPrefix(part, "~") || strings.HasPrefix(part, ".") || strings.HasPrefix(part, "$") {
@@ -566,7 +599,7 @@ func buildToolPermissionDetail(toolName string, args map[string]string) string {
 }
 
 var toolAliases = map[string]string{
-	
+
 	"WebFetch":  "web_fetch",
 	"WebSearch": "web_search",
 	"Glob":      "glob",
@@ -578,10 +611,12 @@ var toolAliases = map[string]string{
 	"Task":      "task",
 	"TodoWrite": "todowrite",
 	"TodoRead":  "todoread",
-	
+
 	"grep":        "search_code",
 	"grep_search": "search_code",
+	"read":        "file_read",
 	"read_file":   "file_read",
+	"write":       "file_write",
 	"write_file":  "file_write",
 	"list_dir":    "file_list",
 	"dir_list":    "file_list",
@@ -707,7 +742,6 @@ func (a *agentImpl) sendThinking(peerID int64, content string) {
 		a.thinkingCallback(peerID, content)
 	}
 }
-
 
 func (a *agentImpl) sendThinkingTokens(peerID int64, promptTokens, completionTokens int) {
 	if a.thinkingCallback == nil || (promptTokens <= 0 && completionTokens <= 0) {

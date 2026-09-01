@@ -236,6 +236,7 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 	if workingDir == "" {
 		workingDir = tools.WorkingDir
 	}
+	tools.SetWorkingDir(workingDir)
 	apiMessages = a.injectInstructions(apiMessages, workingDir)
 
 	if err := ctx.Err(); err != nil {
@@ -425,10 +426,6 @@ func (a *agentImpl) getSession(peerID int64) *session.Session {
 			config.SystemPrompt = a.systemPrompt
 			s = session.NewSession(config)
 			a.sessions[peerID] = s
-
-			if wd := s.GetWorkingDir(); wd != "" {
-				tools.SetWorkingDir(wd)
-			}
 		}
 		a.mu.Unlock()
 	}

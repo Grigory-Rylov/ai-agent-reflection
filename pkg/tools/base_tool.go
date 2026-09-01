@@ -29,6 +29,26 @@ type Tool interface {
 }
 
 
+var toolAliases = map[string]string{
+	"read_file":    "file_read",
+	"read":         "file_read",
+	"write_file":   "file_write",
+	"write":        "file_write",
+	"edit_file":    "edit",
+	"list_dir":     "file_list",
+	"list_files":   "file_list",
+	"dir_list":     "file_list",
+	"shell":        "shell_execute",
+	"execute":      "shell_execute",
+	"web_fetch":    "web_fetch",
+	"fetch":        "web_fetch",
+	"web_search":   "web_search",
+	"search":       "web_search",
+	"grep_search":  "grep",
+	"find_files":   "glob",
+	"calculate":    "calc",
+}
+
 type Registry struct {
 	tools map[string]Tool
 }
@@ -58,25 +78,7 @@ func (r *Registry) Get(name string) (Tool, bool) {
 	}
 
 	
-	aliases := map[string]string{
-		"read_file":    "file_read",
-		"write_file":   "file_write",
-		"list_dir":     "file_list",
-		"list_files":   "file_list",
-		"dir_list":     "file_list",
-		"shell":        "shell_execute",
-		"execute":      "shell_execute",
-		"web_fetch":    "web_fetch",
-		"fetch":        "web_fetch",
-		"web_search":   "web_search",
-		"search":       "web_search",
-		"grep_search":  "grep",
-		"find_files":   "glob",
-		"calculate":    "calc",
-		"edit_file":    "edit",
-	}
-
-	if alias, ok := aliases[name]; ok {
+	if alias, ok := toolAliases[name]; ok {
 		tool, ok := r.tools[alias]
 		return tool, ok
 	}
@@ -95,8 +97,14 @@ func (r *Registry) GetAll() []Tool {
 
 
 func (r *Registry) IsRegistered(name string) bool {
-	_, ok := r.tools[name]
-	return ok
+	if _, ok := r.tools[name]; ok {
+		return true
+	}
+	if alias, ok := toolAliases[name]; ok {
+		_, ok = r.tools[alias]
+		return ok
+	}
+	return false
 }
 
 

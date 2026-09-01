@@ -46,7 +46,7 @@ func TruncateToolResult(content string, opts TruncateOptions) (TruncateResult, e
 
 	dir := opts.Dir
 	if dir == "" {
-		dir = filepath.Join(WorkingDir, "tool-output")
+		dir = filepath.Join(BaseDir, "tool-output")
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return TruncateResult{}, fmt.Errorf("create tool-output dir: %w", err)

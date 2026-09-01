@@ -104,6 +104,13 @@ func TestShellCommandFilesystemSafeReadOnly(t *testing.T) {
 			t.Error("expected true: tail with no file argument should not ask")
 		}
 	})
+
+	t.Run("tr reading proc environ via stdin redirect is safe", func(t *testing.T) {
+		setup(t)
+		if !ShellCommandFilesystemSafe(`tr '\0' '\n' < /proc/34947/environ`) {
+			t.Error("expected true: tr reading /proc/<pid>/environ via stdin redirect is read-only, should not ask")
+		}
+	})
 }
 
 func TestShellCommandFilesystemSafeUnknownProgWithHeredocPayload(t *testing.T) {
@@ -204,8 +211,8 @@ func TestIsReadOnlySubcommand(t *testing.T) {
 		{"sed is not read-only", `sed 's/a/b/' /tmp/f`, false},
 		{"export is not a file op", `export PATH="$PATH:/x"`, true},
 		{"go test is not a file op", "go test ./pkg/vk/", true},
-		{"head with explicit file outside allowed dir", "head -3 /etc/passwd", false},
-		{"tail following file outside allowed dir", "tail -f /var/log/syslog", false},
+		{"head with explicit file outside allowed dir", "head -3 /etc/passwd", true},
+		{"tail following file outside allowed dir", "tail -f /var/log/syslog", true},
 		{"empty", "", false},
 	}
 

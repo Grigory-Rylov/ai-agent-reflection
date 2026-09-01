@@ -708,6 +708,11 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 	agentConfig.SessionConfig.Store = nil
 	agentConfig.SessionConfig.SessionFile = ""
 
+	if wd := sess.GetWorkingDir(); wd != "" {
+		tools.SetWorkingDir(wd)
+		agentConfig.SessionConfig.WorkingDir = wd
+	}
+
 	agentConfig.SlotID = slotID
 	if slotID >= 0 && al.currentModelSlotSave() {
 		agentConfig.SlotSave = true
@@ -731,10 +736,6 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 		}
 		return nil
 	})
-
-	if wd := sess.GetWorkingDir(); wd != "" {
-		tools.SetWorkingDir(wd)
-	}
 
 	if al.config.EnableTools && al.registry != nil {
 		al.registerToolsToAgent(a, al.registry)
@@ -822,6 +823,7 @@ func (al *agentLoop) buildAgentConfig() agent.Config {
 	_, modelName, llamaURL := al.config.ModelHolder.GetCurrent()
 	cfg := agent.Config{
 		LlamaServerURL:                 llamaURL,
+		EngineType:                     al.config.ModelHolder.GetCurrentEngineType(),
 		Model:                          modelName,
 		MaxTokens:                      al.config.MaxTokens,
 		Temperature:                    al.config.Temperature,
@@ -961,7 +963,7 @@ func (al *agentLoop) truncateToolOutput(content string) string {
 		_, hasTask = al.registry.Get("task")
 	}
 	opts := tools.TruncateOptions{
-		Dir:         filepath.Join(tools.WorkingDir, "tool-output"),
+		Dir:         filepath.Join(tools.BaseDir, "tool-output"),
 		MaxLines:    al.config.ToolOutputMaxLines,
 		MaxBytes:    al.config.ToolOutputMaxBytes,
 		HasTaskTool: hasTask,

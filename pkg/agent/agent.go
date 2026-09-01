@@ -32,7 +32,9 @@ type Agent interface {
 type Config struct {
 	
 	LlamaServerURL string
-	
+
+	EngineType string
+
 	Model string
 	
 	MaxTokens int

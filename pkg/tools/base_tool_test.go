@@ -178,6 +178,45 @@ func TestRegistryGetAliases(t *testing.T) {
 		}
 	})
 
+	t.Run("write finds file_write", func(t *testing.T) {
+		registry := NewRegistry()
+		registry.Register(&FileWriteTool{})
+
+		tool, ok := registry.Get("write")
+		if !ok {
+			t.Error("expected write alias to find file_write")
+		}
+		if tool.Name() != "file_write" {
+			t.Errorf("expected file_write, got %q", tool.Name())
+		}
+	})
+
+	t.Run("read finds file_read", func(t *testing.T) {
+		registry := NewRegistry()
+		registry.Register(&FileReadTool{})
+
+		tool, ok := registry.Get("read")
+		if !ok {
+			t.Error("expected read alias to find file_read")
+		}
+		if tool.Name() != "file_read" {
+			t.Errorf("expected file_read, got %q", tool.Name())
+		}
+	})
+
+	t.Run("edit_file finds edit", func(t *testing.T) {
+		registry := NewRegistry()
+		registry.Register(&EditTool{})
+
+		tool, ok := registry.Get("edit_file")
+		if !ok {
+			t.Error("expected edit_file alias to find edit")
+		}
+		if tool.Name() != "edit" {
+			t.Errorf("expected edit, got %q", tool.Name())
+		}
+	})
+
 	t.Run("list_dir finds file_list", func(t *testing.T) {
 		registry := NewRegistry()
 		registry.Register(&DirListTool{})

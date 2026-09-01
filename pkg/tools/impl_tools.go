@@ -17,14 +17,17 @@ import (
 
 
 var (
-	
+
 	WorkingDir string
+
+	BaseDir string
 )
 
 func init() {
 	wd, err := os.Getwd()
 	if err == nil {
 		WorkingDir = wd
+		BaseDir = wd
 	}
 }
 
@@ -56,6 +59,21 @@ func resolvePath(path string) (string, error) {
 	}
 
 	return cleaned, nil
+}
+
+
+func resolveReadPath(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("path is empty")
+	}
+
+	cleaned := filepath.Clean(path)
+
+	if !filepath.IsAbs(cleaned) {
+		cleaned = filepath.Join(WorkingDir, cleaned)
+	}
+
+	return filepath.Clean(cleaned), nil
 }
 
 
@@ -94,7 +112,7 @@ func (t *FileReadTool) Execute(ctx context.Context, inputs map[string]string) (T
 		return ToolResult{Success: false, Error: "path parameter is required"}, nil
 	}
 
-	resolvedPath, err := resolvePath(path)
+	resolvedPath, err := resolveReadPath(path)
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("Invalid path: %v", err)}, nil
 	}
@@ -406,7 +424,7 @@ func (t *DirListTool) Execute(ctx context.Context, inputs map[string]string) (To
 		path = p
 	}
 
-	resolvedPath, err := resolvePath(path)
+	resolvedPath, err := resolveReadPath(path)
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("Invalid path: %v", err)}, nil
 	}
@@ -721,7 +739,7 @@ func (t *GlobTool) Execute(ctx context.Context, inputs map[string]string) (ToolR
 		searchPath = p
 	}
 
-	resolvedPath, err := resolvePath(searchPath)
+	resolvedPath, err := resolveReadPath(searchPath)
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("Invalid path: %v", err)}, nil
 	}
@@ -785,7 +803,7 @@ func (t *GrepTool) Execute(ctx context.Context, inputs map[string]string) (ToolR
 		include = inc
 	}
 
-	resolvedPath, err := resolvePath(searchPath)
+	resolvedPath, err := resolveReadPath(searchPath)
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("Invalid path: %v", err)}, nil
 	}
