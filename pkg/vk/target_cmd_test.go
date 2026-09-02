@@ -305,12 +305,17 @@ func TestHashMentionBypassesBusyMainAgentTurn(t *testing.T) {
 	))
 
 	peer := int64(70701)
+	mock.onStart = make(chan struct{})
 	go func() {
 		defer close(done)
 		handler.ProcessMessage("long main task", peer)
 	}()
 
-	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-mock.onStart:
+	case <-time.After(2 * time.Second):
+		t.Fatal("main agent turn never started")
+	}
 
 	replyCh := make(chan string, 1)
 	go func() { replyCh <- handler.ProcessMessage("#worker urgent side task", peer) }()
@@ -330,12 +335,12 @@ func TestHashMentionBypassesBusyMainAgentTurn(t *testing.T) {
 		t.Fatal("target runner was never invoked while main agent was busy")
 	}
 
+	close(release)
+	<-done
+
 	for _, m := range mock.Drained() {
 		if strings.HasPrefix(m, "#worker") {
 			t.Errorf("#worker message leaked into the running main-agent turn: %v", mock.Drained())
 		}
 	}
-
-	close(release)
-	<-done
 }
