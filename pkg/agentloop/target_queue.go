@@ -2,7 +2,10 @@ package agentloop
 
 import (
 	"context"
+	"strings"
 	"sync"
+
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 )
 
 type TargetRunner func(ctx context.Context, agentName, prompt string, peerID int64) (string, error)
@@ -64,9 +67,23 @@ func (q *TargetQueue) pumpLane(name string) {
 		if job == nil {
 			return
 		}
+		logger.DebugToFile("[TARGET] lane #%s: starting job for peer %d: %s", name, job.peerID, truncate(job.prompt))
 		resp, err := q.runAgent(job)
+		if err != nil {
+			logger.DebugToFile("[TARGET] lane #%s: job FAILED for peer %d: %v", name, job.peerID, err)
+		} else {
+			logger.DebugToFile("[TARGET] lane #%s: job DONE for peer %d, delivering answer (%d chars)", name, job.peerID, len(resp))
+		}
 		q.finishJob(name, job, resp, err)
 	}
+}
+
+func truncate(s string) string {
+	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
+	if len(s) > 100 {
+		return s[:100] + "..."
+	}
+	return s
 }
 
 func (q *TargetQueue) finishJob(name string, job *targetJob, resp string, err error) {

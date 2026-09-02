@@ -153,9 +153,46 @@ func (h *BotHandler) runInlineAgent(ctx context.Context, agentName, task string,
 	return response, nil
 }
 
+func (h *BotHandler) routeTargetedAgent(message string, peerID int64) (string, bool) {
+	agentName, task := ParseAgentHashMention(message, h.agentNames())
+	if agentName == "" {
+		if strings.HasPrefix(strings.TrimSpace(message), "#") && h.log != nil {
+			h.log.InfoLogf("[TARGET] peer %d: hash mention %q is not a known agent, routing to main agent", peerID, stringutil.Truncate(message, 60, "..."))
+		}
+		return "", false
+	}
+	if h.targetQueue == nil {
+		if h.log != nil {
+			h.log.ErrorLogf("[TARGET] peer %d: #%s requested but target queue is not configured, routing to main agent", peerID, agentName)
+		}
+		return "", false
+	}
+	if h.orchestrator != nil && h.orchestrator.IsPrimary(agentName) {
+		if h.log != nil {
+			h.log.InfoLogf("[TARGET] peer %d: #%s is a primary agent, running inline in the main turn", peerID, agentName)
+		}
+		return "", false
+	}
+	if task == "" {
+		if h.log != nil {
+			h.log.InfoLogf("[TARGET] peer %d: #%s mentioned without a task, asking for one", peerID, agentName)
+		}
+		return fmt.Sprintf("Укажите задачу для #%s. Например: #%s создай простой HTTP сервер", agentName, agentName), true
+	}
+	if h.log != nil {
+		h.log.InfoLogf("[TARGET] peer %d: routing directly to subagent #%s (bypassing main agent turn): %s", peerID, agentName, stringutil.Truncate(task, 100, "..."))
+	}
+	return h.submitTargeted(agentName, task, peerID), true
+}
+
 func (h *BotHandler) submitTargeted(agentName, task string, peerID int64) string {
 	pos := h.targetQueue.Submit(agentName, task, peerID)
 	if h.log != nil {
+		if pos == 0 {
+			h.log.InfoLogf("[TARGET] peer %d: #%s accepted, starting now", peerID, agentName)
+		} else {
+			h.log.InfoLogf("[TARGET] peer %d: #%s queued at position %d (lane busy)", peerID, agentName, pos)
+		}
 		h.log.InfoLogf("Agent #%s targeted by peer %d (position %d): %s", agentName, peerID, pos, stringutil.Truncate(task, 100, "..."))
 	}
 	if pos == 0 {
@@ -214,6 +251,10 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 			return ""
 		}
 		logger.DebugToFile("[ProcessMessage] ResolvePendingQuestion returned false for peer %d, command=%s", peerID, stringutil.Truncate(command, 50, "..."))
+	}
+
+	if reply, routed := h.routeTargetedAgent(message, peerID); routed {
+		return reply
 	}
 
 	h.admitPeerInput(peerID, message)
