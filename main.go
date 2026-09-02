@@ -46,6 +46,8 @@ type Config struct {
 	DBPath              string                          `json:"db_path"`
 	PromptsDir          string                          `json:"prompts_dir"`
 	MaxReviewIterations int                             `json:"max_review_iterations"`
+	MaxBackgroundTasks  int                             `json:"max_background_tasks"`
+	SpeculativeCompactRatio float64                    `json:"speculative_compact_ratio"`
 	Agents              map[string]agentpolicy.AgentCfg `json:"agents"`
 	ToolOutput          ToolOutputConfig                `json:"tool_output"`
 	
@@ -185,6 +187,19 @@ func main() {
 
 	vkClient := vk.NewBotClient(config.TokenVK)
 
+	bgMax := config.MaxBackgroundTasks
+	bgHub := tools.NewBackgroundHub(bgMax)
+	bgHub.SetDefaultPeer(config.PeerID)
+	bgHub.SetNotifyFunc(func(peerID int64, text string) {
+		if vkClient == nil || peerID <= 0 {
+			return
+		}
+		if _, err := vkClient.SendMessage(peerID, text); err != nil {
+			log.WarnLogf("Background task notification to %d failed: %v", peerID, err)
+		}
+	})
+	tools.SetBackgroundHub(bgHub)
+
 	toolRegistry := tools.NewRegistry()
 	registerTools(toolRegistry)
 	tools.SetSendFileDependencies(vkClient, config.PeerID)
@@ -253,6 +268,9 @@ func main() {
 	loopConfig.SkipShellPermissionForPathless = config.SkipShellPermissionForPathless
 	loopConfig.ToolOutputMaxLines = config.ToolOutput.MaxLines
 	loopConfig.ToolOutputMaxBytes = config.ToolOutput.MaxBytes
+	if config.SpeculativeCompactRatio > 0 {
+		loopConfig.SpeculativeCompactRatio = config.SpeculativeCompactRatio
+	}
 
 	agentLoop, err := agentloop.NewAgentLoop(loopConfig, vkClient, toolRegistry)
 	if err != nil {
@@ -648,6 +666,8 @@ func registerTools(r *tools.Registry) {
 	r.Register(&tools.ApplyPatchTool{})
 	r.Register(&tools.QuestionTool{})
 	r.Register(&tools.SendFileTool{})
+	r.Register(&tools.ShellBackgroundTool{})
+	r.Register(&tools.ShellCheckTool{})
 	r.Register(tools.GlobalTodo)
 }
 

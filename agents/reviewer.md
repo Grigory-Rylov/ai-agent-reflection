@@ -20,3 +20,12 @@ Return exactly ONE of:
 - One review only. After your response, the worker fixes issues and re-submits.
 - Be specific: cite `file_path:line_number` for each issue.
 - Do not guess URLs.
+
+# Result format
+Your final message MUST end with this block (the caller parses it):
+
+RESULT:
+status: success|failure|partial
+summary: <1-3 sentences: what was done>
+files: <comma-separated changed file paths, or none>
+next: <what to do next, or done>

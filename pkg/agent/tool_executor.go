@@ -184,6 +184,11 @@ func (e *agentToolExecutor) checkShellPermission(ctx context.Context, checker pe
 		return true
 	}
 
+	if critical, reasons := permission.CheckCritical(command); critical {
+		logger.DebugToFile("[checkPermissionAsk] shell_execute: CRITICAL patterns matched: %v", reasons)
+		return e.askCriticalShellPermission(ctx, command, reasons, peerID)
+	}
+
 	needsAsk := false
 	for _, pattern := range scan.Patterns {
 		action := checker.Evaluate("bash", pattern)
@@ -453,6 +458,58 @@ func askUserPermission(ctx context.Context, peerID int64, toolName string, args 
 
 func getQuestionState() (func(int64, map[string]interface{}) (map[string]interface{}, error), int64) {
 	return tools.GetQuestionState()
+}
+
+func (e *agentToolExecutor) askCriticalShellPermission(ctx context.Context, command string, reasons []string, peerID int64) bool {
+	cb, _ := getQuestionState()
+	if cb == nil {
+		logger.DebugToFile("[askCriticalShellPermission] cb is nil, denying critical command")
+		e.agent.sendThinking(peerID, fmt.Sprintf("[TOOL] Denied: critical command %q (no user to confirm)", stringutil.Truncate(command, 120, "...")))
+		return false
+	}
+
+	reasonText := strings.Join(reasons, "; ")
+	q := map[string]interface{}{
+		"question": fmt.Sprintf("⚠️ CRITICAL command: %s\nReasons: %s", stringutil.Truncate(command, 200, "..."), reasonText),
+		"header":   "⚠️ critical",
+		"options": []map[string]interface{}{
+			{"label": "✅ Allow once", "description": "Разрешить один раз (не запоминать)"},
+			{"label": "❌ Deny", "description": "Отклонить"},
+		},
+	}
+
+	select {
+	case <-ctx.Done():
+		return false
+	default:
+	}
+
+	answer, err := cb(peerID, q)
+	if err != nil {
+		return false
+	}
+
+	selected, _ := answer["selected"].([]interface{})
+	if len(selected) == 0 {
+		rawAnswer, _ := answer["answer"].(string)
+		selected = []interface{}{rawAnswer}
+	}
+	if len(selected) == 0 {
+		return false
+	}
+
+	choice, _ := selected[0].(string)
+	lowerChoice := strings.ToLower(choice)
+	isDeny := strings.Contains(lowerChoice, "deny") || strings.Contains(choice, "Нет") || strings.Contains(choice, "Запрет") || strings.Contains(choice, "Отклонит")
+	if isDeny {
+		return false
+	}
+	isAllow := strings.Contains(lowerChoice, "allow") || strings.Contains(choice, "Да") || strings.Contains(choice, "Разрешить")
+	if !isAllow {
+		return false
+	}
+	e.agent.sendThinking(peerID, fmt.Sprintf("[CRITICAL] User approved critical command: %s", stringutil.Truncate(command, 120, "...")))
+	return true
 }
 
 func askShellPermission(ctx context.Context, checker permissionChecker, scan permission.Scan, problematic []string, peerID int64) bool {

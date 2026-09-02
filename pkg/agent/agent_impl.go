@@ -32,6 +32,8 @@ type CalcTool = tools.CalcTool
 type EditTool = tools.EditTool
 type ApplyPatchTool = tools.ApplyPatchTool
 type QuestionTool = tools.QuestionTool
+type ShellBackgroundTool = tools.ShellBackgroundTool
+type ShellCheckTool = tools.ShellCheckTool
 
 type ThinkingCallback func(peerID int64, content string) error
 
@@ -177,6 +179,8 @@ func (a *agentImpl) registerDefaultTools() {
 	a.toolsRegistry.Register(&EditTool{})
 	a.toolsRegistry.Register(&ApplyPatchTool{})
 	a.toolsRegistry.Register(&QuestionTool{})
+	a.toolsRegistry.Register(&tools.ShellBackgroundTool{})
+	a.toolsRegistry.Register(&tools.ShellCheckTool{})
 }
 
 func (a *agentImpl) RegisterTools(registry *tools.Registry) {

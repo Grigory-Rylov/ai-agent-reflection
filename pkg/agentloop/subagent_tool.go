@@ -69,7 +69,8 @@ func (t *SubAgentTool) Description() string {
 	b.WriteString("4. Each agent invocation starts with a fresh context\n")
 	b.WriteString("5. The agent's outputs should generally be trusted\n")
 	b.WriteString("6. Clearly tell the agent whether you expect it to write code or just do research\n")
-	b.WriteString("7. If the agent description mentions that it should be used proactively, use it without user asking\n\n")
+	b.WriteString("7. If the agent description mentions that it should be used proactively, use it without user asking\n")
+	b.WriteString("8. The result is structured: status (success|failure|partial), summary, files, next\n\n")
 	b.WriteString("Available agent types and the tools they have access to:\n")
 	for _, a := range agents {
 		desc := a.Description
@@ -230,12 +231,33 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 	
 	t.completeAgentSession()
 
+	return t.buildResult(name, response), nil
+}
+
+func (t *SubAgentTool) buildResult(name, response string) tools.ToolResult {
+	res := ParseSubAgentResult(response)
+	if res.Status == "failure" {
+		return tools.ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("sub-agent %q reported failure: %s", name, res.Summary),
+			Data: map[string]interface{}{
+				"status":  res.Status,
+				"summary": res.Summary,
+				"files":   res.Files,
+				"next":    res.Next,
+			},
+		}
+	}
 	return tools.ToolResult{
 		Success: true,
 		Data: map[string]interface{}{
+			"status":   res.Status,
+			"summary":  res.Summary,
+			"files":    res.Files,
+			"next":     res.Next,
 			"response": response,
 		},
-	}, nil
+	}
 }
 
 func (t *SubAgentTool) applyAgentPermissions(name string, a agent.Agent) {

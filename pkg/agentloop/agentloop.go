@@ -57,7 +57,7 @@ type agentLoop struct {
 	sessionCreateMu  sync.Mutex
 	vk               VKClient
 	registry         ToolRegistry
-	compactor        *compress.Compactor
+	compactor        compress.CompactorInterface
 	tokenizer        tokenizers.Tokenizer
 	dispatcher       *EventDispatcher
 	stopCh           chan struct{}
@@ -74,6 +74,8 @@ type agentLoop struct {
 	shutdownMu       sync.Mutex
 	slots            *SlotClient
 	slotMgr          *SlotManager
+	specMu           sync.Mutex
+	speculative      map[int64]*speculativeCompact
 }
 
 func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentLoop, error) {
@@ -158,6 +160,7 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 		engineGate:   newEngineGate(),
 		slots:        newSlotClient(),
 		slotMgr:      slotMgr,
+		speculative:  map[int64]*speculativeCompact{},
 	}, nil
 }
 
@@ -472,6 +475,7 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 
 	if al.config.EnableCompression {
 		al.checkAndCompressOpenCode(ctx, sess, peerID)
+		al.maybeStartSpeculativeCompact(ctx, sess, peerID)
 	}
 
 	messages := al.buildAPIMessages(sess)
@@ -1009,6 +1013,10 @@ func (al *agentLoop) checkAndCompressOpenCode(ctx context.Context, sess *session
 		return
 	}
 
+	if al.tryApplySpeculativeCompact(sess, peerID) {
+		return
+	}
+
 	if al.log != nil {
 		al.log.InfoLogf("[OPENCODE-COMPACT] Peer %d: Overflow detected (%d/%d), compacting",
 			peerID, tokensBefore, al.config.MaxTokens)
@@ -1220,6 +1228,7 @@ func (al *agentLoop) ClearAllSlots(ctx context.Context) {
 }
 
 func (al *agentLoop) ResetSession(peerID int64) {
+	al.cancelSpeculative(peerID)
 	if val, ok := al.sessionM.Load(peerID); ok {
 		sess := val.(*session.Session)
 		al.deleteSessionSlot(context.Background(), peerID, sess.GetSessionID())
