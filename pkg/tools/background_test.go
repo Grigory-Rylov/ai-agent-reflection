@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -227,5 +228,66 @@ func TestShellCheckToolExecute(t *testing.T) {
 	text := res.Data.(map[string]interface{})["output"].(string)
 	if !strings.Contains(text, "check-bg") {
 		t.Errorf("output = %q, want check-bg", text)
+	}
+}
+func TestBackgroundNotifyExactTextAndToolFlow(t *testing.T) {
+	h := newTestHub(t, 4)
+	h.SetDefaultPeer(7)
+	SetBackgroundHub(h)
+	defer SetBackgroundHub(NewBackgroundHub(4))
+
+	var gotPeer int64
+	var gotText string
+	h.SetNotifyFunc(func(peerID int64, text string) {
+		gotPeer = peerID
+		gotText = text
+	})
+
+	bgTool := &ShellBackgroundTool{}
+	res, err := bgTool.Execute(nil, map[string]string{
+		"command": "sleep 15 && echo done-qa-test1",
+		"name":    "qa-bg-15s",
+		"notify":  "true",
+	})
+	if err != nil {
+		t.Fatalf("shell_background Execute: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("shell_background failed: %s", res.Error)
+	}
+	id := res.Data.(map[string]interface{})["task_id"].(string)
+	if id == "" {
+		t.Fatal("expected task_id")
+	}
+
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) && gotText == "" {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if gotText == "" {
+		t.Fatal("expected [BG] notification after task finish")
+	}
+	want := fmt.Sprintf("[BG] task qa-bg-15s (id %s) finished (exit 0, 15s) — details via shell_check", id)
+	if gotText != want {
+		t.Errorf("notification text:\n got: %q\nwant: %q", gotText, want)
+	}
+	if gotPeer != 7 {
+		t.Errorf("peer = %d, want default peer 7", gotPeer)
+	}
+
+	checkTool := &ShellCheckTool{}
+	cres, err := checkTool.Execute(nil, map[string]string{"task_id": id, "tail": "5"})
+	if err != nil {
+		t.Fatalf("shell_check Execute: %v", err)
+	}
+	if !cres.Success {
+		t.Fatalf("shell_check failed: %s", cres.Error)
+	}
+	data := cres.Data.(map[string]interface{})
+	if data["status"] != "finished" {
+		t.Errorf("status = %v, want finished", data["status"])
+	}
+	if !strings.Contains(data["output"].(string), "done-qa-test1") {
+		t.Errorf("output = %q, want done-qa-test1", data["output"])
 	}
 }

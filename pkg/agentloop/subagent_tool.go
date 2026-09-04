@@ -288,6 +288,8 @@ func (t *SubAgentTool) registerReadOnlyTools(a agent.Agent) {
 	roReg.Register(&tools.GrepTool{})
 	roReg.Register(&tools.CalcTool{})
 	roReg.Register(&tools.ShellExecuteTool{})
+	roReg.Register(&tools.ShellBackgroundTool{})
+	roReg.Register(&tools.ShellCheckTool{})
 	if inserter, ok := a.(toolInserter); ok {
 		inserter.ReplaceTools(roReg)
 	} else {

@@ -142,11 +142,19 @@ func (o *Orchestrator) prepareAgentPrompt(agentName string) (string, error) {
 }
 
 
+func (o *Orchestrator) cleanupAgentBG(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	if hub := tools.GetBackgroundHub(); hub != nil {
+		hub.ReleasePending(sessionID)
+		hub.UnregisterDelivery(sessionID)
+	}
+}
+
 func (o *Orchestrator) handleAgentFailure(cancel context.CancelFunc, a agent.Agent, rootID, sessionID string, peerID int64, task string) {
 	cancel()
-	
-	
-	
+	o.cleanupAgentBG(sessionID)
 	if rootID != "" {
 		o.saveAgentHistory(a, rootID, peerID, task)
 	}
@@ -156,12 +164,10 @@ func (o *Orchestrator) handleAgentFailure(cancel context.CancelFunc, a agent.Age
 
 func (o *Orchestrator) finishAgentSession(cancel context.CancelFunc, rootID, sessionID string, peerID int64) {
 	cancel()
-	
-	
+	o.cleanupAgentBG(sessionID)
 	if rootID != "" {
 		o.endRootSession(peerID, rootID)
 	} else {
-		
 		o.releaseAgentSlot(sessionID)
 	}
 }
@@ -452,6 +458,7 @@ func (o *Orchestrator) runResumedAgent(ctx context.Context, sd *store.AgentSessi
 	
 	
 	if err := o.setupAgentTools(sd.AgentName, a, sd.PeerID, sd.ID, chain); err != nil {
+		o.cleanupAgentBG(sessionID)
 		o.releaseAgentSlot(sessionID)
 		return "", fmt.Errorf("setup tools for resumed agent %q: %w", sd.AgentName, err)
 	}
@@ -460,6 +467,7 @@ func (o *Orchestrator) runResumedAgent(ctx context.Context, sd *store.AgentSessi
 
 	prompt := pickResumeContinuationPrompt(childResult, lastRestoredRole(s), sd.LastToolCall, sd.LastPrompt)
 	result, err := a.ProcessMessage(ctx, prompt, sd.PeerID)
+	o.cleanupAgentBG(sessionID)
 	o.releaseAgentSlot(sessionID)
 	if err != nil {
 		return "", fmt.Errorf("resumed agent %q failed: %w", sd.AgentName, err)
@@ -591,13 +599,14 @@ func (o *Orchestrator) runWorker(ctx context.Context, task string, peerID int64)
 	}
 	o.addMainTools(a)
 	
-	
 	if err := o.registerSubAgentTool("worker", a, peerID, sessionID, []string{sessionID}); err != nil {
+		o.cleanupAgentBG(sessionID)
 		o.releaseAgentSlot(sessionID)
 		return "", err
 	}
 	o.beginLeafSession("worker", prompt, task, peerID, sessionID)
 	result, err := a.ProcessMessage(ctx, task, peerID)
+	o.cleanupAgentBG(sessionID)
 	if err != nil {
 		o.saveAgentHistory(a, sessionID, peerID, task)
 		o.releaseAgentSlot(sessionID)
@@ -620,11 +629,13 @@ func (o *Orchestrator) runQA(ctx context.Context, task string, peerID int64) (st
 	}
 	o.addMainTools(a)
 	if err := o.registerSubAgentTool("qa", a, peerID, "", nil); err != nil {
+		o.cleanupAgentBG(sessionID)
 		o.releaseAgentSlot(sessionID)
 		return "", err
 	}
 	o.beginLeafSession("qa", prompt, task, peerID, sessionID)
 	result, err := a.ProcessMessage(ctx, task, peerID)
+	o.cleanupAgentBG(sessionID)
 	if err != nil {
 		o.saveAgentHistory(a, sessionID, peerID, task)
 		o.releaseAgentSlot(sessionID)
@@ -676,6 +687,7 @@ func (o *Orchestrator) makeSubAgent(name, systemPrompt string, peerID int64) (ag
 	a.SetThinkingCallback(o.makeThinkingCallback(name))
 	a.GetSession(peerID).UpdateSystemPrompt(systemPrompt)
 	o.attachCheckpointSaving(a, sessionID, peerID)
+	o.registerAgentBGDelivery(name, a, peerID, sessionID)
 	return a, sessionID, nil
 }
 
@@ -686,6 +698,32 @@ func (o *Orchestrator) attachCheckpointSaving(a agent.Agent, sessionID string, p
 	}
 	if cs, ok := a.(agent.CheckpointSetter); ok {
 		cs.SetCheckpoint(func(lastToolCall string) { o.persistCheckpoint(a, sessionID, peerID, lastToolCall) })
+	}
+}
+
+func (o *Orchestrator) registerAgentBGDelivery(name string, a agent.Agent, peerID int64, sessionID string) {
+	hub := tools.GetBackgroundHub()
+	if hub == nil || sessionID == "" {
+		return
+	}
+	hub.SetDelivery(sessionID, o.makeAgentBGDelivery(name, a, peerID))
+}
+
+func (o *Orchestrator) makeAgentBGDelivery(name string, a agent.Agent, peerID int64) func(peerID int64, text string) {
+	return func(p int64, text string) {
+		if p <= 0 {
+			p = peerID
+		}
+		if sess := a.GetSession(p); sess != nil {
+			if in := sess.GetPeerInput(); in != nil {
+				in.Admit(text)
+			}
+		}
+		if o.config.VKClient != nil && o.thoughtPeer > 0 {
+			if _, err := o.config.VKClient.SendThinking(o.thoughtPeer, "["+name+"] "+text); err != nil && o.config.Logger != nil {
+				o.config.Logger.DebugLogf("[BG] thinking delivery for agent %s failed: %v", name, err)
+			}
+		}
 	}
 }
 
@@ -715,6 +753,7 @@ func (o *Orchestrator) configureAgentBase(cfg *agent.Config, name string, sessio
 	cfg.AgentName = name
 	cfg.SlotID = -1
 	cfg.SlotSave = false
+	cfg.BGOwner = sessionID
 }
 
 
@@ -790,6 +829,7 @@ func (o *Orchestrator) makeAgentConfig() (agent.Config, error) {
 	}
 	return agent.Config{
 		LlamaServerURL:      llamaURL,
+		EngineType:          o.config.ModelHolder.GetCurrentEngineType(),
 		Model:               modelName,
 		MaxTokens:           maxTokens,
 		ModelLimitInput:     o.config.ModelLimitInput,
@@ -834,6 +874,8 @@ func (o *Orchestrator) addReadOnlyTools(a agent.Agent) {
 	roReg.Register(&tools.GrepTool{})
 	roReg.Register(&tools.CalcTool{})
 	roReg.Register(&tools.ShellExecuteTool{})
+	roReg.Register(&tools.ShellBackgroundTool{})
+	roReg.Register(&tools.ShellCheckTool{})
 	roReg.Register(tools.GlobalTodo)
 	if inserter, ok := a.(toolInserter); ok {
 		inserter.ReplaceTools(roReg)
