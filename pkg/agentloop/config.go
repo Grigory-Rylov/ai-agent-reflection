@@ -32,6 +32,7 @@ type LoopConfig struct {
 	Debug                          bool
 	EnableCompression              bool
 	TailTurns                      int
+	SpeculativeCompactRatio        float64
 	PreserveRecentTokens           *int
 	CompactionReserved             *int
 	ModelLimitInput                int
@@ -57,6 +58,7 @@ func DefaultLoopConfig() LoopConfig {
 		EnableLogging:                  true,
 		EnableCompression:              true,
 		TailTurns:                      2,
+		SpeculativeCompactRatio:        0.75,
 		PreserveRecentTokens:           nil,
 		CompactionReserved:             nil,
 		EnablePruning:                  true,

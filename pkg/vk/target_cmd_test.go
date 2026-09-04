@@ -284,3 +284,63 @@ func assertReplyPosition(t *testing.T, reply, wantPos string) {
 		t.Errorf("expected position %s, got %q", wantPos, reply)
 	}
 }
+
+func TestHashMentionBypassesBusyMainAgentTurn(t *testing.T) {
+	log, _ := logger.New(logger.DefaultConfig())
+	mock := newSteeringMockAgentLoop()
+	orch := &mockOrchestrator{agentNames: []string{"worker"}}
+	handler := NewBotHandlerWithPeerID(nil, mock, log, 0, 0, orch, nil)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+
+	handler.SetTargetQueue(agentloop.NewTargetQueue(
+		func(ctx context.Context, name, prompt string, peerID int64) (string, error) {
+			close(entered)
+			<-release
+			return "ok", nil
+		},
+		targetTestDeliver,
+	))
+
+	peer := int64(70701)
+	mock.onStart = make(chan struct{})
+	go func() {
+		defer close(done)
+		handler.ProcessMessage("long main task", peer)
+	}()
+
+	select {
+	case <-mock.onStart:
+	case <-time.After(2 * time.Second):
+		t.Fatal("main agent turn never started")
+	}
+
+	replyCh := make(chan string, 1)
+	go func() { replyCh <- handler.ProcessMessage("#worker urgent side task", peer) }()
+
+	select {
+	case reply := <-replyCh:
+		if !strings.HasPrefix(reply, "▶️") {
+			t.Fatalf("expected immediate queue ack while main agent is busy, got %q", reply)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("#worker message blocked behind the running main-agent turn")
+	}
+
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("target runner was never invoked while main agent was busy")
+	}
+
+	close(release)
+	<-done
+
+	for _, m := range mock.Drained() {
+		if strings.HasPrefix(m, "#worker") {
+			t.Errorf("#worker message leaked into the running main-agent turn: %v", mock.Drained())
+		}
+	}
+}

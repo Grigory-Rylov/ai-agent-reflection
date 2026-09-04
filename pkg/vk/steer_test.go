@@ -11,8 +11,10 @@ import (
 
 type steeringMockAgentLoop struct {
 	*mockAgentLoop
-	mu      sync.Mutex
-	drained []string
+	mu       sync.Mutex
+	drained  []string
+	onStart  chan struct{}
+	startOne sync.Once
 }
 
 func newSteeringMockAgentLoop() *steeringMockAgentLoop {
@@ -20,6 +22,9 @@ func newSteeringMockAgentLoop() *steeringMockAgentLoop {
 }
 
 func (m *steeringMockAgentLoop) ProcessMessage(ctx context.Context, prompt string, peerID int64) (string, error) {
+	if m.onStart != nil {
+		m.startOne.Do(func() { close(m.onStart) })
+	}
 	select {
 	case <-ctx.Done():
 		m.mu.Lock()

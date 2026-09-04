@@ -92,6 +92,9 @@ type Config struct {
 	
 	
 	SlotSaver SlotSaver
+
+	BGOwner       string
+	BGParentOwner string
 }
 
 

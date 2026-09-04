@@ -35,3 +35,12 @@ Do not skip qa. Even if worker reports success, qa must build and run tests befo
 - Follow AGENTS.md (auto-injected) for code style, function-size limits, DRY, build via `build.sh`, and the rule to never restart the agent process.
 - NEVER commit changes unless the user explicitly asks. NEVER restart/stop the agent process or touch systemd services without explicit permission.
 - Do not guess URLs. Use URLs the user provided or that exist in local files.
+
+# Result format
+Your final message MUST end with this block (the caller parses it):
+
+RESULT:
+status: success|failure|partial
+summary: <1-3 sentences: what was done>
+files: <comma-separated changed file paths, or none>
+next: <what to do next, or done>

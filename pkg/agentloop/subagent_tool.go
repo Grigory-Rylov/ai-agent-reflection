@@ -43,6 +43,7 @@ type SubAgentTool struct {
 	AllowedSubagents []string    
 	SlotManager      *SlotManager
 	Slots            *SlotClient
+	BGOwner          string
 }
 
 func (t *SubAgentTool) Name() string {
@@ -69,7 +70,8 @@ func (t *SubAgentTool) Description() string {
 	b.WriteString("4. Each agent invocation starts with a fresh context\n")
 	b.WriteString("5. The agent's outputs should generally be trusted\n")
 	b.WriteString("6. Clearly tell the agent whether you expect it to write code or just do research\n")
-	b.WriteString("7. If the agent description mentions that it should be used proactively, use it without user asking\n\n")
+	b.WriteString("7. If the agent description mentions that it should be used proactively, use it without user asking\n")
+	b.WriteString("8. The result is structured: status (success|failure|partial), summary, files, next\n\n")
 	b.WriteString("Available agent types and the tools they have access to:\n")
 	for _, a := range agents {
 		desc := a.Description
@@ -230,12 +232,33 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 	
 	t.completeAgentSession()
 
+	return t.buildResult(name, response), nil
+}
+
+func (t *SubAgentTool) buildResult(name, response string) tools.ToolResult {
+	res := ParseSubAgentResult(response)
+	if res.Status == "failure" {
+		return tools.ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("sub-agent %q reported failure: %s", name, res.Summary),
+			Data: map[string]interface{}{
+				"status":  res.Status,
+				"summary": res.Summary,
+				"files":   res.Files,
+				"next":    res.Next,
+			},
+		}
+	}
 	return tools.ToolResult{
 		Success: true,
 		Data: map[string]interface{}{
+			"status":   res.Status,
+			"summary":  res.Summary,
+			"files":    res.Files,
+			"next":     res.Next,
 			"response": response,
 		},
-	}, nil
+	}
 }
 
 func (t *SubAgentTool) applyAgentPermissions(name string, a agent.Agent) {
@@ -265,6 +288,8 @@ func (t *SubAgentTool) registerReadOnlyTools(a agent.Agent) {
 	roReg.Register(&tools.GrepTool{})
 	roReg.Register(&tools.CalcTool{})
 	roReg.Register(&tools.ShellExecuteTool{})
+	roReg.Register(&tools.ShellBackgroundTool{})
+	roReg.Register(&tools.ShellCheckTool{})
 	if inserter, ok := a.(toolInserter); ok {
 		inserter.ReplaceTools(roReg)
 	} else {
@@ -359,6 +384,10 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 	t.AgentSessionID = t.generateUUID()
 	sessionID := t.AgentSessionID
 	cfg.SessionConfig.SessionID = sessionID
+	cfg.BGOwner = sessionID
+	if t.BGOwner != "" {
+		cfg.BGParentOwner = t.BGOwner
+	}
 
 	
 	
@@ -407,6 +436,8 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 			cs.SetCheckpoint(func(lastToolCall string) { t.persistChildCheckpoint(a, lastToolCall) })
 		}
 	}
+
+	t.registerBGDelivery(name, a)
 
 	return a, nil
 }
@@ -488,6 +519,7 @@ func (t *SubAgentTool) registerSubAgentTool(name string, a agent.Agent) {
 		AllowedSubagents: t.AgentManager.SubagentTypesFor(name),
 		SlotManager:     t.SlotManager,
 		Slots:           t.Slots,
+		BGOwner:         t.AgentSessionID,
 	})
 	if inserter, ok := a.(toolInserter); ok {
 		inserter.RegisterTools(subReg)
@@ -521,6 +553,29 @@ func (t *SubAgentTool) debugLog(format string, args ...interface{}) {
 	}
 	if t.Log != nil {
 		t.Log.DebugLogf("[SUBAGENT] "+format, args...)
+	}
+}
+
+func (t *SubAgentTool) registerBGDelivery(name string, a agent.Agent) {
+	hub := tools.GetBackgroundHub()
+	if hub == nil || t.AgentSessionID == "" {
+		return
+	}
+	hub.SetDelivery(t.AgentSessionID, t.makeBGDelivery(name, a))
+}
+
+func (t *SubAgentTool) makeBGDelivery(name string, a agent.Agent) func(peerID int64, text string) {
+	return func(peerID int64, text string) {
+		if sess := a.GetSession(t.PeerID); sess != nil {
+			if in := sess.GetPeerInput(); in != nil {
+				in.Admit(text)
+			}
+		}
+		if t.VKClient != nil && t.ThinkingPeerID > 0 {
+			if _, err := t.VKClient.SendThinking(t.ThinkingPeerID, "["+name+"] "+text); err != nil && t.Log != nil {
+				t.Log.DebugLogf("[BG] thinking delivery for sub-agent %s failed: %v", name, err)
+			}
+		}
 	}
 }
 
@@ -622,6 +677,13 @@ func (t *SubAgentTool) cancelAgentSession() {
 
 func (t *SubAgentTool) cleanupAgentSession() {
 	ReleaseSessionSlot(t.SlotManager, t.Slots, t.ModelHolder, t.AgentSessionID, t.Log)
+	if t.AgentSessionID == "" {
+		return
+	}
+	if hub := tools.GetBackgroundHub(); hub != nil {
+		hub.ReleasePending(t.AgentSessionID)
+		hub.UnregisterDelivery(t.AgentSessionID)
+	}
 }
 
 

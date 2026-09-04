@@ -153,10 +153,42 @@ func (h *BotHandler) runInlineAgent(ctx context.Context, agentName, task string,
 	return response, nil
 }
 
+func (h *BotHandler) routeTargetedAgent(message string, peerID int64) (string, bool) {
+	agentName, task := ParseAgentHashMention(message, h.agentNames())
+	if agentName == "" {
+		if strings.HasPrefix(strings.TrimSpace(message), "#") && h.log != nil {
+			h.log.InfoLogf("[TARGET] peer %d: hash mention %q is not a known agent, routing to main agent", peerID, stringutil.Truncate(message, 60, "..."))
+		}
+		return "", false
+	}
+	if task == "" {
+		return targetedUsageHint(agentName), true
+	}
+	switch {
+	case h.targetQueue == nil:
+		h.logTargetFallback(peerID, agentName, "target queue is not configured")
+		return "", false
+	case h.orchestrator != nil && h.orchestrator.IsPrimary(agentName):
+		h.logTargetFallback(peerID, agentName, "primary agent runs inline in the main turn")
+		return "", false
+	}
+	return h.submitTargeted(agentName, task, peerID), true
+}
+
+func targetedUsageHint(agentName string) string {
+	return fmt.Sprintf("Укажите задачу для #%s. Например: #%s создай простой HTTP сервер", agentName, agentName)
+}
+
+func (h *BotHandler) logTargetFallback(peerID int64, agentName, reason string) {
+	if h.log != nil {
+		h.log.InfoLogf("[TARGET] peer %d: #%s not routed to subagent queue (%s), handling by main agent", peerID, agentName, reason)
+	}
+}
+
 func (h *BotHandler) submitTargeted(agentName, task string, peerID int64) string {
 	pos := h.targetQueue.Submit(agentName, task, peerID)
 	if h.log != nil {
-		h.log.InfoLogf("Agent #%s targeted by peer %d (position %d): %s", agentName, peerID, pos, stringutil.Truncate(task, 100, "..."))
+		h.log.InfoLogf("[TARGET] peer %d: #%s accepted at position %d (bypassing main agent turn): %s", peerID, agentName, pos, stringutil.Truncate(task, 100, "..."))
 	}
 	if pos == 0 {
 		return "\u25B6\uFE0F Передаю #" + agentName + ": " + stringutil.Truncate(task, 120, "...")
@@ -216,6 +248,10 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 		logger.DebugToFile("[ProcessMessage] ResolvePendingQuestion returned false for peer %d, command=%s", peerID, stringutil.Truncate(command, 50, "..."))
 	}
 
+	if reply, routed := h.routeTargetedAgent(message, peerID); routed {
+		return reply
+	}
+
 	h.admitPeerInput(peerID, message)
 
 	releaseQueueSlot, generationAtArrival := h.beginProcessingWait(peerID)
@@ -247,7 +283,7 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 		}
 
 		if task == "" {
-			return fmt.Sprintf("Укажите задачу для #%s. Например: #%s создай простой HTTP сервер", agentName, agentName)
+			return targetedUsageHint(agentName)
 		}
 
 		switch {
@@ -260,8 +296,6 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 				return err.Error()
 			}
 			return resp
-		case h.targetQueue != nil:
-			return h.submitTargeted(agentName, task, peerID)
 		default:
 			message = fmt.Sprintf("[Задача для #%s]\n\n%s", agentName, task)
 			sess := h.aiAgent.GetSession(peerID)

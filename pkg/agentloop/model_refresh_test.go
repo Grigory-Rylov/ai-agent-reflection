@@ -64,7 +64,11 @@ func TestModelSwitchRefreshesTokenizerCompactor(t *testing.T) {
 	if al.config.MaxTokens != 8192 {
 		t.Errorf("MaxTokens after switch = %d, want 8192", al.config.MaxTokens)
 	}
-	llm, ok := al.compactor.LLM().(*compress.LLMCompressor)
+	comp, ok := al.compactor.(*compress.Compactor)
+	if !ok {
+		t.Fatalf("compactor is %T, want *compress.Compactor", al.compactor)
+	}
+	llm, ok := comp.LLM().(*compress.LLMCompressor)
 	if !ok {
 		t.Fatalf("compactor LLM is not *compress.LLMCompressor")
 	}

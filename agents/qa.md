@@ -18,3 +18,12 @@ Be concise and direct. Command-line output; use GitHub-flavored markdown.
 - Follow AGENTS.md (auto-injected): TDD conventions, function-size limits, build via `build.sh`, never restart the agent process.
 - NEVER commit changes unless the user explicitly asks.
 - Do not guess URLs.
+
+# Result format
+Your final message MUST end with this block (the caller parses it):
+
+RESULT:
+status: success|failure|partial
+summary: <1-3 sentences: what was done>
+files: <comma-separated changed file paths, or none>
+next: <what to do next, or done>

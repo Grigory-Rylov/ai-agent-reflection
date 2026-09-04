@@ -504,3 +504,68 @@ func TestAskShellPermissionQuestionTruncatesLongCommand(t *testing.T) {
 		t.Errorf("permission question too long (%d chars): %q", len(gotQuestion), gotQuestion)
 	}
 }
+
+func TestCheckShellPermissionCriticalForcesAskDespiteAllowRule(t *testing.T) {
+	var gotQuestion string
+	withQuestionCallback(t, func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+		gotQuestion, _ = q["question"].(string)
+		return map[string]interface{}{"selected": []interface{}{"✅ Allow once"}}, nil
+	})
+
+	a := newShellTestAgent(permission.Ruleset{
+		{Permission: "bash", Pattern: "rm *", Action: permission.Allow},
+		{Permission: "bash", Pattern: "*", Action: permission.Allow},
+	})
+	e := newAgentToolExecutor(a)
+
+	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		"command": "rm -rf /",
+	}, 12345)
+	if !result {
+		t.Error("expected allow after user approved critical command once")
+	}
+	if !strings.Contains(gotQuestion, "CRITICAL") {
+		t.Errorf("expected critical question, got %q", gotQuestion)
+	}
+}
+
+func TestCheckShellPermissionCriticalDenyRejects(t *testing.T) {
+	withQuestionCallback(t, func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+		return map[string]interface{}{"selected": []interface{}{"❌ Deny"}}, nil
+	})
+
+	a := newShellTestAgent(permission.Ruleset{
+		{Permission: "bash", Pattern: "*", Action: permission.Allow},
+	})
+	e := newAgentToolExecutor(a)
+
+	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		"command": "mkfs.ext4 /dev/sda1",
+	}, 12345)
+	if result {
+		t.Error("expected deny after user rejected critical command")
+	}
+}
+
+func TestCheckShellPermissionCriticalNotLearned(t *testing.T) {
+	withQuestionCallback(t, func(peerID int64, q map[string]interface{}) (map[string]interface{}, error) {
+		return map[string]interface{}{"selected": []interface{}{"✅ Allow once"}}, nil
+	})
+
+	rules := permission.Ruleset{
+		{Permission: "bash", Pattern: "*", Action: permission.Ask},
+	}
+	a := newShellTestAgent(rules)
+	e := newAgentToolExecutor(a)
+
+	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		"command": "rm -rf /",
+	}, 12345)
+	if !result {
+		t.Fatal("expected allow after one-time critical approval")
+	}
+
+	if rule := permission.Evaluate("bash", "rm *", *a.getPermissionChecker().(*rulesetChecker).P); rule.Action == permission.Allow {
+		t.Error("critical approval must not persist an allow rule")
+	}
+}

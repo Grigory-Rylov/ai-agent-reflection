@@ -42,6 +42,7 @@ type AgentLoop interface {
 
 	ClearAllSlots(ctx context.Context)
 	SetThinkingCallback(cb func(peerID int64, content string) error)
+	SetBackgroundHub(hub *tools.BackgroundHub)
 	GetContextStats(peerID int64) (charCount int, tokenCount int, err error)
 	TestLlamaServer(ctx context.Context) (model string, responseTime time.Duration, tokensPerSec float64, err error)
 	GetModelHolder() *modelsconfig.Holder
@@ -57,7 +58,7 @@ type agentLoop struct {
 	sessionCreateMu  sync.Mutex
 	vk               VKClient
 	registry         ToolRegistry
-	compactor        *compress.Compactor
+	compactor        compress.CompactorInterface
 	tokenizer        tokenizers.Tokenizer
 	dispatcher       *EventDispatcher
 	stopCh           chan struct{}
@@ -74,6 +75,9 @@ type agentLoop struct {
 	shutdownMu       sync.Mutex
 	slots            *SlotClient
 	slotMgr          *SlotManager
+	specMu           sync.Mutex
+	speculative      map[int64]*speculativeCompact
+	bgHub            *tools.BackgroundHub
 }
 
 func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentLoop, error) {
@@ -158,6 +162,7 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 		engineGate:   newEngineGate(),
 		slots:        newSlotClient(),
 		slotMgr:      slotMgr,
+		speculative:  map[int64]*speculativeCompact{},
 	}, nil
 }
 
@@ -472,6 +477,7 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 
 	if al.config.EnableCompression {
 		al.checkAndCompressOpenCode(ctx, sess, peerID)
+		al.maybeStartSpeculativeCompact(ctx, sess, peerID)
 	}
 
 	messages := al.buildAPIMessages(sess)
@@ -533,6 +539,30 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 	al.dispatcher.Emit(NewEvent(EventResponseDone, peerID))
 
 	return response, nil
+}
+
+func (al *agentLoop) SetBackgroundHub(hub *tools.BackgroundHub) {
+	hub.SetNotifyFunc(al.handleBackgroundNotification)
+	hub.SetDelivery("main", al.handleBackgroundNotification)
+	al.bgHub = hub
+}
+
+func (al *agentLoop) GetBackgroundHub() *tools.BackgroundHub {
+	return al.bgHub
+}
+
+func (al *agentLoop) handleBackgroundNotification(peerID int64, text string) {
+	if peerID <= 0 {
+		return
+	}
+	sess := al.EnsureSession(peerID)
+	if sess == nil {
+		return
+	}
+	if in := sess.GetPeerInput(); in != nil {
+		in.Admit(text)
+	}
+	al.sendThinking(peerID, text)
 }
 
 func (al *agentLoop) sendThinking(peerID int64, content string) {
@@ -1009,6 +1039,10 @@ func (al *agentLoop) checkAndCompressOpenCode(ctx context.Context, sess *session
 		return
 	}
 
+	if al.tryApplySpeculativeCompact(sess, peerID) {
+		return
+	}
+
 	if al.log != nil {
 		al.log.InfoLogf("[OPENCODE-COMPACT] Peer %d: Overflow detected (%d/%d), compacting",
 			peerID, tokensBefore, al.config.MaxTokens)
@@ -1220,6 +1254,7 @@ func (al *agentLoop) ClearAllSlots(ctx context.Context) {
 }
 
 func (al *agentLoop) ResetSession(peerID int64) {
+	al.cancelSpeculative(peerID)
 	if val, ok := al.sessionM.Load(peerID); ok {
 		sess := val.(*session.Session)
 		al.deleteSessionSlot(context.Background(), peerID, sess.GetSessionID())

@@ -33,3 +33,12 @@ Before writing code, understand the file's conventions. Mimic its style, use exi
 - The code MUST compile. Return errors, don't panic.
 - NEVER commit changes unless the user explicitly asks.
 - Return the full code/result — the caller has no context beyond your response.
+
+# Result format
+Your final message MUST end with this block (the caller parses it):
+
+RESULT:
+status: success|failure|partial
+summary: <1-3 sentences: what was done>
+files: <comma-separated changed file paths, or none>
+next: <what to do next, or done>

@@ -32,6 +32,8 @@ type CalcTool = tools.CalcTool
 type EditTool = tools.EditTool
 type ApplyPatchTool = tools.ApplyPatchTool
 type QuestionTool = tools.QuestionTool
+type ShellBackgroundTool = tools.ShellBackgroundTool
+type ShellCheckTool = tools.ShellCheckTool
 
 type ThinkingCallback func(peerID int64, content string) error
 
@@ -177,6 +179,8 @@ func (a *agentImpl) registerDefaultTools() {
 	a.toolsRegistry.Register(&EditTool{})
 	a.toolsRegistry.Register(&ApplyPatchTool{})
 	a.toolsRegistry.Register(&QuestionTool{})
+	a.toolsRegistry.Register(&tools.ShellBackgroundTool{})
+	a.toolsRegistry.Register(&tools.ShellCheckTool{})
 }
 
 func (a *agentImpl) RegisterTools(registry *tools.Registry) {
@@ -201,6 +205,7 @@ func (a *agentImpl) ReplaceTools(registry *tools.Registry) {
 }
 
 func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID int64) (string, error) {
+	ctx = a.bgOwnerContext(ctx)
 	a.debugLog.Debug("ProcessMessage called: peerID=%d, message=%q, tools=%d", peerID, message, len(a.toolsRegistry.GetAll()))
 
 	if ctx.Err() != nil {
@@ -253,6 +258,16 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 	}
 
 	return a.processStreaming(ctx, apiMessages, s)
+}
+
+func (a *agentImpl) bgOwnerContext(ctx context.Context) context.Context {
+	if a.config.BGOwner != "" {
+		ctx = context.WithValue(ctx, tools.BGOwnerContextKey, a.config.BGOwner)
+	}
+	if a.config.BGParentOwner != "" {
+		ctx = context.WithValue(ctx, tools.BGParentOwnerContextKey, a.config.BGParentOwner)
+	}
+	return ctx
 }
 
 func (a *agentImpl) promoteSteers(ctx context.Context, s *session.Session) bool {
