@@ -42,6 +42,7 @@ type AgentLoop interface {
 
 	ClearAllSlots(ctx context.Context)
 	SetThinkingCallback(cb func(peerID int64, content string) error)
+	SetBackgroundHub(hub *tools.BackgroundHub)
 	GetContextStats(peerID int64) (charCount int, tokenCount int, err error)
 	TestLlamaServer(ctx context.Context) (model string, responseTime time.Duration, tokensPerSec float64, err error)
 	GetModelHolder() *modelsconfig.Holder
@@ -76,6 +77,7 @@ type agentLoop struct {
 	slotMgr          *SlotManager
 	specMu           sync.Mutex
 	speculative      map[int64]*speculativeCompact
+	bgHub            *tools.BackgroundHub
 }
 
 func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentLoop, error) {
@@ -537,6 +539,30 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 	al.dispatcher.Emit(NewEvent(EventResponseDone, peerID))
 
 	return response, nil
+}
+
+func (al *agentLoop) SetBackgroundHub(hub *tools.BackgroundHub) {
+	hub.SetNotifyFunc(al.handleBackgroundNotification)
+	hub.SetDelivery("main", al.handleBackgroundNotification)
+	al.bgHub = hub
+}
+
+func (al *agentLoop) GetBackgroundHub() *tools.BackgroundHub {
+	return al.bgHub
+}
+
+func (al *agentLoop) handleBackgroundNotification(peerID int64, text string) {
+	if peerID <= 0 {
+		return
+	}
+	sess := al.EnsureSession(peerID)
+	if sess == nil {
+		return
+	}
+	if in := sess.GetPeerInput(); in != nil {
+		in.Admit(text)
+	}
+	al.sendThinking(peerID, text)
 }
 
 func (al *agentLoop) sendThinking(peerID int64, content string) {

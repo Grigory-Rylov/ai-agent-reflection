@@ -190,14 +190,6 @@ func main() {
 	bgMax := config.MaxBackgroundTasks
 	bgHub := tools.NewBackgroundHub(bgMax)
 	bgHub.SetDefaultPeer(config.PeerID)
-	bgHub.SetNotifyFunc(func(peerID int64, text string) {
-		if vkClient == nil || peerID <= 0 {
-			return
-		}
-		if _, err := vkClient.SendMessage(peerID, text); err != nil {
-			log.WarnLogf("Background task notification to %d failed: %v", peerID, err)
-		}
-	})
 	tools.SetBackgroundHub(bgHub)
 
 	toolRegistry := tools.NewRegistry()
@@ -277,6 +269,8 @@ func main() {
 		println("Error creating AgentLoop:", err.Error())
 		os.Exit(1)
 	}
+
+	agentLoop.SetBackgroundHub(bgHub)
 
 	if config.PeerID > 0 {
 		if *reset {

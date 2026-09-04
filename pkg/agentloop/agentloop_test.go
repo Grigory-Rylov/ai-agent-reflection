@@ -4,8 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
@@ -436,6 +438,65 @@ func TestSendThinkingWithVK(t *testing.T) {
 	}
 }
 
+
+func TestBackgroundNotificationGoesToModel(t *testing.T) {
+	vk := &mockVKClient{}
+	config := DefaultLoopConfig()
+	config.ModelHolder = testHolder()
+	config.EnableThinking = true
+	config.ThinkingPeerID = 456
+
+	loop, _ := NewAgentLoop(config, vk, nil)
+	al := loop.(*agentLoop)
+
+	hub := tools.NewBackgroundHub(4)
+	hub.SetLogDir(t.TempDir())
+	hub.SetDefaultPeer(123)
+	al.SetBackgroundHub(hub)
+
+	id, err := hub.Start("echo bg-done", "demo-task", true, 123)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if vk.GetThinking() != nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	thinking := vk.GetThinking()
+	if len(thinking) != 1 {
+		t.Fatalf("expected 1 thinking message, got %d", len(thinking))
+	}
+	if !strings.Contains(thinking[0], "demo-task") {
+		t.Errorf("thinking = %q, want to contain task name", thinking[0])
+	}
+	if !strings.Contains(thinking[0], "exit 0") {
+		t.Errorf("thinking = %q, want to contain exit code", thinking[0])
+	}
+	if len(vk.GetMessages()) != 0 {
+		t.Errorf("expected no VK messages to user, got %v", vk.GetMessages())
+	}
+
+	sess := al.EnsureSession(123)
+	in := sess.GetPeerInput()
+	if in == nil {
+		t.Fatal("expected session to have peer input")
+	}
+	msgs := in.Drain()
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 admitted message, got %d", len(msgs))
+	}
+	if !strings.Contains(msgs[0], "demo-task") {
+		t.Errorf("admitted = %q, want to contain task name", msgs[0])
+	}
+	if al.GetBackgroundHub() != hub {
+		t.Error("expected SetBackgroundHub to store hub")
+	}
+	_ = id
+}
 
 func TestEventDispatcherMultipleHandlers(t *testing.T) {
 	dispatcher := NewEventDispatcher()

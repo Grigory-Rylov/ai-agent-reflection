@@ -43,6 +43,7 @@ type SubAgentTool struct {
 	AllowedSubagents []string    
 	SlotManager      *SlotManager
 	Slots            *SlotClient
+	BGOwner          string
 }
 
 func (t *SubAgentTool) Name() string {
@@ -381,6 +382,10 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 	t.AgentSessionID = t.generateUUID()
 	sessionID := t.AgentSessionID
 	cfg.SessionConfig.SessionID = sessionID
+	cfg.BGOwner = sessionID
+	if t.BGOwner != "" {
+		cfg.BGParentOwner = t.BGOwner
+	}
 
 	
 	
@@ -429,6 +434,8 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 			cs.SetCheckpoint(func(lastToolCall string) { t.persistChildCheckpoint(a, lastToolCall) })
 		}
 	}
+
+	t.registerBGDelivery(name, a)
 
 	return a, nil
 }
@@ -510,6 +517,7 @@ func (t *SubAgentTool) registerSubAgentTool(name string, a agent.Agent) {
 		AllowedSubagents: t.AgentManager.SubagentTypesFor(name),
 		SlotManager:     t.SlotManager,
 		Slots:           t.Slots,
+		BGOwner:         t.AgentSessionID,
 	})
 	if inserter, ok := a.(toolInserter); ok {
 		inserter.RegisterTools(subReg)
@@ -543,6 +551,29 @@ func (t *SubAgentTool) debugLog(format string, args ...interface{}) {
 	}
 	if t.Log != nil {
 		t.Log.DebugLogf("[SUBAGENT] "+format, args...)
+	}
+}
+
+func (t *SubAgentTool) registerBGDelivery(name string, a agent.Agent) {
+	hub := tools.GetBackgroundHub()
+	if hub == nil || t.AgentSessionID == "" {
+		return
+	}
+	hub.SetDelivery(t.AgentSessionID, t.makeBGDelivery(name, a))
+}
+
+func (t *SubAgentTool) makeBGDelivery(name string, a agent.Agent) func(peerID int64, text string) {
+	return func(peerID int64, text string) {
+		if sess := a.GetSession(t.PeerID); sess != nil {
+			if in := sess.GetPeerInput(); in != nil {
+				in.Admit(text)
+			}
+		}
+		if t.VKClient != nil && t.ThinkingPeerID > 0 {
+			if _, err := t.VKClient.SendThinking(t.ThinkingPeerID, "["+name+"] "+text); err != nil && t.Log != nil {
+				t.Log.DebugLogf("[BG] thinking delivery for sub-agent %s failed: %v", name, err)
+			}
+		}
 	}
 }
 
@@ -644,6 +675,13 @@ func (t *SubAgentTool) cancelAgentSession() {
 
 func (t *SubAgentTool) cleanupAgentSession() {
 	ReleaseSessionSlot(t.SlotManager, t.Slots, t.ModelHolder, t.AgentSessionID, t.Log)
+	if t.AgentSessionID == "" {
+		return
+	}
+	if hub := tools.GetBackgroundHub(); hub != nil {
+		hub.ReleasePending(t.AgentSessionID)
+		hub.UnregisterDelivery(t.AgentSessionID)
+	}
 }
 
 

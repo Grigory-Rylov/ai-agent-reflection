@@ -105,6 +105,42 @@ func TestBackgroundNotify(t *testing.T) {
 	_ = id
 }
 
+func TestBackgroundNotifyAdmitsToSession(t *testing.T) {
+	h := newTestHub(t, 4)
+	h.SetDefaultPeer(7)
+
+	var pending []string
+	var notifiedPeers []int64
+	h.SetNotifyFunc(func(peerID int64, text string) {
+		notifiedPeers = append(notifiedPeers, peerID)
+		pending = append(pending, text)
+	})
+
+	id, err := h.Start("echo model-bg", "model-task", true, 0)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if got := waitForStatus(h, id, "finished", 5*time.Second); got != "finished" {
+		t.Fatalf("status = %q, want finished", got)
+	}
+
+	if len(pending) != 1 {
+		t.Fatalf("pending = %v, want exactly 1 admitted message", pending)
+	}
+	if len(notifiedPeers) != 1 || notifiedPeers[0] != 7 {
+		t.Fatalf("notifiedPeers = %v, want default peer 7", notifiedPeers)
+	}
+	if !strings.Contains(pending[0], "model-task") {
+		t.Errorf("pending = %q, want task name", pending[0])
+	}
+	if !strings.Contains(pending[0], "exit 0") {
+		t.Errorf("pending = %q, want exit code", pending[0])
+	}
+	if !strings.Contains(pending[0], id) {
+		t.Errorf("pending = %q, want task_id so the model can call shell_check", pending[0])
+	}
+}
+
 func TestBackgroundNoNotify(t *testing.T) {
 	h := newTestHub(t, 4)
 	notifyCount := 0

@@ -99,6 +99,8 @@ func (m *mockAgentLoop) GetSessionConfig(peerID int64) (session.Config, bool) {
 }
 func (m *mockAgentLoop) SetThinkingCallback(cb func(peerID int64, content string) error) {}
 
+func (m *mockAgentLoop) SetBackgroundHub(hub *tools.BackgroundHub) {}
+
 func (m *mockAgentLoop) GetSession(peerID int64) *session.Session {
 	return m.getOrCreateSession(peerID)
 }

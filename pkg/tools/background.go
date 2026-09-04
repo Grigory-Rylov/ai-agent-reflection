@@ -13,13 +13,15 @@ import (
 )
 
 type BackgroundTask struct {
-	ID        string
-	Name      string
-	Command   string
-	PeerID    int64
-	Notify    bool
-	LogPath   string
-	StartedAt time.Time
+	ID          string
+	Name        string
+	Command     string
+	PeerID      int64
+	Owner       string
+	ParentOwner string
+	Notify      bool
+	LogPath     string
+	StartedAt   time.Time
 
 	mu       sync.Mutex
 	cmd      *exec.Cmd
@@ -41,14 +43,17 @@ func (t *BackgroundTask) info() (string, int) {
 }
 
 type BackgroundHub struct {
-	mu           sync.Mutex
-	tasks        map[string]*BackgroundTask
-	max          int
-	logDir       string
-	defaultPeer  int64
+	mu      sync.Mutex
+	tasks   map[string]*BackgroundTask
+	max     int
+	logDir  string
+	defaultPeer int64
 
 	notifyMu sync.RWMutex
 	notify   func(peerID int64, text string)
+
+	deliveryMu sync.RWMutex
+	deliveries map[string]func(peerID int64, text string)
 }
 
 func NewBackgroundHub(max int) *BackgroundHub {
@@ -56,9 +61,10 @@ func NewBackgroundHub(max int) *BackgroundHub {
 		max = 4
 	}
 	return &BackgroundHub{
-		tasks:  map[string]*BackgroundTask{},
-		max:    max,
-		logDir: filepath.Join(os.TempDir(), "ai-agent-background"),
+		tasks:       map[string]*BackgroundTask{},
+		max:         max,
+		logDir:      filepath.Join(os.TempDir(), "ai-agent-background"),
+		deliveries:  map[string]func(peerID int64, text string){},
 	}
 }
 
@@ -80,6 +86,24 @@ func (h *BackgroundHub) SetDefaultPeer(peerID int64) {
 	h.mu.Unlock()
 }
 
+func (h *BackgroundHub) SetDelivery(owner string, fn func(peerID int64, text string)) {
+	h.deliveryMu.Lock()
+	defer h.deliveryMu.Unlock()
+	h.deliveries[owner] = fn
+}
+
+func (h *BackgroundHub) UnregisterDelivery(owner string) {
+	h.deliveryMu.Lock()
+	defer h.deliveryMu.Unlock()
+	delete(h.deliveries, owner)
+}
+
+func (h *BackgroundHub) deliveryFor(owner string) func(peerID int64, text string) {
+	h.deliveryMu.RLock()
+	defer h.deliveryMu.RUnlock()
+	return h.deliveries[owner]
+}
+
 func (h *BackgroundHub) defaultPeerLocked() int64 {
 	return h.defaultPeer
 }
@@ -91,6 +115,10 @@ func (h *BackgroundHub) notifyFn() func(int64, string) {
 }
 
 func (h *BackgroundHub) Start(command, name string, notify bool, peerID int64) (string, error) {
+	return h.StartFor(command, name, notify, peerID, "main", "")
+}
+
+func (h *BackgroundHub) StartFor(command, name string, notify bool, peerID int64, owner, parentOwner string) (string, error) {
 	h.mu.Lock()
 	running := 0
 	for _, t := range h.tasks {
@@ -131,15 +159,17 @@ func (h *BackgroundHub) Start(command, name string, notify bool, peerID int64) (
 	}
 	id := fmt.Sprintf("bg-%d", time.Now().UnixNano())
 	task := &BackgroundTask{
-		ID:        id,
-		Name:      name,
-		Command:   command,
-		PeerID:    peerID,
-		Notify:    notify,
-		LogPath:   logPath,
-		StartedAt: time.Now(),
-		cmd:       cmd,
-		status:    "running",
+		ID:          id,
+		Name:        name,
+		Command:     command,
+		PeerID:      peerID,
+		Owner:       owner,
+		ParentOwner: parentOwner,
+		Notify:      notify,
+		LogPath:     logPath,
+		StartedAt:   time.Now(),
+		cmd:         cmd,
+		status:      "running",
 	}
 	h.mu.Lock()
 	h.tasks[id] = task
@@ -167,16 +197,68 @@ func (h *BackgroundHub) watch(task *BackgroundTask, logFile *os.File) {
 	if !task.Notify {
 		return
 	}
-	fn := h.notifyFn()
-	if fn == nil {
-		return
-	}
 	label := task.Name
 	if label == "" {
 		label = task.ID
 	}
 	_, code := task.info()
-	fn(task.PeerID, fmt.Sprintf("[BG] task %s finished (exit %d, %s) — details via shell_check", label, code, duration))
+	text := fmt.Sprintf("[BG] task %s (id %s) finished (exit %d, %s) — details via shell_check", label, task.ID, code, duration)
+	h.deliver(task, text)
+}
+
+func (h *BackgroundHub) deliver(task *BackgroundTask, text string) {
+	if fn := h.deliveryFor(task.Owner); fn != nil {
+		fn(task.PeerID, text)
+		return
+	}
+	if task.ParentOwner != "" {
+		if fn := h.deliveryFor(task.ParentOwner); fn != nil {
+			fn(task.PeerID, text)
+			return
+		}
+	}
+	if fn := h.deliveryFor("main"); fn != nil {
+		fn(task.PeerID, text)
+		return
+	}
+	if fn := h.notifyFn(); fn != nil {
+		fn(task.PeerID, text)
+	}
+}
+
+func (h *BackgroundHub) DeliveryFor(owner string) func(peerID int64, text string) {
+	return h.deliveryFor(owner)
+}
+
+func (h *BackgroundHub) hasDelivery(owner string) bool {
+	h.deliveryMu.RLock()
+	defer h.deliveryMu.RUnlock()
+	_, ok := h.deliveries[owner]
+	return ok
+}
+
+func (h *BackgroundHub) ReleasePending(owner string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, t := range h.tasks {
+		if t.Owner != owner {
+			continue
+		}
+		next := t.ParentOwner
+		if next == "" || !h.hasDelivery(next) {
+			next = "main"
+		}
+		t.Owner = next
+	}
+}
+
+func (h *BackgroundHub) Owner(id string) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if task, ok := h.tasks[id]; ok {
+		return task.Owner
+	}
+	return ""
 }
 
 func (h *BackgroundHub) Status(id string) string {
@@ -262,7 +344,7 @@ func (t *ShellBackgroundTool) Name() string {
 }
 
 func (t *ShellBackgroundTool) Description() string {
-	return "Start a long-running shell command in the background and return a task_id immediately. The user gets a VK notification when the task finishes. Check status and output later with shell_check."
+	return "Start a long-running shell command in the background and return a task_id immediately. You are notified automatically when the task finishes (in your context and the reasoning chat). Check status and output later with shell_check."
 }
 
 func (t *ShellBackgroundTool) Schema() map[string]interface{} {
@@ -271,10 +353,35 @@ func (t *ShellBackgroundTool) Schema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"command": CreateStringParameter("command", "The shell command to run in the background", true),
 			"name":    CreateStringParameter("name", "Short human-readable task name (optional)", false),
-			"notify":  CreateStringParameter("notify", "Notify the user in VK when the task finishes (default: true)", false),
+			"notify":  CreateStringParameter("notify", "Notify the model when the task finishes (default: true)", false),
 		},
 		"required": []string{"command"},
 	}
+}
+
+const (
+	BGOwnerContextKey       = "ai-agent.bg-owner"
+	BGParentOwnerContextKey = "ai-agent.bg-parent-owner"
+)
+
+func BGOwnerFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return "main"
+	}
+	if owner, ok := ctx.Value(BGOwnerContextKey).(string); ok && owner != "" {
+		return owner
+	}
+	return "main"
+}
+
+func BGParentOwnerFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if owner, ok := ctx.Value(BGParentOwnerContextKey).(string); ok {
+		return owner
+	}
+	return ""
 }
 
 func (t *ShellBackgroundTool) Execute(ctx context.Context, inputs map[string]string) (ToolResult, error) {
@@ -290,7 +397,7 @@ func (t *ShellBackgroundTool) Execute(ctx context.Context, inputs map[string]str
 	if h == nil {
 		return ToolResult{Success: false, Error: "background hub is not initialized"}, nil
 	}
-	id, err := h.Start(command, inputs["name"], notify, 0)
+	id, err := h.StartFor(command, inputs["name"], notify, 0, BGOwnerFromContext(ctx), BGParentOwnerFromContext(ctx))
 	if err != nil {
 		return ToolResult{Success: false, Error: err.Error()}, nil
 	}
