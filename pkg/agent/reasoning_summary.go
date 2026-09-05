@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util/stringutil"
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
@@ -100,12 +101,15 @@ func (a *agentImpl) flushReasoningSummary(ctx context.Context, s *session.Sessio
 	}
 	raw := buf.drain()
 	if len(raw) < reasoningSummaryMinLen {
+		logger.DebugToFile("%s[REASONING SUMMARY] skipped: %d chars below min %d", a.agentPrefix(), len(raw), reasoningSummaryMinLen)
 		a.debugLog.Debug("reasoning summary skipped: %d chars below min %d", len(raw), reasoningSummaryMinLen)
 		return
 	}
 
-	summary, err := a.summarizeReasoning(ctx, raw)
+	summaryCtx := context.WithoutCancel(ctx)
+	summary, err := a.summarizeReasoning(summaryCtx, raw)
 	if err != nil {
+		logger.DebugToFile("%s[REASONING SUMMARY] summarization failed: %v, storing truncated raw reasoning", a.agentPrefix(), err)
 		a.debugLog.Warn("reasoning summarization failed: %v, storing truncated raw reasoning", err)
 		summary = stringutil.Truncate(raw, reasoningSummaryMaxInput, "…")
 	}
@@ -114,6 +118,7 @@ func (a *agentImpl) flushReasoningSummary(ctx context.Context, s *session.Sessio
 	}
 
 	s.AddAssistantMessage(reasoningSummaryLabel + "\n" + strings.TrimSpace(summary))
+	logger.DebugToFile("%s[REASONING SUMMARY] stored in history: %d chars", a.agentPrefix(), len(summary))
 	a.debugLog.Debug("reasoning summary stored: %d chars", len(summary))
 }
 
@@ -127,33 +132,13 @@ func (a *agentImpl) summarizeReasoning(ctx context.Context, raw string) (string,
 		{Role: "system", Content: reasoningSummaryPrompt},
 		{Role: "user", Content: input},
 	}
-	reqBody := buildReasoningSummaryRequestJSON(a.config.Model, messages)
+	reqBody := a.buildSummaryRequestJSON(messages)
 	a.saveDebugSummaryPrompt(reqBody)
 
-	reqCtx, cancel := context.WithTimeout(ctx, reasoningSummaryTimeout)
-	defer cancel()
-
-	req, err := a.createReasoningSummaryRequest(reqCtx, reqBody)
+	rawBody, err := a.doSummaryRequest(ctx, reqBody, len(input))
 	if err != nil {
-		return "", fmt.Errorf("create summary request: %w", err)
+		return "", err
 	}
-
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("send summary request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, reasoningSummaryStatusCap))
-		return "", fmt.Errorf("summary API error: status %d, body: %s", resp.StatusCode, string(body))
-	}
-
-	rawBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("read summary response: %w", err)
-	}
-	a.saveDebugSummaryResponse(rawBody)
 
 	rawResponse, err := a.decodeResponse(bytes.NewReader(rawBody))
 	if err != nil {
@@ -167,13 +152,58 @@ func (a *agentImpl) summarizeReasoning(ctx context.Context, raw string) (string,
 	return summary, nil
 }
 
-func buildReasoningSummaryRequestJSON(model string, messages []Message) []byte {
+func (a *agentImpl) doSummaryRequest(ctx context.Context, reqBody []byte, inputChars int) ([]byte, error) {
+	prefix := a.agentPrefix()
+	logger.DebugToFile("%s[REASONING SUMMARY] Sending summary request to %s, model=%s, inputChars=%d",
+		prefix, a.config.LlamaServerURL, a.config.Model, inputChars)
+
+	reqCtx, cancel := context.WithTimeout(ctx, reasoningSummaryTimeout)
+	defer cancel()
+
+	req, err := a.createReasoningSummaryRequest(reqCtx, reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("create summary request: %w", err)
+	}
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		logger.DebugToFile("%s[REASONING SUMMARY] send failed: %v", prefix, err)
+		return nil, fmt.Errorf("send summary request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, reasoningSummaryStatusCap))
+		logger.DebugToFile("%s[REASONING SUMMARY] API error: status %d, body: %s", prefix, resp.StatusCode, string(body))
+		return nil, fmt.Errorf("summary API error: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read summary response: %w", err)
+	}
+	a.saveDebugSummaryResponse(rawBody)
+	logger.DebugToFile("%s[REASONING SUMMARY] response received: %d bytes", prefix, len(rawBody))
+	return rawBody, nil
+}
+
+func (a *agentImpl) buildSummaryRequestJSON(messages []Message) []byte {
 	req := map[string]interface{}{
-		"model":       model,
+		"model":       a.config.Model,
 		"messages":    messages,
 		"temperature": reasoningSummaryTemp,
 		"max_tokens":  reasoningSummaryMaxOut,
 		"stream":      false,
+	}
+	if a.config.EngineType == "ninfer" {
+		req["enable_thinking"] = false
+	} else {
+		req["chat_template_kwargs"] = map[string]interface{}{
+			"enable_thinking": false,
+		}
+	}
+	if a.config.SlotID >= 0 {
+		req["slot_id"] = a.config.SlotID
 	}
 	jsonData, _ := json.Marshal(req)
 	return jsonData

@@ -216,6 +216,9 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 	}
 
 	s := a.getSession(peerID)
+	if a.config.SummarizeReasoning {
+		defer a.flushReasoningSummary(ctx, s)
+	}
 
 	if s.IsLoopDetected() {
 		alert := s.GetLoopAlertMessage()
@@ -257,7 +260,6 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 		if err != nil {
 			return "", fmt.Errorf("process with tools: %w", err)
 		}
-		a.flushReasoningSummary(ctx, s)
 		return result.Response, nil
 	}
 
@@ -265,7 +267,6 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 	if err != nil {
 		return "", err
 	}
-	a.flushReasoningSummary(ctx, s)
 	return responseText, nil
 }
 

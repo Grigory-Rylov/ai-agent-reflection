@@ -72,6 +72,37 @@ func newReasoningSummaryAgent(t *testing.T, peerID int64, summarize bool, summar
 	return NewAgent(config), &summaryCalls
 }
 
+func newReasoningSummaryAgentWithCapture(t *testing.T, peerID int64, summarize bool, capture *[]byte) (*agentImpl, *int32) {
+	t.Helper()
+
+	var summaryCalls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), reasoningSummaryPrompt) {
+			atomic.AddInt32(&summaryCalls, 1)
+			if capture != nil {
+				*capture = body
+			}
+			writeSummaryLLMResponse(w, "SUMMARY-OK")
+			return
+		}
+		writeMainCallStream(w, longTestReasoning, "ANSWER")
+	}))
+	t.Cleanup(server.Close)
+
+	config := DefaultConfig()
+	config.LlamaServerURL = server.URL
+	config.Model = "test-model"
+	config.RetryDelay = 5 * time.Millisecond
+	config.EnableTools = false
+	config.EnableCompression = false
+	config.SummarizeReasoning = summarize
+	config.SessionConfig = session.DefaultConfig()
+	config.SessionConfig.PeerID = peerID
+
+	return NewAgent(config), &summaryCalls
+}
+
 func lastTwoHistoryMessages(t *testing.T, a *agentImpl, peerID int64) []session.Message {
 	t.Helper()
 	history := a.GetSession(peerID).GetHistory()
@@ -193,5 +224,20 @@ func TestProcessMessageWritesReasoningSummaryDebugDumps(t *testing.T) {
 	promptData, _ := os.ReadFile(filepath.Join(debugDir, "debug_summary_prompt.txt"))
 	if !strings.Contains(string(promptData), "condense a language model's private chain-of-thought") {
 		t.Errorf("expected summary system prompt in debug dump")
+	}
+}
+
+func TestProcessMessageSummaryRequestDisablesThinking(t *testing.T) {
+	var captured []byte
+	a, summaryCalls := newReasoningSummaryAgentWithCapture(t, 424206, true, &captured)
+
+	if _, err := a.ProcessMessage(context.Background(), "hello", 424206); err != nil {
+		t.Fatalf("ProcessMessage failed: %v", err)
+	}
+	if got := atomic.LoadInt32(summaryCalls); got != 1 {
+		t.Fatalf("expected 1 summary LLM call, got %d", got)
+	}
+	if !strings.Contains(string(captured), `"enable_thinking":false`) {
+		t.Errorf("expected enable_thinking=false in summary request, got: %s", string(captured))
 	}
 }
