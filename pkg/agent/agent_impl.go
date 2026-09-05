@@ -206,6 +206,9 @@ func (a *agentImpl) ReplaceTools(registry *tools.Registry) {
 
 func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID int64) (string, error) {
 	ctx = a.bgOwnerContext(ctx)
+	if a.config.SummarizeReasoning {
+		ctx = a.withReasoningBuffer(ctx)
+	}
 	a.debugLog.Debug("ProcessMessage called: peerID=%d, message=%q, tools=%d", peerID, message, len(a.toolsRegistry.GetAll()))
 
 	if ctx.Err() != nil {
@@ -254,10 +257,16 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 		if err != nil {
 			return "", fmt.Errorf("process with tools: %w", err)
 		}
+		a.flushReasoningSummary(ctx, s)
 		return result.Response, nil
 	}
 
-	return a.processStreaming(ctx, apiMessages, s)
+	responseText, err := a.processStreaming(ctx, apiMessages, s)
+	if err != nil {
+		return "", err
+	}
+	a.flushReasoningSummary(ctx, s)
+	return responseText, nil
 }
 
 func (a *agentImpl) bgOwnerContext(ctx context.Context) context.Context {

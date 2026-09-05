@@ -38,6 +38,7 @@ type Config struct {
 	ThinkingPeerID      int64                           `json:"thinking_peer_id"`
 	MaxTokens           int                             `json:"max_tokens"`
 	ModelLimitInput     int                             `json:"model_limit_input"`
+	SummarizeReasoning  bool                          `json:"summarize_reasoning"`
 	Temperature         float64                         `json:"temperature"`
 	StreamIdleTimeoutSec int                            `json:"stream_idle_timeout_sec"`
 	MaxToolCallDepth    int                             `json:"max_tool_call_depth"`
@@ -239,6 +240,7 @@ func main() {
 	loopConfig.ContextResolver = ctxResolver
 	loopConfig.MaxTokens = maxTokens
 	loopConfig.ModelLimitInput = config.ModelLimitInput
+	loopConfig.SummarizeReasoning = config.SummarizeReasoning
 	loopConfig.Temperature = config.Temperature
 	loopConfig.MaxToolCallDepth = config.MaxToolCallDepth
 	if config.StreamIdleTimeoutSec != 0 {
@@ -307,6 +309,7 @@ func main() {
 		Model:               modelName,
 		MaxTokens:           maxTokens,
 		ModelLimitInput:     config.ModelLimitInput,
+		SummarizeReasoning:  config.SummarizeReasoning,
 		Temperature:         config.Temperature,
 		EnableTools:         true,
 		MaxToolCallDepth:    config.MaxToolCallDepth,

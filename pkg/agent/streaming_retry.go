@@ -71,6 +71,7 @@ func (a *agentImpl) streamAndCollect(ctx context.Context, config StreamingConfig
 		if a.config.SlotSave && a.config.SlotSaver != nil {
 			a.config.SlotSaver.SaveSlot(ctx)
 		}
+		a.appendReasoning(ctx, reasoningText)
 		return responseText, reasoningText, finishReason, toolCalls, promptTokens, completionTokens, nil
 	}
 	if lastErr != nil {
