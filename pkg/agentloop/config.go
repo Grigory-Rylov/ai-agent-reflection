@@ -31,6 +31,7 @@ type LoopConfig struct {
 	Logger                         Logger
 	Debug                          bool
 	EnableCompression              bool
+	SummarizeReasoning             bool
 	TailTurns                      int
 	SpeculativeCompactRatio        float64
 	PreserveRecentTokens           *int

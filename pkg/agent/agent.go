@@ -50,11 +50,13 @@ type Config struct {
 	EnableTools bool
 	
 	EnableCompression bool
-	
+
+	SummarizeReasoning bool
+
 	TailTurns int
-	
+
 	PreserveRecentTokens *int
-	
+
 	CompactionReserved *int
 	
 	ModelLimitInput int
