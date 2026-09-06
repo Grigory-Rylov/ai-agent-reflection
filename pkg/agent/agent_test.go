@@ -392,6 +392,10 @@ func (m *mockStoreWorkingDir) AddMessage(peerID int64, msg store.MessageData) er
 	return nil
 }
 
+func (m *mockStoreWorkingDir) SavePeerMessages(peerID int64, msgs []store.MessageData) error {
+	return nil
+}
+
 func (m *mockStoreWorkingDir) GetMessages(peerID int64) ([]store.MessageData, error) {
 	return nil, nil
 }

@@ -6,7 +6,10 @@ import (
 )
 
 func (s *sqliteDB) GetPermissions(sessionID string) ([]PermissionRecord, error) {
-	rows, err := s.db.Query(`
+	ctx, cancel := withDBTimeout()
+	defer cancel()
+
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, session_id, tool_name, decision, resource
 		FROM permissions
 		WHERE session_id = ?`, sessionID)
@@ -27,7 +30,10 @@ func (s *sqliteDB) GetPermissions(sessionID string) ([]PermissionRecord, error) 
 }
 
 func (s *sqliteDB) GetDistinctGrantSessions() ([]string, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT session_id FROM permissions`)
+	ctx, cancel := withDBTimeout()
+	defer cancel()
+
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT session_id FROM permissions`)
 	if err != nil {
 		return nil, fmt.Errorf("query distinct sessions: %w", err)
 	}
@@ -45,14 +51,16 @@ func (s *sqliteDB) GetDistinctGrantSessions() ([]string, error) {
 }
 
 func (s *sqliteDB) GetPermission(sessionID, toolName, resource string) (*PermissionRecord, error) {
-	row := s.db.QueryRow(`
+	ctx, cancel := withDBTimeout()
+	defer cancel()
+
+	var p PermissionRecord
+	err := s.db.QueryRowContext(ctx, `
 		SELECT id, session_id, tool_name, decision, resource
 		FROM permissions
 		WHERE session_id = ? AND tool_name = ? AND resource = ?`,
-		sessionID, toolName, resource)
-
-	var p PermissionRecord
-	err := row.Scan(&p.ID, &p.SessionID, &p.ToolName, &p.Decision, &p.Resource)
+		sessionID, toolName, resource).
+		Scan(&p.ID, &p.SessionID, &p.ToolName, &p.Decision, &p.Resource)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -63,7 +71,10 @@ func (s *sqliteDB) GetPermission(sessionID, toolName, resource string) (*Permiss
 }
 
 func (s *sqliteDB) SavePermission(sessionID, toolName, resource, decision string) error {
-	_, err := s.db.Exec(`
+	ctx, cancel := withDBTimeout()
+	defer cancel()
+
+	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO permissions (session_id, tool_name, decision, resource)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT(session_id, tool_name, resource) DO UPDATE SET
@@ -73,6 +84,9 @@ func (s *sqliteDB) SavePermission(sessionID, toolName, resource, decision string
 }
 
 func (s *sqliteDB) ClearPermissions(sessionID string) error {
-	_, err := s.db.Exec(`DELETE FROM permissions WHERE session_id = ?`, sessionID)
+	ctx, cancel := withDBTimeout()
+	defer cancel()
+
+	_, err := s.db.ExecContext(ctx, `DELETE FROM permissions WHERE session_id = ?`, sessionID)
 	return err
 }

@@ -1,12 +1,19 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
+
+const dbOpTimeout = 30 * time.Second
+
+func withDBTimeout() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), dbOpTimeout)
+}
 
 type SessionData struct {
 	PeerID     int64     `json:"peer_id"`
@@ -83,6 +90,7 @@ type Store interface {
 	ClearSession(peerID int64) error
 
 	AddMessage(peerID int64, msg MessageData) error
+	SavePeerMessages(peerID int64, msgs []MessageData) error
 	GetMessages(peerID int64) ([]MessageData, error)
 	ClearMessages(peerID int64) error
 
@@ -127,12 +135,27 @@ func NewStore(dbPath string) (Store, error) {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 
+	if err := applyJournalPragmas(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	s := &sqliteDB{db: db}
 	if err := runMigrations(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	return s, nil
+}
+
+func applyJournalPragmas(db *sql.DB) error {
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
+		return fmt.Errorf("journal_mode=WAL: %w", err)
+	}
+	if _, err := db.Exec(`PRAGMA synchronous=NORMAL`); err != nil {
+		return fmt.Errorf("synchronous=NORMAL: %w", err)
+	}
+	return nil
 }
 
 func (s *sqliteDB) Close() error {

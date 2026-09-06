@@ -1,8 +1,10 @@
 package store
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -388,5 +390,111 @@ func TestDBFileCreated(t *testing.T) {
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Error("db file should exist")
+	}
+}
+
+func TestNewStoreWALMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "wal.db")
+
+	s, err := NewStore(path)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	now := time.Now()
+	if err := s.SaveSession(&SessionData{PeerID: 1, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	s.Close()
+
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	defer raw.Close()
+
+	var mode string
+	if err := raw.QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil {
+		t.Fatalf("pragma journal_mode: %v", err)
+	}
+	if !strings.EqualFold(mode, "wal") {
+		t.Errorf("expected wal journal mode, got %q", mode)
+	}
+}
+
+func TestSavePeerMessages(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	if err := s.SaveSession(&SessionData{PeerID: 7, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+
+	msgs := []MessageData{
+		{PeerID: 7, Role: "user", Content: "one", Timestamp: "t1"},
+		{PeerID: 7, Role: "assistant", Content: "two", ToolCalls: `[{"id":"c1"}]`, Timestamp: "t2"},
+		{PeerID: 7, Role: "user", Content: "three", Timestamp: "t3"},
+	}
+	if err := s.SavePeerMessages(7, msgs); err != nil {
+		t.Fatalf("SavePeerMessages: %v", err)
+	}
+
+	loaded, err := s.GetMessages(7)
+	if err != nil {
+		t.Fatalf("GetMessages: %v", err)
+	}
+	if len(loaded) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(loaded))
+	}
+	if loaded[0].Content != "one" || loaded[1].Content != "two" || loaded[2].Content != "three" {
+		t.Errorf("unexpected order: %v", loaded)
+	}
+	if loaded[1].ToolCalls != `[{"id":"c1"}]` {
+		t.Errorf("unexpected tool_calls: %s", loaded[1].ToolCalls)
+	}
+
+	trimmed := []MessageData{
+		{PeerID: 7, Role: "user", Content: "compact", Summary: true, Timestamp: "t4"},
+	}
+	if err := s.SavePeerMessages(7, trimmed); err != nil {
+		t.Fatalf("SavePeerMessages rewrite: %v", err)
+	}
+	loaded, err = s.GetMessages(7)
+	if err != nil {
+		t.Fatalf("GetMessages after rewrite: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 message after rewrite, got %d", len(loaded))
+	}
+	if !loaded[0].Summary {
+		t.Error("expected Summary flag to survive rewrite")
+	}
+}
+
+func TestSavePeerMessagesIsolatedByPeer(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	for _, peer := range []int64{11, 12} {
+		if err := s.SaveSession(&SessionData{PeerID: peer, CreatedAt: now, UpdatedAt: now}); err != nil {
+			t.Fatalf("SaveSession(%d): %v", peer, err)
+		}
+	}
+
+	if err := s.SavePeerMessages(11, []MessageData{{PeerID: 11, Role: "user", Content: "a", Timestamp: "t"}}); err != nil {
+		t.Fatalf("SavePeerMessages(11): %v", err)
+	}
+	if err := s.SavePeerMessages(12, []MessageData{
+		{PeerID: 12, Role: "user", Content: "b", Timestamp: "t"},
+		{PeerID: 12, Role: "user", Content: "c", Timestamp: "t"},
+	}); err != nil {
+		t.Fatalf("SavePeerMessages(12): %v", err)
+	}
+
+	msgs11, _ := s.GetMessages(11)
+	msgs12, _ := s.GetMessages(12)
+	if len(msgs11) != 1 || msgs11[0].Content != "a" {
+		t.Errorf("peer 11: expected [a], got %v", msgs11)
+	}
+	if len(msgs12) != 2 || msgs12[0].Content != "b" || msgs12[1].Content != "c" {
+		t.Errorf("peer 12: expected [b c], got %v", msgs12)
 	}
 }

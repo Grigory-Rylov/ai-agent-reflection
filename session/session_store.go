@@ -76,15 +76,13 @@ func (s *Session) saveToStore(st store.Store) error {
 		return fmt.Errorf("save session: %w", err)
 	}
 
-	if err := st.ClearMessages(s.config.PeerID); err != nil {
-		return fmt.Errorf("clear messages: %w", err)
+	msgs := make([]store.MessageData, len(s.messages))
+	for i, msg := range s.messages {
+		msgs[i] = messageToStoreMsg(msg)
 	}
 
-	for _, msg := range s.messages {
-		d := messageToStoreMsg(msg)
-		if err := st.AddMessage(s.config.PeerID, d); err != nil {
-			return fmt.Errorf("add message: %w", err)
-		}
+	if err := st.SavePeerMessages(s.config.PeerID, msgs); err != nil {
+		return fmt.Errorf("save messages: %w", err)
 	}
 
 	return nil

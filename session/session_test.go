@@ -348,6 +348,7 @@ func (m *mockWorkingDirStore) SaveSession(s *store.SessionData) error {
 
 func (m *mockWorkingDirStore) ClearSession(peerID int64) error                            { return nil }
 func (m *mockWorkingDirStore) AddMessage(peerID int64, msg store.MessageData) error       { return nil }
+func (m *mockWorkingDirStore) SavePeerMessages(peerID int64, msgs []store.MessageData) error { return nil }
 func (m *mockWorkingDirStore) GetMessages(peerID int64) ([]store.MessageData, error)      { return nil, nil }
 func (m *mockWorkingDirStore) ClearMessages(peerID int64) error                           { return nil }
 func (m *mockWorkingDirStore) GetTodos(sessionID string) ([]store.TodoItem, error)        { return nil, nil }

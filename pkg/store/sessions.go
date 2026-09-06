@@ -8,15 +8,17 @@ import (
 )
 
 func (s *sqliteDB) GetSession(peerID int64) (*SessionData, error) {
-	row := s.db.QueryRow(
-		`SELECT peer_id, created_at, updated_at, working_dir,
-		        loop_count, is_looped, last_looped, pinned, resume_prompt
-		 FROM sessions WHERE peer_id = ?`, peerID)
+	ctx, cancel := withDBTimeout()
+	defer cancel()
 
 	var sd SessionData
 	var createdAt, updatedAt, lastLooped, pinned, resumePrompt string
-	err := row.Scan(&sd.PeerID, &createdAt, &updatedAt,
-		&sd.WorkingDir, &sd.LoopCount, &sd.IsLooped, &lastLooped, &pinned, &resumePrompt)
+	err := s.db.QueryRowContext(ctx,
+		`SELECT peer_id, created_at, updated_at, working_dir,
+		        loop_count, is_looped, last_looped, pinned, resume_prompt
+		 FROM sessions WHERE peer_id = ?`, peerID).
+		Scan(&sd.PeerID, &createdAt, &updatedAt,
+			&sd.WorkingDir, &sd.LoopCount, &sd.IsLooped, &lastLooped, &pinned, &resumePrompt)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -38,8 +40,11 @@ func (s *sqliteDB) GetSession(peerID int64) (*SessionData, error) {
 }
 
 func (s *sqliteDB) SaveSession(sd *SessionData) error {
+	ctx, cancel := withDBTimeout()
+	defer cancel()
+
 	pinnedJSON, _ := json.Marshal(sd.Pinned)
-	_, err := s.db.Exec(`
+	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO sessions (peer_id, created_at, updated_at, working_dir,
 		                      loop_count, is_looped, last_looped, pinned, resume_prompt)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -65,16 +70,19 @@ func (s *sqliteDB) SaveSession(sd *SessionData) error {
 }
 
 func (s *sqliteDB) ClearSession(peerID int64) error {
-	tx, err := s.db.Begin()
+	ctx, cancel := withDBTimeout()
+	defer cancel()
+
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`DELETE FROM messages WHERE peer_id = ?`, peerID); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE peer_id = ?`, peerID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM sessions WHERE peer_id = ?`, peerID); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE peer_id = ?`, peerID); err != nil {
 		return err
 	}
 	return tx.Commit()

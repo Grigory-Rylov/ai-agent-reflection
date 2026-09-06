@@ -9,7 +9,6 @@ import (
 )
 
 func (s *sqliteDB) SaveAgentSession(sd *AgentSessionData) error {
-	now := time.Now().UTC().Format(time.RFC3339)
 	if sd.CreatedAt.IsZero() {
 		sd.CreatedAt = time.Now().UTC()
 	}
@@ -19,10 +18,12 @@ func (s *sqliteDB) SaveAgentSession(sd *AgentSessionData) error {
 	if sd.Status == "" {
 		sd.Status = "active"
 	}
+	now := time.Now().UTC().Format(time.RFC3339)
 
-	messagesJSON := sd.Messages
+	ctx, cancel := withDBTimeout()
+	defer cancel()
 
-	_, err := s.db.Exec(`
+	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO agent_sessions (id, parent_id, agent_name, peer_id, system_prompt, last_prompt, last_tool_call, status, created_at, updated_at, messages)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -37,7 +38,7 @@ func (s *sqliteDB) SaveAgentSession(sd *AgentSessionData) error {
 		sd.LastPrompt, sd.LastToolCall, sd.Status,
 		sd.CreatedAt.Format(time.RFC3339),
 		now,
-		string(messagesJSON),
+		sd.Messages,
 	)
 	if err != nil {
 		return fmt.Errorf("save agent session: %w", err)
@@ -46,15 +47,17 @@ func (s *sqliteDB) SaveAgentSession(sd *AgentSessionData) error {
 }
 
 func (s *sqliteDB) GetAgentSession(id string) (*AgentSessionData, error) {
-	row := s.db.QueryRow(`
-		SELECT id, parent_id, agent_name, peer_id, system_prompt, last_prompt, last_tool_call, status, created_at, updated_at, messages
-		FROM agent_sessions WHERE id = ?`, id)
+	ctx, cancel := withDBTimeout()
+	defer cancel()
 
 	var sd AgentSessionData
 	var createdAt, updatedAt, messagesJSON string
-	err := row.Scan(&sd.ID, &sd.ParentID, &sd.AgentName, &sd.PeerID,
-		&sd.SystemPrompt, &sd.LastPrompt, &sd.LastToolCall, &sd.Status,
-		&createdAt, &updatedAt, &messagesJSON)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, parent_id, agent_name, peer_id, system_prompt, last_prompt, last_tool_call, status, created_at, updated_at, messages
+		FROM agent_sessions WHERE id = ?`, id).
+		Scan(&sd.ID, &sd.ParentID, &sd.AgentName, &sd.PeerID,
+			&sd.SystemPrompt, &sd.LastPrompt, &sd.LastToolCall, &sd.Status,
+			&createdAt, &updatedAt, &messagesJSON)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -69,7 +72,10 @@ func (s *sqliteDB) GetAgentSession(id string) (*AgentSessionData, error) {
 }
 
 func (s *sqliteDB) GetActiveAgentSessions(peerID int64) ([]AgentSessionData, error) {
-	rows, err := s.db.Query(`
+	ctx, cancel := withDBTimeout()
+	defer cancel()
+
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, parent_id, agent_name, peer_id, system_prompt, last_prompt, last_tool_call, status, created_at, updated_at, messages
 		FROM agent_sessions WHERE peer_id = ? AND status = 'active'
 		ORDER BY created_at`, peerID)
@@ -96,42 +102,59 @@ func (s *sqliteDB) GetActiveAgentSessions(peerID int64) ([]AgentSessionData, err
 }
 
 func (s *sqliteDB) CompleteAgentSession(id string) error {
-	_, err := s.db.Exec(`UPDATE agent_sessions SET status = 'completed', updated_at = ? WHERE id = ?`,
-		time.Now().UTC().Format(time.RFC3339), id)
-	return err
+	return s.setAgentSessionStatus(id, "completed")
 }
 
 func (s *sqliteDB) CancelAgentSession(id string) error {
-	_, err := s.db.Exec(`UPDATE agent_sessions SET status = 'cancelled', updated_at = ? WHERE id = ?`,
-		time.Now().UTC().Format(time.RFC3339), id)
+	return s.setAgentSessionStatus(id, "cancelled")
+}
+
+func (s *sqliteDB) setAgentSessionStatus(id, status string) error {
+	ctx, cancel := withDBTimeout()
+	defer cancel()
+
+	_, err := s.db.ExecContext(ctx, `UPDATE agent_sessions SET status = ?, updated_at = ? WHERE id = ?`,
+		status, time.Now().UTC().Format(time.RFC3339), id)
 	return err
 }
 
 func (s *sqliteDB) DeleteAgentSession(id string) error {
-	_, err := s.db.Exec(`DELETE FROM agent_sessions WHERE id = ?`, id)
+	ctx, cancel := withDBTimeout()
+	defer cancel()
+
+	_, err := s.db.ExecContext(ctx, `DELETE FROM agent_sessions WHERE id = ?`, id)
 	return err
 }
 
 func (s *sqliteDB) UpdateAgentSession(id, lastPrompt, messages string) error {
-	_, err := s.db.Exec(`UPDATE agent_sessions SET last_prompt = ?, messages = ?, updated_at = ? WHERE id = ?`,
+	ctx, cancel := withDBTimeout()
+	defer cancel()
+
+	_, err := s.db.ExecContext(ctx, `UPDATE agent_sessions SET last_prompt = ?, messages = ?, updated_at = ? WHERE id = ?`,
 		lastPrompt, messages, time.Now().UTC().Format(time.RFC3339), id)
 	return err
 }
 
 func (s *sqliteDB) SaveAgentCheckpoint(id, lastToolCall, messages string) error {
-	if _, err := s.db.Exec(`UPDATE agent_sessions SET last_tool_call = ?, messages = ?, updated_at = ? WHERE id = ?`,
-		lastToolCall, messages, time.Now().UTC().Format(time.RFC3339), id); err != nil {
+	ctx, cancel := withDBTimeout()
+	defer cancel()
+
+	_, err := s.db.ExecContext(ctx, `UPDATE agent_sessions SET last_tool_call = ?, messages = ?, updated_at = ? WHERE id = ?`,
+		lastToolCall, messages, time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
 		return fmt.Errorf("save agent checkpoint: %w", err)
 	}
 	return nil
 }
 
 func (s *sqliteDB) GetAgentChain(peerID int64) (*AgentChainData, error) {
-	row := s.db.QueryRow(`SELECT peer_id, chain, updated_at FROM active_agent_chain WHERE peer_id = ?`, peerID)
+	ctx, cancel := withDBTimeout()
+	defer cancel()
 
 	var chainData AgentChainData
 	var chainJSON, updatedAt string
-	err := row.Scan(&chainData.PeerID, &chainJSON, &updatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT peer_id, chain, updated_at FROM active_agent_chain WHERE peer_id = ?`, peerID).
+		Scan(&chainData.PeerID, &chainJSON, &updatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -147,9 +170,12 @@ func (s *sqliteDB) GetAgentChain(peerID int64) (*AgentChainData, error) {
 }
 
 func (s *sqliteDB) SaveAgentChain(peerID int64, chain []string) error {
+	ctx, cancel := withDBTimeout()
+	defer cancel()
+
 	now := time.Now().UTC().Format(time.RFC3339)
 	chainJSON, _ := json.Marshal(chain)
-	_, err := s.db.Exec(`
+	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO active_agent_chain (peer_id, chain, updated_at)
 		VALUES (?, ?, ?)
 		ON CONFLICT(peer_id) DO UPDATE SET
@@ -161,30 +187,43 @@ func (s *sqliteDB) SaveAgentChain(peerID int64, chain []string) error {
 }
 
 func (s *sqliteDB) ClearAgentChain(peerID int64) error {
-	
-	_, _ = s.db.Exec(`UPDATE agent_sessions SET status = 'cancelled', updated_at = ? WHERE peer_id = ? AND status = 'active'`,
-		time.Now().UTC().Format(time.RFC3339), peerID)
+	ctx, cancel := withDBTimeout()
+	defer cancel()
 
-	_, err := s.db.Exec(`DELETE FROM active_agent_chain WHERE peer_id = ?`, peerID)
-	return err
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := s.db.ExecContext(ctx, `UPDATE agent_sessions SET status = 'cancelled', updated_at = ? WHERE peer_id = ? AND status = 'active'`,
+		now, peerID); err != nil {
+		return fmt.Errorf("cancel agent sessions: %w", err)
+	}
+
+	_, err := s.db.ExecContext(ctx, `DELETE FROM active_agent_chain WHERE peer_id = ?`, peerID)
+	if err != nil {
+		return fmt.Errorf("delete agent chain: %w", err)
+	}
+	return nil
 }
 
-
 func (s *sqliteDB) ClearPeerData(peerID int64) error {
-	if _, err := s.db.Exec(`DELETE FROM agent_sessions WHERE peer_id = ?`, peerID); err != nil {
+	ctx, cancel := withDBTimeout()
+	defer cancel()
+
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM agent_sessions WHERE peer_id = ?`, peerID); err != nil {
 		return fmt.Errorf("delete agent sessions: %w", err)
 	}
-	if _, err := s.db.Exec(`DELETE FROM active_agent_chain WHERE peer_id = ?`, peerID); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM active_agent_chain WHERE peer_id = ?`, peerID); err != nil {
 		return fmt.Errorf("delete active agent chain: %w", err)
 	}
-	if _, err := s.db.Exec(`DELETE FROM todos WHERE session_id = ?`, strconv.FormatInt(peerID, 10)); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM todos WHERE session_id = ?`, strconv.FormatInt(peerID, 10)); err != nil {
 		return fmt.Errorf("delete todos: %w", err)
 	}
 	return nil
 }
 
 func (s *sqliteDB) GetAllActiveChains() ([]AgentChainData, error) {
-	rows, err := s.db.Query(`SELECT peer_id, chain, updated_at FROM active_agent_chain`)
+	ctx, cancel := withDBTimeout()
+	defer cancel()
+
+	rows, err := s.db.QueryContext(ctx, `SELECT peer_id, chain, updated_at FROM active_agent_chain`)
 	if err != nil {
 		return nil, fmt.Errorf("query active chains: %w", err)
 	}
