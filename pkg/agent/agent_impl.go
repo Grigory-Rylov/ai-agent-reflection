@@ -553,17 +553,25 @@ func (a *agentImpl) convertHistoryToAPIMessages(history []session.Message) []Mes
 		if len(msg.ToolCalls) > 0 {
 			apiMsg.ToolCalls = make([]ToolCall, len(msg.ToolCalls))
 			for j, tc := range msg.ToolCalls {
-				apiMsg.ToolCalls[j] = ToolCall{
-					ID:   tc.ID,
-					Type: tc.Type,
-					Function: ToolCallFunction{
-						Name:      tc.Function.Name,
-						Arguments: json.RawMessage(tc.Function.Arguments),
-					},
-				}
+				apiMsg.ToolCalls[j] = normalizeStoredToolCall(tc)
 			}
 		}
 		apiMessages[i] = apiMsg
 	}
 	return apiMessages
+}
+
+func normalizeStoredToolCall(tc session.MsgToolCall) ToolCall {
+	args := tc.Function.Arguments
+	if args == "" {
+		args = "{}"
+	}
+	return buildToolCallForRequest(ToolCall{
+		ID:   tc.ID,
+		Type: tc.Type,
+		Function: ToolCallFunction{
+			Name:      tc.Function.Name,
+			Arguments: json.RawMessage(args),
+		},
+	})
 }
