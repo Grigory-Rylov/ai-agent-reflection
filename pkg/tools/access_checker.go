@@ -786,6 +786,13 @@ var readOnlyCommands = map[string]bool{
 	"ps": true, "top": true, "free": true, "df": true, "du": true, "uptime": true, "uname": true,
 	"find": true,
 	"go": true,
+	"docker": true,
+}
+
+var dockerReadOnlySubcommands = map[string]bool{
+	"ps": true, "logs": true, "inspect": true, "images": true,
+	"stats": true, "top": true, "port": true, "version": true,
+	"info": true, "search": true, "exec": true,
 }
 
 var findMutatingFlags = map[string]bool{
@@ -807,6 +814,9 @@ func IsReadOnlySubcommand(sub string) bool {
 	if !readOnlyCommands[cmd] {
 		return false
 	}
+	if cmd == "docker" {
+		return isDockerReadOnly(parts)
+	}
 	for _, tok := range parts[1:] {
 		tok = strings.TrimRight(tok, ";")
 		if findMutatingFlags[tok] {
@@ -820,6 +830,36 @@ func IsReadOnlySubcommand(sub string) bool {
 		return headTailSafe(parts)
 	}
 	return true
+}
+
+func isDockerReadOnly(parts []string) bool {
+	i := 1
+	for i < len(parts) && strings.HasPrefix(parts[i], "-") {
+		i++
+	}
+	if i >= len(parts) {
+		return false
+	}
+	subcmd := parts[i]
+	if dockerReadOnlySubcommands[subcmd] && subcmd != "exec" {
+		return true
+	}
+	if subcmd == "exec" {
+		i++
+		for i < len(parts) && strings.HasPrefix(parts[i], "-") {
+			i++
+		}
+		if i >= len(parts) {
+			return false
+		}
+		i++
+		if i >= len(parts) {
+			return false
+		}
+		inner := strings.Join(parts[i:], " ")
+		return IsReadOnlySubcommand(inner)
+	}
+	return false
 }
 
 func headTailSafe(parts []string) bool {
