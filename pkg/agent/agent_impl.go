@@ -220,11 +220,8 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 		defer a.flushReasoningSummary(ctx, s)
 	}
 
-	if s.IsLoopDetected() {
-		alert := s.GetLoopAlertMessage()
-		if alert != "" {
-			message = "[LOOP DETECTED] " + alert + "\n\n" + message
-		}
+	if alert := s.ConsumeLoopAlert(); alert != "" {
+		message = alert + message
 	}
 
 	history := s.GetHistory()

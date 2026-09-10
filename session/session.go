@@ -546,7 +546,10 @@ func (s *Session) GetLoopCount() int {
 func (s *Session) GetLoopAlertMessage() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.loopAlertMessageLocked()
+}
 
+func (s *Session) loopAlertMessageLocked() string {
 	if !s.config.LoopAlertEnabled {
 		return ""
 	}
@@ -556,6 +559,25 @@ func (s *Session) GetLoopAlertMessage() string {
 	}
 
 	return fmt.Sprintf("WARNING: You are repeating yourself. Loop detected %d times. Please provide a different response.", s.loopCount)
+}
+
+func (s *Session) ConsumeLoopAlert() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.isLooped {
+		return ""
+	}
+
+	alert := s.loopAlertMessageLocked()
+	s.isLooped = false
+	s.loopCount = 0
+	s.saveNow()
+
+	if alert == "" {
+		return ""
+	}
+	return "[LOOP DETECTED] " + alert + "\n\n"
 }
 
 func (s *Session) ResetLoopDetection() {

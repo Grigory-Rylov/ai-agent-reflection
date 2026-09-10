@@ -65,6 +65,7 @@ type BotHandler struct {
 	modelHolder    *modelsconfig.Holder
 	messageFetcher messageFetcher
 	cancelFuncs    map[int64]*cancelEntry
+	resumeOwners   map[int64]bool
 	cancelMu       sync.RWMutex
 	attachmentsDir string
 
@@ -298,13 +299,6 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 			return resp
 		default:
 			message = fmt.Sprintf("[Задача для #%s]\n\n%s", agentName, task)
-			sess := h.aiAgent.GetSession(peerID)
-			if sess != nil && sess.IsLoopDetected() {
-				alert := sess.GetLoopAlertMessage()
-				if alert != "" {
-					message = "[LOOP DETECTED] " + alert + "\n\n" + message
-				}
-			}
 			resp, err := h.aiAgent.ProcessMessage(ctx, message, peerID)
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
@@ -315,14 +309,6 @@ func (h *BotHandler) ProcessMessage(message string, peerID int64) string {
 			return resp
 		}
 	} else {
-		s := h.aiAgent.GetSession(peerID)
-		if s != nil && s.IsLoopDetected() {
-			alert := s.GetLoopAlertMessage()
-			if alert != "" {
-				message = "[LOOP DETECTED] " + alert + "\n\n" + message
-			}
-		}
-
 		response, err := h.aiAgent.ProcessMessage(ctx, message, peerID)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -882,9 +868,14 @@ func (h *BotHandler) clearHandlerSession(peerID int64) {
 }
 
 func (h *BotHandler) ScheduleResume(peerID int64) {
-	h.spawnCancellableTurn(peerID, func(ctx context.Context) {
+	h.setResumeOwner(peerID)
+	if !h.spawnCancellableTurn(peerID, func(ctx context.Context) {
+		defer h.clearResumeOwner(peerID)
 		h.aiAgent.ResumeInterruptedTask(ctx, peerID)
-	})
+		h.resumeChainInCurrentTurn(ctx, peerID)
+	}) {
+		h.clearResumeOwner(peerID)
+	}
 }
 
 func (h *BotHandler) ScheduleChainResume() {
@@ -893,28 +884,60 @@ func (h *BotHandler) ScheduleChainResume() {
 	}
 	for _, peerID := range h.orchestrator.ActiveChainPeers() {
 		peer := peerID
+		if h.resumeChainOwned(peer) {
+			continue
+		}
 		h.spawnCancellableTurn(peer, func(ctx context.Context) {
-			if err := h.orchestrator.ResumeActiveChainsForPeer(ctx, peer); err != nil && h.log != nil {
-				h.log.WarnLogf("Chain resume for peer %d: %v", peer, err)
-			}
+			h.resumeChainInCurrentTurn(ctx, peer)
 		})
 	}
 }
 
-func (h *BotHandler) spawnCancellableTurn(peerID int64, run func(ctx context.Context)) {
-	go func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		entry := &cancelEntry{cancel: cancel}
-		if !h.setCancelEntryIfIdle(peerID, entry) {
-			cancel()
-			if h.log != nil {
-				h.log.InfoLogf("Skip resume for peer %d: another request is already active", peerID)
-			}
-			return
+func (h *BotHandler) setResumeOwner(peerID int64) {
+	h.cancelMu.Lock()
+	defer h.cancelMu.Unlock()
+	if h.resumeOwners == nil {
+		h.resumeOwners = make(map[int64]bool)
+	}
+	h.resumeOwners[peerID] = true
+}
+
+func (h *BotHandler) clearResumeOwner(peerID int64) {
+	h.cancelMu.Lock()
+	defer h.cancelMu.Unlock()
+	delete(h.resumeOwners, peerID)
+}
+
+func (h *BotHandler) resumeChainOwned(peerID int64) bool {
+	h.cancelMu.RLock()
+	defer h.cancelMu.RUnlock()
+	return h.resumeOwners[peerID]
+}
+
+func (h *BotHandler) resumeChainInCurrentTurn(ctx context.Context, peerID int64) {
+	if h.orchestrator == nil || ctx.Err() != nil {
+		return
+	}
+	if err := h.orchestrator.ResumeActiveChainsForPeer(ctx, peerID); err != nil && h.log != nil {
+		h.log.WarnLogf("Chain resume for peer %d: %v", peerID, err)
+	}
+}
+
+func (h *BotHandler) spawnCancellableTurn(peerID int64, run func(ctx context.Context)) bool {
+	ctx, cancel := context.WithCancel(context.Background())
+	entry := &cancelEntry{cancel: cancel}
+	if !h.setCancelEntryIfIdle(peerID, entry) {
+		cancel()
+		if h.log != nil {
+			h.log.InfoLogf("Skip resume for peer %d: another request is already active", peerID)
 		}
+		return false
+	}
+	go func() {
 		defer h.clearCancelFunc(peerID, entry)
 		run(ctx)
 	}()
+	return true
 }
 
 func (h *BotHandler) setCancelEntryIfIdle(peerID int64, entry *cancelEntry) bool {
