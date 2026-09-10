@@ -466,7 +466,6 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 	sess := al.getOrCreateSession(peerID)
 
 	sess.SetResumePrompt(prompt)
-	defer sess.SetResumePrompt("")
 
 	if al.log != nil {
 		al.log.InfoLogf("Prompt received from peer %d: %s", peerID, stringutil.Truncate(prompt, 100, "..."))
@@ -526,6 +525,7 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 
 		al.slotMgr.Touch(sessionID)
 	}
+	sess.SetResumePrompt("")
 
 	if al.config.EnablePruning {
 		al.runPruning(sess)
@@ -799,17 +799,24 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 	}
 
 	seededLen := len(agentSess.GetHistory())
+	mirror := newTurnMirror(sess, agentSess, seededLen)
+
+	if cs, ok := a.(agent.CheckpointSetter); ok {
+		cs.SetCheckpoint(func(string) { mirror.sync() })
+	}
 
 	response, err := a.ProcessMessage(ctx, prompt, peerID)
+	mirror.sync()
 
 	if err != nil && (errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "context canceled")) {
 		return "", err
 	}
 
-	al.mirrorAgentSession(sess, agentSess, seededLen)
-
 	if in := sess.GetPeerInput(); in != nil {
 		for _, m := range in.TakePromoted() {
+			if mirror.alreadyMirrored(m) {
+				continue
+			}
 			sess.AddUserMessage(m)
 		}
 	}
@@ -840,27 +847,6 @@ func lastPublishableAssistantContent(hist []session.Message) string {
 		return msg.Content
 	}
 	return ""
-}
-
-func (al *agentLoop) mirrorAgentSession(sess *session.Session, agentSess *session.Session, seededLen int) {
-	history := agentSess.GetHistory()
-	for i := seededLen; i < len(history); i++ {
-		m := history[i]
-		switch m.Role {
-		case session.UserRole:
-			sess.AddUserMessage(m.Content)
-		case session.AssistantRole:
-			if m.Internal || internalmsg.IsInternal(m.Content) {
-				sess.AddAssistantMessageInternal(m.Content)
-			} else if len(m.ToolCalls) > 0 {
-				sess.AddAssistantMessageWithToolCalls(m.Content, m.ToolCalls)
-			} else if m.Content != "" || i == len(history)-1 {
-				sess.AddAssistantMessage(m.Content)
-			}
-		case session.ToolRole:
-			sess.AddToolMessage(m.ToolCallID, m.Name, m.Content)
-		}
-	}
 }
 
 func (al *agentLoop) buildAgentConfig() agent.Config {
