@@ -14,6 +14,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agent"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agentpolicy"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/compress"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/internalmsg"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/store"
@@ -465,7 +466,6 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 	sess := al.getOrCreateSession(peerID)
 
 	sess.SetResumePrompt(prompt)
-	defer sess.SetResumePrompt("")
 
 	if al.log != nil {
 		al.log.InfoLogf("Prompt received from peer %d: %s", peerID, stringutil.Truncate(prompt, 100, "..."))
@@ -525,6 +525,7 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 
 		al.slotMgr.Touch(sessionID)
 	}
+	sess.SetResumePrompt("")
 
 	if al.config.EnablePruning {
 		al.runPruning(sess)
@@ -798,17 +799,24 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 	}
 
 	seededLen := len(agentSess.GetHistory())
+	mirror := newTurnMirror(sess, agentSess, seededLen)
+
+	if cs, ok := a.(agent.CheckpointSetter); ok {
+		cs.SetCheckpoint(func(string) { mirror.sync() })
+	}
 
 	response, err := a.ProcessMessage(ctx, prompt, peerID)
+	mirror.sync()
 
 	if err != nil && (errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "context canceled")) {
 		return "", err
 	}
 
-	al.mirrorAgentSession(sess, agentSess, seededLen)
-
 	if in := sess.GetPeerInput(); in != nil {
 		for _, m := range in.TakePromoted() {
+			if mirror.alreadyMirrored(m) {
+				continue
+			}
 			sess.AddUserMessage(m)
 		}
 	}
@@ -818,35 +826,27 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 	}
 
 	if response == "" {
-		hist := agentSess.GetHistory()
-		if len(hist) > 0 {
-			last := hist[len(hist)-1]
-			if last.Role == session.AssistantRole && last.Content != "" {
-				response = last.Content
-			}
-		}
+		response = lastPublishableAssistantContent(agentSess.GetHistory())
 	}
 
 	return response, nil
 }
 
-func (al *agentLoop) mirrorAgentSession(sess *session.Session, agentSess *session.Session, seededLen int) {
-	history := agentSess.GetHistory()
-	for i := seededLen; i < len(history); i++ {
-		m := history[i]
-		switch m.Role {
-		case session.UserRole:
-			sess.AddUserMessage(m.Content)
-		case session.AssistantRole:
-			if len(m.ToolCalls) > 0 {
-				sess.AddAssistantMessageWithToolCalls(m.Content, m.ToolCalls)
-			} else if m.Content != "" || i == len(history)-1 {
-				sess.AddAssistantMessage(m.Content)
-			}
-		case session.ToolRole:
-			sess.AddToolMessage(m.ToolCallID, m.Name, m.Content)
+func lastPublishableAssistantContent(hist []session.Message) string {
+	for i := len(hist) - 1; i >= 0; i-- {
+		msg := hist[i]
+		if msg.Role != session.AssistantRole {
+			continue
 		}
+		if msg.Internal || msg.Summary || internalmsg.IsInternal(msg.Content) {
+			continue
+		}
+		if strings.TrimSpace(msg.Content) == "" {
+			continue
+		}
+		return msg.Content
 	}
+	return ""
 }
 
 func (al *agentLoop) buildAgentConfig() agent.Config {

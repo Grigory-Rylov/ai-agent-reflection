@@ -46,7 +46,7 @@ func (s *Session) loadFromStore(st store.Store) error {
 
 		s.messages = append(s.messages, msg)
 
-		if msg.Role == AssistantRole {
+		if msg.Role == AssistantRole && !msg.Internal {
 			s.checkLoop(msg.Content)
 		}
 	}
@@ -96,6 +96,7 @@ func messageToStoreMsg(msg Message) store.MessageData {
 		ToolName:    msg.Name,
 		Timestamp:   msg.Timestamp.Format(time.RFC3339),
 		Summary:     msg.Summary,
+		Internal:    msg.Internal,
 		Compacted:   msg.Compacted,
 		TailStartID: msg.TailStartID,
 	}
@@ -115,6 +116,7 @@ func storeMsgToMessage(d store.MessageData) (Message, error) {
 		Name:        d.ToolName,
 		Timestamp:   ts,
 		Summary:     d.Summary,
+		Internal:    d.Internal,
 		Compacted:   d.Compacted,
 		TailStartID: d.TailStartID,
 	}

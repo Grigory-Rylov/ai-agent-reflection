@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/internalmsg"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
@@ -133,11 +134,14 @@ func TestProcessMessageStoresReasoningSummaryInHistory(t *testing.T) {
 	if last[1].Role != session.AssistantRole {
 		t.Errorf("expected summary message role assistant, got %s", last[1].Role)
 	}
-	if !strings.HasPrefix(last[1].Content, "[REASONING SUMMARY]") {
+	if !strings.HasPrefix(last[1].Content, internalmsg.Label) {
 		t.Errorf("expected [REASONING SUMMARY] prefix, got %q", last[1].Content)
 	}
 	if !strings.Contains(last[1].Content, "SUMMARY-OK") {
 		t.Errorf("expected LLM summary text in stored message, got %q", last[1].Content)
+	}
+	if !last[1].Internal {
+		t.Errorf("expected reasoning summary message to be marked internal")
 	}
 }
 
@@ -151,7 +155,7 @@ func TestProcessMessageNoReasoningSummaryWhenDisabled(t *testing.T) {
 		t.Errorf("expected no summary LLM call when flag is off, got %d", got)
 	}
 	for _, m := range a.GetSession(424202).GetHistory() {
-		if strings.Contains(m.Content, "[REASONING SUMMARY]") {
+		if strings.Contains(m.Content, internalmsg.Label) {
 			t.Fatalf("unexpected summary message in history: %q", m.Content)
 		}
 	}
@@ -167,7 +171,7 @@ func TestProcessMessageSkipsShortReasoningSummary(t *testing.T) {
 		t.Errorf("expected no summary LLM call for short reasoning, got %d", got)
 	}
 	for _, m := range a.GetSession(424203).GetHistory() {
-		if strings.Contains(m.Content, "[REASONING SUMMARY]") {
+		if strings.Contains(m.Content, internalmsg.Label) {
 			t.Fatalf("unexpected summary message in history: %q", m.Content)
 		}
 	}
@@ -184,7 +188,7 @@ func TestProcessMessageFallsBackToRawReasoningWhenSummaryFails(t *testing.T) {
 	}
 
 	last := lastTwoHistoryMessages(t, a, 424204)
-	if !strings.HasPrefix(last[1].Content, "[REASONING SUMMARY]") {
+	if !strings.HasPrefix(last[1].Content, internalmsg.Label) {
 		t.Fatalf("expected fallback summary message, got %q", last[1].Content)
 	}
 	if !strings.Contains(last[1].Content, "data flow") {

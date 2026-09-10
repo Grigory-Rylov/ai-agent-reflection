@@ -5,6 +5,7 @@ import (
 		"fmt"
 	"strings"
 
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/internalmsg"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 	sess "github.com/Grigory-Rylov/ai-agent-reflection/session"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util/stringutil"
@@ -407,6 +408,7 @@ func (a *agentImpl) makeTextResponse(responseText string, session *sess.Session)
 	parsedResp := ParseXMLToolCalls(responseText)
 	responseText = parsedResp.Content
 	responseText = a.stripThinkingTags(responseText, session.GetPeerID())
+	responseText = internalmsg.Strip(responseText)
 	if responseText != "" {
 		session.AddAssistantMessage(responseText)
 	}

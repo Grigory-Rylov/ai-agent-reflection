@@ -264,6 +264,62 @@ func TestSessionPersistence(t *testing.T) {
 }
 
 
+func TestConsumeLoopAlertFiresOnce(t *testing.T) {
+	config := DefaultConfig()
+	config.PeerID = 12345
+	config.MaxLoopHistory = 3
+	s := NewSession(config)
+
+	s.AddAssistantMessage("Repeated message B")
+	s.AddAssistantMessage("Repeated message B")
+
+	if !s.IsLoopDetected() {
+		t.Fatal("loop should be detected")
+	}
+
+	first := s.ConsumeLoopAlert()
+	if !strings.Contains(first, "[LOOP DETECTED]") {
+		t.Errorf("expected loop alert prefix, got %q", first)
+	}
+	if s.IsLoopDetected() {
+		t.Error("loop state should be cleared after alert consumption")
+	}
+	if second := s.ConsumeLoopAlert(); second != "" {
+		t.Errorf("expected empty alert after consumption, got %q", second)
+	}
+
+	s.AddAssistantMessage("Completely different reply about binary builds")
+	if s.IsLoopDetected() {
+		t.Error("different response after consumed alert should not re-trigger loop")
+	}
+}
+
+func TestConsumeLoopAlertPersistsClearedState(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "session.json")
+
+	config := DefaultConfig()
+	config.PeerID = 778001
+	config.SessionFile = file
+	config.SystemPrompt = ""
+	config.MaxLoopHistory = 3
+
+	s := NewSession(config)
+	s.AddAssistantMessage("Loop message C")
+	s.AddAssistantMessage("Loop message C")
+	if !s.IsLoopDetected() {
+		t.Fatal("loop should be detected")
+	}
+	if s.ConsumeLoopAlert() == "" {
+		t.Fatal("expected alert on first consumption")
+	}
+
+	reloaded := NewSession(config)
+	if reloaded.IsLoopDetected() {
+		t.Error("consumed loop state must not survive reload")
+	}
+}
+
 func TestSessionReset(t *testing.T) {
 	config := DefaultConfig()
 	config.PeerID = 12345

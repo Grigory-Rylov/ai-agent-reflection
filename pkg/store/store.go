@@ -41,6 +41,7 @@ type MessageData struct {
 	
 	
 	Summary     bool `json:"summary,omitempty"`
+	Internal    bool `json:"internal,omitempty"`
 	Compacted   bool `json:"compacted,omitempty"`
 	TailStartID int  `json:"tail_start_id,omitempty"`
 }

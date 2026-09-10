@@ -44,6 +44,7 @@ type Message struct {
 	ToolCallID string        `json:"tool_call_id,omitempty"`
 	Name       string        `json:"name,omitempty"`
 	Summary    bool          `json:"summary,omitempty"`
+	Internal   bool          `json:"internal,omitempty"`
 
 	Compacted bool `json:"compacted,omitempty"`
 
@@ -208,6 +209,25 @@ func (s *Session) AddAssistantMessage(content string) {
 	s.updatedAt = time.Now()
 
 	s.checkLoop(content)
+
+	s.saveNow()
+}
+
+// AddAssistantMessageInternal appends an assistant message that stays in the
+// model context but is never surfaced to the user (no loop detection either,
+// since repetitive internal summaries would false-trigger it).
+func (s *Session) AddAssistantMessageInternal(content string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	msg := Message{
+		Role:      AssistantRole,
+		Content:   content,
+		Internal:  true,
+		Timestamp: time.Now(),
+	}
+	s.messages = append(s.messages, msg)
+	s.updatedAt = time.Now()
 
 	s.saveNow()
 }
@@ -470,7 +490,7 @@ func (s *Session) GetLastAssistantMessage() *Message {
 
 func (s *Session) getLastAssistantMessageLocked() *Message {
 	for i := len(s.messages) - 1; i >= 0; i-- {
-		if s.messages[i].Role == AssistantRole {
+		if s.messages[i].Role == AssistantRole && !s.messages[i].Internal {
 			msg := s.messages[i]
 			return &msg
 		}
@@ -526,7 +546,10 @@ func (s *Session) GetLoopCount() int {
 func (s *Session) GetLoopAlertMessage() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.loopAlertMessageLocked()
+}
 
+func (s *Session) loopAlertMessageLocked() string {
 	if !s.config.LoopAlertEnabled {
 		return ""
 	}
@@ -536,6 +559,25 @@ func (s *Session) GetLoopAlertMessage() string {
 	}
 
 	return fmt.Sprintf("WARNING: You are repeating yourself. Loop detected %d times. Please provide a different response.", s.loopCount)
+}
+
+func (s *Session) ConsumeLoopAlert() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.isLooped {
+		return ""
+	}
+
+	alert := s.loopAlertMessageLocked()
+	s.isLooped = false
+	s.loopCount = 0
+	s.saveNow()
+
+	if alert == "" {
+		return ""
+	}
+	return "[LOOP DETECTED] " + alert + "\n\n"
 }
 
 func (s *Session) ResetLoopDetection() {
@@ -640,6 +682,7 @@ type MessageData struct {
 	ToolCallID  string                   `json:"tool_call_id,omitempty"`
 	Name        string                   `json:"name,omitempty"`
 	Summary     bool                     `json:"summary,omitempty"`
+	Internal    bool                     `json:"internal,omitempty"`
 	Compacted   bool                     `json:"compacted,omitempty"`
 	TailStartID int                      `json:"tail_start_id,omitempty"`
 	Timestamp   string                   `json:"timestamp,omitempty"`
@@ -689,6 +732,7 @@ func (s *Session) saveInternal() error {
 			ToolCallID:  msg.ToolCallID,
 			Name:        msg.Name,
 			Summary:     msg.Summary,
+			Internal:    msg.Internal,
 			Compacted:   msg.Compacted,
 			TailStartID: msg.TailStartID,
 			Timestamp:   msg.Timestamp.Format(time.RFC3339),
@@ -775,6 +819,7 @@ func (s *Session) Load() error {
 			ToolCallID:  msg.ToolCallID,
 			Name:        msg.Name,
 			Summary:     msg.Summary,
+			Internal:    msg.Internal,
 			Compacted:   msg.Compacted,
 			TailStartID: msg.TailStartID,
 			Timestamp:   timestamp,

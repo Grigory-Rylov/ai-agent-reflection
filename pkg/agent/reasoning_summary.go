@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/internalmsg"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util/stringutil"
@@ -24,7 +25,6 @@ const (
 	reasoningSummaryMaxInput  = 12000
 	reasoningSummaryMaxOut    = 1200
 	reasoningSummaryTimeout   = 90 * time.Second
-	reasoningSummaryLabel     = "[REASONING SUMMARY]"
 	reasoningSummaryTemp      = 0.2
 	reasoningSummaryStatusCap = 1024
 )
@@ -117,7 +117,7 @@ func (a *agentImpl) flushReasoningSummary(ctx context.Context, s *session.Sessio
 		return
 	}
 
-	s.AddAssistantMessage(reasoningSummaryLabel + "\n" + strings.TrimSpace(summary))
+	s.AddAssistantMessageInternal(internalmsg.Label + "\n" + strings.TrimSpace(summary))
 	logger.DebugToFile("%s[REASONING SUMMARY] stored in history: %d chars", a.agentPrefix(), len(summary))
 	a.debugLog.Debug("reasoning summary stored: %d chars", len(summary))
 }
