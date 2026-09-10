@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/compress"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/internalmsg"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
 	sess "github.com/Grigory-Rylov/ai-agent-reflection/session"
@@ -241,6 +242,7 @@ func (a *agentImpl) processToolResults(ctx context.Context, originalMessages []M
 		parsedResp := ParseXMLToolCalls(responseText)
 		responseText = parsedResp.Content
 		responseText = a.stripThinkingTags(responseText, session.GetPeerID())
+		responseText = internalmsg.Strip(responseText)
 	}
 
 	if responseText == "" {
@@ -280,6 +282,7 @@ func (a *agentImpl) filterUniqueToolCalls(calls []ToolCall, executed map[string]
 }
 
 func (a *agentImpl) continueAfterDuplicateToolCalls(ctx context.Context, messages []Message, responseText string, dupCalls []ToolCall, executed map[string]bool, session *sess.Session, depth int) (string, error) {
+	responseText = internalmsg.Strip(responseText)
 	if duplicateNudgeCount(ctx) >= maxDuplicateNudges {
 		logger.DebugToFile("%s[FLOW] Duplicate tool call nudges exhausted (%d/%d), ending turn silently; dupTools=%s responseLen=%d",
 			a.agentPrefix(), duplicateNudgeCount(ctx), maxDuplicateNudges, toolCallNames(dupCalls), len(responseText))
@@ -328,14 +331,38 @@ func (a *agentImpl) nudgeOnDuplicateToolCalls(ctx context.Context, messages []Me
 
 func lastAssistantContent(session *sess.Session) (string, bool) {
 	hist := session.GetHistory()
-	if len(hist) == 0 {
-		return "", false
-	}
-	last := hist[len(hist)-1]
-	if last.Role == sess.AssistantRole && last.Content != "" {
-		return last.Content, true
+	for i := len(hist) - 1; i >= 0; i-- {
+		msg := hist[i]
+		if msg.Role != sess.AssistantRole {
+			continue
+		}
+		if !publishableAssistantMessage(msg) {
+			continue
+		}
+		return msg.Content, true
 	}
 	return "", false
+}
+
+func publishableAssistantMessage(msg sess.Message) bool {
+	if msg.Internal {
+		return false
+	}
+	return publishableAssistantContent(msg.Content)
+}
+
+func publishableAssistantContent(content string) bool {
+	if strings.TrimSpace(content) == "" {
+		return false
+	}
+	if internalmsg.IsInternal(content) {
+		return false
+	}
+	return !containsXMLToolTags(content)
+}
+
+func containsXMLToolTags(content string) bool {
+	return strings.Contains(content, "<tool_call") || strings.Contains(content, "<function=")
 }
 
 func (a *agentImpl) handleInvalidXMLToolCall(ctx context.Context, messages []Message, session *sess.Session, executed map[string]bool) (FunctionCallResult, error) {

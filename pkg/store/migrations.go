@@ -38,6 +38,7 @@ func runMigrations(db *sql.DB) error {
 		{"summary", "INTEGER DEFAULT 0"},
 		{"compacted", "INTEGER DEFAULT 0"},
 		{"tail_start_id", "INTEGER DEFAULT 0"},
+		{"internal", "INTEGER DEFAULT 0"},
 	} {
 		if err := ensureColumnTyped(db, "messages", col.name, col.ddl); err != nil {
 			return fmt.Errorf("migrate messages.%s column: %w", col.name, err)
@@ -100,6 +101,7 @@ const messagesTable = `CREATE TABLE IF NOT EXISTS messages (
 	summary INTEGER DEFAULT 0,
 	compacted INTEGER DEFAULT 0,
 	tail_start_id INTEGER DEFAULT 0,
+	internal INTEGER DEFAULT 0,
 	FOREIGN KEY (peer_id) REFERENCES sessions(peer_id)
 )`
 

@@ -14,6 +14,7 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agent"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agentpolicy"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/compress"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/internalmsg"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/store"
@@ -818,16 +819,27 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 	}
 
 	if response == "" {
-		hist := agentSess.GetHistory()
-		if len(hist) > 0 {
-			last := hist[len(hist)-1]
-			if last.Role == session.AssistantRole && last.Content != "" {
-				response = last.Content
-			}
-		}
+		response = lastPublishableAssistantContent(agentSess.GetHistory())
 	}
 
 	return response, nil
+}
+
+func lastPublishableAssistantContent(hist []session.Message) string {
+	for i := len(hist) - 1; i >= 0; i-- {
+		msg := hist[i]
+		if msg.Role != session.AssistantRole {
+			continue
+		}
+		if msg.Internal || msg.Summary || internalmsg.IsInternal(msg.Content) {
+			continue
+		}
+		if strings.TrimSpace(msg.Content) == "" {
+			continue
+		}
+		return msg.Content
+	}
+	return ""
 }
 
 func (al *agentLoop) mirrorAgentSession(sess *session.Session, agentSess *session.Session, seededLen int) {
@@ -838,7 +850,9 @@ func (al *agentLoop) mirrorAgentSession(sess *session.Session, agentSess *sessio
 		case session.UserRole:
 			sess.AddUserMessage(m.Content)
 		case session.AssistantRole:
-			if len(m.ToolCalls) > 0 {
+			if m.Internal || internalmsg.IsInternal(m.Content) {
+				sess.AddAssistantMessageInternal(m.Content)
+			} else if len(m.ToolCalls) > 0 {
 				sess.AddAssistantMessageWithToolCalls(m.Content, m.ToolCalls)
 			} else if m.Content != "" || i == len(history)-1 {
 				sess.AddAssistantMessage(m.Content)

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/internalmsg"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 )
 
@@ -433,6 +434,7 @@ func extractMessageID(response interface{}) (int64, error) {
 
 
 func (c *BotClient) SendMessage(peerID int64, text string) (int64, error) {
+	text = internalmsg.Strip(text)
 	if text == "" {
 		return 0, fmt.Errorf("empty message text")
 	}
@@ -468,6 +470,14 @@ func (c *BotClient) SendMessageWithKeyboard(peerID int64, text string, keyboard 
 
 
 func (c *BotClient) sendSingleMessage(peerID int64, text, attachment string, keyboard map[string]interface{}) (int64, error) {
+	stripped := internalmsg.Strip(text)
+	if stripped != text {
+		if stripped == "" && attachment == "" {
+			return 0, fmt.Errorf("empty message text")
+		}
+		text = stripped
+	}
+
 	params := map[string]interface{}{
 		"peer_id":   peerID,
 		"random_id": time.Now().UnixMilli(),
