@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agentloop"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/bmc"
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/gpu"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
@@ -434,38 +436,7 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 		return h.handleLogCommand(peerID)
 
 	case "/status":
-		h.aiAgent.EnsureSession(peerID)
-		s := h.aiAgent.GetSession(peerID)
-		status := "AI Agent активен и готов к работе."
-		if s != nil {
-			status += "\nPeer ID: " + fmt.Sprintf("%d", peerID) +
-				"\nСообщений: " + fmt.Sprintf("%d", s.HistoryLength()) +
-				"\nРабочая директория: " + s.GetWorkingDir()
-		}
-		chars, tokens, err := h.aiAgent.GetContextStats(peerID)
-		if err == nil {
-			status += "\nСимволов в контексте: " + fmt.Sprintf("%d", chars) +
-				"\nТокенов в контексте: " + fmt.Sprintf("%d", tokens)
-		}
-		if h.modelHolder != nil {
-			alias, modelName, host := h.modelHolder.GetCurrent()
-			status += "\nМодель: " + alias + " (" + modelName + ")"
-			status += "\nСервер: " + host
-			if stats, err := vllmmetrics.Fetch(host); err == nil {
-				status += "\n" + vllmmetrics.Format(stats)
-			}
-		}
-		if h.orchestrator != nil {
-			agentName := h.orchestrator.GetCurrentAgent()
-			if agentName != "" {
-				status += "\nРежим: агентов — активен: " + agentName
-			} else {
-				status += "\nРежим: агентов (ожидание)"
-			}
-		} else {
-			status += "\nРежим: обычный"
-		}
-		return status
+		return h.handleStatus(peerID)
 
 	case "/pin":
 		return h.handlePinCommand(input, peerID)
@@ -765,6 +736,101 @@ func (h *BotHandler) handleNewSession(input string, peerID int64) string {
 	}
 
 	return fmt.Sprintf("Сессия сброшена.\nРабочая директория: %s", absPath)
+}
+
+func (h *BotHandler) handleStatus(peerID int64) string {
+	h.aiAgent.EnsureSession(peerID)
+	status := "AI Agent активен и готов к работе."
+	status += h.statusSession(peerID)
+	status += h.statusContext(peerID)
+	status += h.statusModel()
+	status += h.statusMode()
+	if gpuBlock := h.statusGPU(); gpuBlock != "" {
+		status += "\n" + gpuBlock
+	}
+	if bmcBlock := h.statusBMC(); bmcBlock != "" {
+		status += "\n" + bmcBlock
+	}
+	return status
+}
+
+func (h *BotHandler) statusSession(peerID int64) string {
+	s := h.aiAgent.GetSession(peerID)
+	if s == nil {
+		return ""
+	}
+	return "\nPeer ID: " + strconv.FormatInt(peerID, 10) +
+		"\nСообщений: " + strconv.Itoa(s.HistoryLength()) +
+		"\nРабочая директория: " + s.GetWorkingDir()
+}
+
+func (h *BotHandler) statusContext(peerID int64) string {
+	chars, tokens, err := h.aiAgent.GetContextStats(peerID)
+	if err != nil {
+		return ""
+	}
+	return "\nСимволов в контексте: " + strconv.Itoa(chars) +
+		"\nТокенов в контексте: " + strconv.Itoa(tokens)
+}
+
+func (h *BotHandler) statusModel() string {
+	if h.modelHolder == nil {
+		return ""
+	}
+	alias, modelName, host := h.modelHolder.GetCurrent()
+	status := "\nМодель: " + alias + " (" + modelName + ")" +
+		"\nСервер: " + host
+	if stats, err := vllmmetrics.Fetch(host); err == nil {
+		status += "\n" + vllmmetrics.Format(stats)
+	}
+	return status
+}
+
+func (h *BotHandler) statusMode() string {
+	if h.orchestrator == nil {
+		return "\nРежим: обычный"
+	}
+	agentName := h.orchestrator.GetCurrentAgent()
+	if agentName == "" {
+		return "\nРежим: агентов (ожидание)"
+	}
+	return "\nРежим: агентов — активен: " + agentName
+}
+
+func (h *BotHandler) statusGPU() string {
+	if !gpu.Available() {
+		return ""
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	info, err := gpu.Fetch(ctx)
+	if err != nil {
+		if h.log != nil {
+			h.log.DebugLogf("GPU status unavailable: %v", err)
+		}
+		return ""
+	}
+	return gpu.Format(info)
+}
+
+func (h *BotHandler) statusBMC() string {
+	if !bmc.Available() {
+		return ""
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	info, err := bmc.Fetch(ctx)
+	if err != nil {
+		if h.log != nil {
+			h.log.DebugLogf("BMC status unavailable: %v", err)
+		}
+		return ""
+	}
+	return bmc.Format(info)
 }
 
 func (h *BotHandler) handleTestLlama() string {
