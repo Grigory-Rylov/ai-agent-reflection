@@ -7,11 +7,11 @@ import (
 )
 
 type mockFileSender struct {
-	lastPath   string
-	lastPeer   int64
-	lastMsg    string
-	returnID   int64
-	returnErr  error
+	lastPath  string
+	lastPeer  int64
+	lastMsg   string
+	returnID  int64
+	returnErr error
 }
 
 func (m *mockFileSender) UploadAndSendDocument(filePath string, peerID int64, message string) (int64, error) {

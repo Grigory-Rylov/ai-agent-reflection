@@ -6,17 +6,15 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
 )
 
-
 type LLMCompressorInterface interface {
 	Compress(ctx context.Context, req *CompressionRequest) (*CompressionResult, error)
+	Complete(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error)
 }
-
 
 type Compactor struct {
 	estimator TokenEstimator
 	llm       LLMCompressorInterface
 }
-
 
 func NewCompactor(llm LLMCompressorInterface) *Compactor {
 	return &Compactor{
@@ -25,7 +23,6 @@ func NewCompactor(llm LLMCompressorInterface) *Compactor {
 	}
 }
 
-
 func NewCompactorWithEstimator(llm LLMCompressorInterface, estimator TokenEstimator) *Compactor {
 	return &Compactor{
 		estimator: estimator,
@@ -33,12 +30,10 @@ func NewCompactorWithEstimator(llm LLMCompressorInterface, estimator TokenEstima
 	}
 }
 
-
 func (c *Compactor) LLM() LLMCompressorInterface {
 	return c.llm
 }
 
-
 type CompactorInterface interface {
-	CompactWithOpenCode(ctx context.Context, messages []tokenizers.Message, maxTokens int, tailTurns int, preserveRecentTokens *int) (*OpenCodeCompactResult, error)
+	Compact(ctx context.Context, messages []tokenizers.Message, limits WindowLimits, s Settings) (*CompactResult, error)
 }

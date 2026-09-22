@@ -46,16 +46,14 @@ func TestEstimateMessagesTokensSimple(t *testing.T) {
 	}
 }
 
-
 func TestEstimateMessagesTokensSimple_ToolCallsIncluded(t *testing.T) {
-	
+
 	content := "result" + `{"path":"src/main.go","content":"package main\nfunc main() { fmt.Println(\"hello\") }"}`
 	messagesWithToolCalls := []tokenizers.Message{
 		{Role: "user", Content: "read file"},
 		{Role: "assistant", Content: content},
 	}
 
-	
 	messagesWithoutToolCalls := []tokenizers.Message{
 		{Role: "user", Content: "read file"},
 		{Role: "assistant", Content: "result"},

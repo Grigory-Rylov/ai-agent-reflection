@@ -32,4 +32,3 @@ type Control interface {
 	ShouldTransition(alias string) bool
 	StartWatchdog(ctx context.Context, notify NotifyFunc) context.CancelFunc
 }
-

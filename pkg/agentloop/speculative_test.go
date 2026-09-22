@@ -18,7 +18,7 @@ type fakeCompactor struct {
 	delay time.Duration
 }
 
-func (f *fakeCompactor) CompactWithOpenCode(ctx context.Context, messages []tokenizers.Message, maxTokens int, tailTurns int, preserveRecentTokens *int) (*compress.OpenCodeCompactResult, error) {
+func (f *fakeCompactor) Compact(ctx context.Context, messages []tokenizers.Message, limits compress.WindowLimits, s compress.Settings) (*compress.CompactResult, error) {
 	f.mu.Lock()
 	f.calls++
 	f.mu.Unlock()
@@ -29,13 +29,13 @@ func (f *fakeCompactor) CompactWithOpenCode(ctx context.Context, messages []toke
 			return nil, ctx.Err()
 		}
 	}
-	tailStartID := len(messages) - 2
-	if tailStartID < 0 {
-		tailStartID = 0
+	firstKept := len(messages) - 2
+	if firstKept < 0 {
+		firstKept = 0
 	}
-	return &compress.OpenCodeCompactResult{
-		Summary:     "fake-summary",
-		TailStartID: tailStartID,
+	return &compress.CompactResult{
+		Summary:   "fake-summary",
+		FirstKept: firstKept,
 	}, nil
 }
 
@@ -158,8 +158,8 @@ func TestSpeculativeCompactionAppliedOnOverflow(t *testing.T) {
 	al.maybeStartSpeculativeCompact(context.Background(), sess, peerID)
 	time.Sleep(50 * time.Millisecond)
 
-	if !compress.IsOverflowWithLimits(900, al.config.MaxTokens, al.config.ModelLimitInput, al.config.CompactionReserved) {
-		t.Fatal("test setup: expected overflow at 900 tokens")
+	if !compress.ShouldCompact(900, al.config.MaxTokens, al.compactionLimits(), al.compactionSettings()) {
+		t.Fatal("test setup: expected compaction trigger at 900 tokens")
 	}
 	applied := al.tryApplySpeculativeCompact(sess, peerID)
 	if !applied {

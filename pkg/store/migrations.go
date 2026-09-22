@@ -32,13 +32,13 @@ func runMigrations(db *sql.DB) error {
 		}
 	}
 
-	
-	
 	for _, col := range []struct{ name, ddl string }{
 		{"summary", "INTEGER DEFAULT 0"},
 		{"compacted", "INTEGER DEFAULT 0"},
 		{"tail_start_id", "INTEGER DEFAULT 0"},
 		{"internal", "INTEGER DEFAULT 0"},
+		{"usage_input", "INTEGER DEFAULT 0"},
+		{"usage_output", "INTEGER DEFAULT 0"},
 	} {
 		if err := ensureColumnTyped(db, "messages", col.name, col.ddl); err != nil {
 			return fmt.Errorf("migrate messages.%s column: %w", col.name, err)
@@ -48,11 +48,9 @@ func runMigrations(db *sql.DB) error {
 	return nil
 }
 
-
 func ensureColumn(db *sql.DB, table, column string) error {
 	return ensureColumnTyped(db, table, column, "TEXT DEFAULT ''")
 }
-
 
 func ensureColumnTyped(db *sql.DB, table, column, ddl string) error {
 	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
@@ -102,6 +100,8 @@ const messagesTable = `CREATE TABLE IF NOT EXISTS messages (
 	compacted INTEGER DEFAULT 0,
 	tail_start_id INTEGER DEFAULT 0,
 	internal INTEGER DEFAULT 0,
+	usage_input INTEGER DEFAULT 0,
+	usage_output INTEGER DEFAULT 0,
 	FOREIGN KEY (peer_id) REFERENCES sessions(peer_id)
 )`
 
@@ -128,7 +128,6 @@ const messagesIndex = `CREATE INDEX IF NOT EXISTS idx_messages_peer_id ON messag
 const todosIndex = `CREATE INDEX IF NOT EXISTS idx_todos_session ON todos(session_id)`
 const permissionsIndex = `CREATE INDEX IF NOT EXISTS idx_permissions_session ON permissions(session_id)`
 
-
 const agentSessionsTable = `CREATE TABLE IF NOT EXISTS agent_sessions (
 	id TEXT PRIMARY KEY,
 	parent_id TEXT DEFAULT '',
@@ -142,7 +141,6 @@ const agentSessionsTable = `CREATE TABLE IF NOT EXISTS agent_sessions (
 	updated_at TEXT NOT NULL,
 	messages TEXT DEFAULT ''
 )`
-
 
 const agentChainTable = `CREATE TABLE IF NOT EXISTS active_agent_chain (
 	peer_id INTEGER PRIMARY KEY,

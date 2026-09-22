@@ -8,7 +8,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-
 func TestConvertSessionHistory_IncludesToolCalls(t *testing.T) {
 	config := DefaultConfig()
 	config.LlamaServerURL = "127.0.0.1:8080"
@@ -19,7 +18,7 @@ func TestConvertSessionHistory_IncludesToolCalls(t *testing.T) {
 	longArgs := `{"path":"src/main.go","content":"package main\nfunc main() { fmt.Println(\"hello\") }"}`
 	historyWithToolCalls := []session.Message{
 		{Role: session.AssistantRole, Content: "Calling tool", ToolCalls: []session.MsgToolCall{
-			{ID: "call1", Function: session.MsgToolCallFunc{Name: "read_file", Arguments: longArgs}},
+			{ID: "call1", Function: session.MsgToolCallFunc{Name: "read", Arguments: longArgs}},
 		}},
 	}
 
@@ -38,22 +37,19 @@ func TestConvertSessionHistory_IncludesToolCalls(t *testing.T) {
 	}
 }
 
-
 func TestCompactIfNeededBeforeLLM_IncludesToolCalls(t *testing.T) {
 	config := DefaultConfig()
 	config.LlamaServerURL = "127.0.0.1:8080"
 	config.Model = "test-model"
 
-	
 	longArgs := `{"path":"src/main.go","content":"package main\nfunc main() { fmt.Println(\"hello\") }"}`
 	messages := []Message{
 		{Role: "user", Content: "read file"},
 		{Role: "assistant", Content: "executing", ToolCalls: []ToolCall{
-			{ID: "call1", Function: ToolCallFunction{Name: "read_file", Arguments: []byte(longArgs)}},
+			{ID: "call1", Function: ToolCallFunction{Name: "read", Arguments: []byte(longArgs)}},
 		}},
 	}
 
-	
 	tokenMessages := make([]tokenizers.Message, len(messages))
 	for i, m := range messages {
 		content := m.Content
@@ -65,7 +61,6 @@ func TestCompactIfNeededBeforeLLM_IncludesToolCalls(t *testing.T) {
 
 	tokensWithToolCalls := compress.EstimateMessagesTokensSimple(tokenMessages)
 
-	
 	tokenMessagesNoTool := make([]tokenizers.Message, len(messages))
 	for i, m := range messages {
 		tokenMessagesNoTool[i] = tokenizers.Message{Role: m.Role, Content: m.Content}
@@ -77,7 +72,6 @@ func TestCompactIfNeededBeforeLLM_IncludesToolCalls(t *testing.T) {
 	}
 }
 
-
 func TestConvertSessionHistory_FiltersCompacted(t *testing.T) {
 	config := DefaultConfig()
 	config.LlamaServerURL = "127.0.0.1:8080"
@@ -85,8 +79,6 @@ func TestConvertSessionHistory_FiltersCompacted(t *testing.T) {
 
 	impl := NewAgent(config)
 
-	
-	
 	history := []session.Message{
 		{Role: session.UserRole, Content: "old user 1"},
 		{Role: session.AssistantRole, Content: "old assistant 1"},
@@ -102,32 +94,26 @@ func TestConvertSessionHistory_FiltersCompacted(t *testing.T) {
 
 	result := impl.convertSessionHistory(history)
 
-	
 	if len(result) != 6 {
 		t.Fatalf("expected 6 messages, got %d", len(result))
 	}
 
-	
 	if result[0].Content != "compaction request" {
 		t.Errorf("first message should be compaction user, got %q", result[0].Content)
 	}
 
-	
 	if result[1].Content != "## Goal\n- Summary" {
 		t.Errorf("second message should be summary, got %q", result[1].Content)
 	}
 
-	
 	if result[2].Content != "tail user 1" {
 		t.Errorf("third message should be tail user 1, got %q", result[2].Content)
 	}
 
-	
 	if result[4].Content != "after summary user" {
 		t.Errorf("fifth message should be after summary user, got %q", result[4].Content)
 	}
 }
-
 
 func TestConvertSessionHistory_NoCompaction_NoFilter(t *testing.T) {
 	config := DefaultConfig()
@@ -154,9 +140,8 @@ func TestConvertSessionHistory_NoCompaction_NoFilter(t *testing.T) {
 	}
 }
 
-
 func TestCompactIfNeeded_MarksSummaryFlag(t *testing.T) {
-	
+
 	summaryMsg := session.Message{
 		Role:    session.AssistantRole,
 		Content: "<<CONVERSATION CHECKPOINT>>\n## Goal",

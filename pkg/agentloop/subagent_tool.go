@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agent"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agentpolicy"
@@ -20,27 +22,27 @@ import (
 )
 
 type SubAgentTool struct {
-	AgentConfig     agent.Config
-	ContextResolver *ModelContextResolver
-	MainTools       *tools.Registry
-	SystemPromptDir string
-	AgentManager    *agentpolicy.AgentManager
-	CurrentDepth    int
-	MaxDepth        int
-	PeerID          int64
-	ThinkingPeerID  int64
-	VKClient        VKClient
-	Log             Logger
-	Debug           bool
-	ModelHolder     *modelsconfig.Holder
-	SetActiveAgent  func(name string)
-	Store           store.Store 
-	ParentSessionID  string      
-	ParentAgent      agent.Agent 
-	AgentSessionID   string      
-	Chain            []string    
-	ParentAgentName  string      
-	AllowedSubagents []string    
+	AgentConfig      agent.Config
+	ContextResolver  *ModelContextResolver
+	MainTools        *tools.Registry
+	SystemPromptDir  string
+	AgentManager     *agentpolicy.AgentManager
+	CurrentDepth     int
+	MaxDepth         int
+	PeerID           int64
+	ThinkingPeerID   int64
+	VKClient         VKClient
+	Log              Logger
+	Debug            bool
+	ModelHolder      *modelsconfig.Holder
+	SetActiveAgent   func(name string)
+	Store            store.Store
+	ParentSessionID  string
+	ParentAgent      agent.Agent
+	AgentSessionID   string
+	Chain            []string
+	ParentAgentName  string
+	AllowedSubagents []string
 	SlotManager      *SlotManager
 	Slots            *SlotClient
 	BGOwner          string
@@ -164,6 +166,10 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 			Error: fmt.Sprintf("task parameter is required. Available params: prompt=%q, task=%q, description=%q",
 				inputs["prompt"], inputs["task"], inputs["description"])}, nil
 	}
+	if looksLikePlaceholderTask(task) {
+		return tools.ToolResult{Success: false,
+			Error: "task parameter looks like a placeholder, not a real instruction for the subagent"}, nil
+	}
 
 	name, err := t.resolveAgentName(name)
 	if err != nil {
@@ -184,8 +190,6 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 		return tools.ToolResult{Success: false, Error: fmt.Sprintf("failed to create sub-agent %q: %v", name, err)}, nil
 	}
 
-	
-	
 	if t.Store != nil {
 		t.saveParentHistory()
 	}
@@ -216,8 +220,7 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 
 	response, err := a.ProcessMessage(ctx, task, t.PeerID)
 	if err != nil {
-		
-		
+
 		if t.Store != nil {
 			t.saveSessionHistory(a, t.AgentSessionID, task)
 		}
@@ -228,8 +231,7 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 	if t.Store != nil {
 		t.saveSessionHistory(a, t.AgentSessionID, task)
 	}
-	
-	
+
 	t.completeAgentSession()
 
 	return t.buildResult(name, response), nil
@@ -371,16 +373,9 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 	cfg.EnableLoopAlert = false
 	cfg.EnableCompression = true
 	cfg.AgentName = name
-	cfg.SlotID = -1 
+	cfg.SlotID = -1
 	cfg.SlotSave = false
 
-	
-	
-	
-	
-	
-	
-	
 	t.AgentSessionID = t.generateUUID()
 	sessionID := t.AgentSessionID
 	cfg.SessionConfig.SessionID = sessionID
@@ -389,11 +384,6 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 		cfg.BGParentOwner = t.BGOwner
 	}
 
-	
-	
-	
-	
-	
 	if t.ModelHolder != nil && t.ModelHolder.GetCurrentSlotSave() {
 		cfg.SlotSave = true
 		if slotID := AssignSessionSlot(t.SlotManager, t.Slots, t.ModelHolder, sessionID, t.Log); slotID >= 0 {
@@ -408,15 +398,13 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 	var a agent.Agent = agent.NewAgent(cfg)
 	a.GetSession(t.PeerID).UpdateSystemPrompt(systemPrompt)
 
-	
 	if t.Store != nil {
-		
+
 		chain := make([]string, len(t.Chain))
 		copy(chain, t.Chain)
 		chain = append(chain, sessionID)
 		t.Chain = chain
 
-		
 		t.Store.SaveAgentSession(&store.AgentSessionData{
 			ID:           sessionID,
 			ParentID:     t.ParentSessionID,
@@ -427,7 +415,6 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 			Status:       "active",
 		})
 
-		
 		t.Store.SaveAgentChain(t.PeerID, chain)
 	}
 
@@ -441,7 +428,6 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 
 	return a, nil
 }
-
 
 func (t *SubAgentTool) persistChildCheckpoint(a agent.Agent, lastToolCall string) {
 	data, err := json.Marshal(a.GetSession(t.PeerID).GetHistory())
@@ -491,35 +477,80 @@ func (t *SubAgentTool) isReviewAgent(name string) bool {
 	return false
 }
 
+var placeholderTaskWords = map[string]bool{
+	"placeholder": true,
+	"todo":        true,
+	"tbd":         true,
+	"fixme":       true,
+}
+
+func looksLikePlaceholderTask(task string) bool {
+	trimmed := strings.TrimSpace(task)
+	if trimmed == "" {
+		return true
+	}
+	if utf8.RuneCountInString(trimmed) <= 1 {
+		return true
+	}
+	if placeholderTaskWords[strings.ToLower(trimmed)] {
+		return true
+	}
+	for _, r := range trimmed {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func (t *SubAgentTool) TargetsReviewAgent(args map[string]string) bool {
+	name := args["subagent_type"]
+	if name == "" {
+		name = args["name"]
+	}
+	if name == "" {
+		name = args["agent"]
+	}
+	if name == "" {
+		name = args["type"]
+	}
+	if name == "" {
+		return false
+	}
+	if strings.EqualFold(name, "reviewer") {
+		return true
+	}
+	return t.isReviewAgent(name)
+}
 func (t *SubAgentTool) registerSubAgentTool(name string, a agent.Agent) {
 	if t.isLeafAgent(name) {
 		return
 	}
 	subReg := tools.NewRegistry()
 	subReg.Register(&SubAgentTool{
-		AgentConfig:     t.AgentConfig,
-		ContextResolver: t.ContextResolver,
-		MainTools:       t.MainTools,
-		SystemPromptDir: t.SystemPromptDir,
-		AgentManager:    t.AgentManager,
-		CurrentDepth:    t.CurrentDepth + 1,
-		MaxDepth:        t.MaxDepth,
-		PeerID:          t.PeerID,
-		ThinkingPeerID:  t.ThinkingPeerID,
-		VKClient:        t.VKClient,
-		Log:             t.Log,
-		Debug:           t.Debug,
-		ModelHolder:     t.ModelHolder,
-		SetActiveAgent:  t.SetActiveAgent,
-		Store:           t.Store,
-		ParentSessionID: t.AgentSessionID,
-		ParentAgent:     a,
-		Chain:           t.Chain,
-		ParentAgentName: name,
+		AgentConfig:      t.AgentConfig,
+		ContextResolver:  t.ContextResolver,
+		MainTools:        t.MainTools,
+		SystemPromptDir:  t.SystemPromptDir,
+		AgentManager:     t.AgentManager,
+		CurrentDepth:     t.CurrentDepth + 1,
+		MaxDepth:         t.MaxDepth,
+		PeerID:           t.PeerID,
+		ThinkingPeerID:   t.ThinkingPeerID,
+		VKClient:         t.VKClient,
+		Log:              t.Log,
+		Debug:            t.Debug,
+		ModelHolder:      t.ModelHolder,
+		SetActiveAgent:   t.SetActiveAgent,
+		Store:            t.Store,
+		ParentSessionID:  t.AgentSessionID,
+		ParentAgent:      a,
+		Chain:            t.Chain,
+		ParentAgentName:  name,
 		AllowedSubagents: t.AgentManager.SubagentTypesFor(name),
-		SlotManager:     t.SlotManager,
-		Slots:           t.Slots,
-		BGOwner:         t.AgentSessionID,
+		SlotManager:      t.SlotManager,
+		Slots:            t.Slots,
+		BGOwner:          t.AgentSessionID,
 	})
 	if inserter, ok := a.(toolInserter); ok {
 		inserter.RegisterTools(subReg)
@@ -595,7 +626,6 @@ func (t *SubAgentTool) makeThinkingCallback(agentName string) func(peerID int64,
 	}
 }
 
-
 func newSessionUUID(parts ...string) string {
 	h := fnv.New128a()
 	for _, p := range parts {
@@ -607,11 +637,9 @@ func newSessionUUID(parts ...string) string {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", sum[:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
-
 func (t *SubAgentTool) generateUUID() string {
 	return newSessionUUID(t.ParentSessionID, strconv.Itoa(t.CurrentDepth), strconv.FormatInt(t.PeerID, 10))
 }
-
 
 func (t *SubAgentTool) saveSessionHistory(a agent.Agent, sessionID, task string) {
 	if t.Store == nil || sessionID == "" || a == nil {
@@ -630,7 +658,6 @@ func (t *SubAgentTool) saveSessionHistory(a agent.Agent, sessionID, task string)
 		}
 	}
 }
-
 
 func (t *SubAgentTool) saveParentHistory() {
 	if t.Store == nil || t.ParentAgent == nil || t.ParentSessionID == "" {
@@ -654,7 +681,6 @@ func (t *SubAgentTool) saveParentHistory() {
 	}
 }
 
-
 func (t *SubAgentTool) completeAgentSession() {
 	t.cleanupAgentSession()
 	if t.Store == nil || t.AgentSessionID == "" {
@@ -664,7 +690,6 @@ func (t *SubAgentTool) completeAgentSession() {
 	t.popChain()
 }
 
-
 func (t *SubAgentTool) cancelAgentSession() {
 	t.cleanupAgentSession()
 	if t.Store == nil || t.AgentSessionID == "" {
@@ -673,7 +698,6 @@ func (t *SubAgentTool) cancelAgentSession() {
 	t.Store.DeleteAgentSession(t.AgentSessionID)
 	t.popChain()
 }
-
 
 func (t *SubAgentTool) cleanupAgentSession() {
 	ReleaseSessionSlot(t.SlotManager, t.Slots, t.ModelHolder, t.AgentSessionID, t.Log)
@@ -686,7 +710,6 @@ func (t *SubAgentTool) cleanupAgentSession() {
 	}
 }
 
-
 func (t *SubAgentTool) popChain() {
 	parent := t.Chain
 	if len(parent) > 0 {
@@ -694,7 +717,6 @@ func (t *SubAgentTool) popChain() {
 	}
 	t.Store.SaveAgentChain(t.PeerID, parent)
 }
-
 
 func mainToolsWithoutTask(reg *tools.Registry) *tools.Registry {
 	if reg == nil {
@@ -711,7 +733,6 @@ func mainToolsWithoutTask(reg *tools.Registry) *tools.Registry {
 	}
 	return filtered
 }
-
 
 func (t *SubAgentTool) checkAllowedSubagent(name string) error {
 	if len(t.AllowedSubagents) == 0 {

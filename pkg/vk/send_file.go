@@ -13,13 +13,11 @@ import (
 	"time"
 )
 
-
 var vkBlockedExtensions = map[string]bool{
 	"html": true, "htm": true, "svg": true, "js": true, "mjs": true,
 	"php": true, "asp": true, "aspx": true, "jsp": true, "exe": true,
 	"bat": true, "cmd": true, "sh": true, "py": true,
 }
-
 
 func SafeUploadName(filename string) string {
 	if filename == "" {
@@ -32,7 +30,6 @@ func SafeUploadName(filename string) string {
 	}
 	return filename
 }
-
 
 func (c *BotClient) UploadAndSendDocument(filePath string, peerID int64, message string) (int64, error) {
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
@@ -61,7 +58,6 @@ func (c *BotClient) UploadAndSendDocument(filePath string, peerID int64, message
 	return c.sendMessageWithAttachment(peerID, attachment, message)
 }
 
-
 func (c *BotClient) getDocUploadURL(peerID int64) (string, error) {
 	resp, err := c.doRequestGET("docs.getMessagesUploadServer", map[string]interface{}{
 		"type":    "doc",
@@ -85,7 +81,6 @@ func (c *BotClient) getDocUploadURL(peerID int64) (string, error) {
 	return out.Response.UploadURL, nil
 }
 
-
 func (c *BotClient) uploadDoc(peerID int64, fileData []byte, filename string) (string, error) {
 	uploadURL, err := c.getDocUploadURL(peerID)
 	if err != nil {
@@ -103,14 +98,13 @@ func (c *BotClient) uploadDoc(peerID int64, fileData []byte, filename string) (s
 		if !retryable || attempt == maxAttempts {
 			break
 		}
-		
+
 		if fresh, uerr := c.getDocUploadURL(peerID); uerr == nil {
 			uploadURL = fresh
 		}
 	}
 	return "", lastErr
 }
-
 
 func (c *BotClient) tryUploadOnce(uploadURL string, fileData []byte, filename string) (string, bool, error) {
 	boundary := fmt.Sprintf("----WebKitFormBoundary%d", rand.Int63n(1000000000000))
@@ -139,7 +133,7 @@ func (c *BotClient) tryUploadOnce(uploadURL string, fileData []byte, filename st
 		return "", false, fmt.Errorf("read upload response: %w", err)
 	}
 	if resp.StatusCode == http.StatusMethodNotAllowed {
-		
+
 		return "", true, fmt.Errorf("upload rejected (405): %s", truncateBody(body))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -157,13 +151,12 @@ func (c *BotClient) tryUploadOnce(uploadURL string, fileData []byte, filename st
 	if out.File != "" {
 		return out.File, false, nil
 	}
-	
+
 	if out.Error == "no_file" || out.Error == "wrong_file" {
 		return "", true, fmt.Errorf("upload rejected by VK (%s): %s", out.Error, truncateBody(body))
 	}
 	return "", false, fmt.Errorf("no file field in upload response: %s", truncateBody(body))
 }
-
 
 func (c *BotClient) saveDoc(fileField, title string) (ownerID, docID int64, err error) {
 	resp, err := c.doRequestPOST("docs.save", map[string]interface{}{
@@ -193,7 +186,6 @@ func (c *BotClient) saveDoc(fileField, title string) (ownerID, docID int64, err 
 	return out.Response.Doc.OwnerID, out.Response.Doc.ID, nil
 }
 
-
 func (c *BotClient) sendMessageWithAttachment(peerID int64, attachment, message string) (int64, error) {
 	params := map[string]interface{}{
 		"peer_id":      peerID,
@@ -219,7 +211,6 @@ func (c *BotClient) sendMessageWithAttachment(peerID int64, attachment, message 
 	}
 	return extractMessageID(out.Response)
 }
-
 
 func truncateBody(b []byte) string {
 	const max = 300

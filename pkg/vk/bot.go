@@ -15,19 +15,16 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 )
 
-
 type LongPollServerResponse struct {
 	Server string `json:"server"`
 	Key    string `json:"key"`
 	Ts     string `json:"ts"`
 }
 
-
 type VKAttachment struct {
 	Type string                 `json:"type"`
 	Raw  map[string]interface{} `json:"-"`
 }
-
 
 func (a *VKAttachment) UnmarshalJSON(data []byte) error {
 	var raw map[string]interface{}
@@ -39,7 +36,6 @@ func (a *VKAttachment) UnmarshalJSON(data []byte) error {
 		a.Type = typ
 	}
 
-	
 	a.Raw = make(map[string]interface{})
 	for k, v := range raw {
 		if k != "type" {
@@ -50,7 +46,6 @@ func (a *VKAttachment) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-
 func (a *VKAttachment) ToRaw() map[string]interface{} {
 	result := make(map[string]interface{})
 	result["type"] = a.Type
@@ -60,31 +55,27 @@ func (a *VKAttachment) ToRaw() map[string]interface{} {
 	return result
 }
 
-
 type DownloadedAttachment struct {
 	Type     string
 	Path     string
 	Filename string
 }
 
-
 type VKMessage struct {
-	ID          int64            `json:"id"`
-	PeerID      int64            `json:"peer_id"`
-	FromID      int64            `json:"from_id"`
-	Date        int64            `json:"date"`
-	Text        string           `json:"text"`
-	Payload     string           `json:"payload,omitempty"`
-	EventID     string           `json:"event_id,omitempty"` 
-	Attachments []VKAttachment   `json:"attachments,omitempty"`
+	ID          int64          `json:"id"`
+	PeerID      int64          `json:"peer_id"`
+	FromID      int64          `json:"from_id"`
+	Date        int64          `json:"date"`
+	Text        string         `json:"text"`
+	Payload     string         `json:"payload,omitempty"`
+	EventID     string         `json:"event_id,omitempty"`
+	Attachments []VKAttachment `json:"attachments,omitempty"`
 }
-
 
 type APIErrorResponse struct {
 	ErrorCode    int    `json:"error_code"`
 	ErrorMessage string `json:"error_msg"`
 }
-
 
 type BotClient struct {
 	token      string
@@ -93,7 +84,6 @@ type BotClient struct {
 	httpClient *http.Client
 	groupID    int64
 }
-
 
 func NewBotClient(token string) *BotClient {
 	return &BotClient{
@@ -106,11 +96,9 @@ func NewBotClient(token string) *BotClient {
 	}
 }
 
-
 func (c *BotClient) doRequestPOST(endpoint string, params map[string]interface{}) ([]byte, error) {
 	endpointURL := fmt.Sprintf("%s%s", c.baseURL, endpoint)
 
-	
 	body := &bytes.Buffer{}
 	for k, v := range params {
 		if body.Len() > 0 {
@@ -120,7 +108,6 @@ func (c *BotClient) doRequestPOST(endpoint string, params map[string]interface{}
 		body.WriteString(url.QueryEscape(k) + "=" + url.QueryEscape(val))
 	}
 
-	
 	req, err := http.NewRequest("POST", endpointURL, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -142,7 +129,6 @@ func (c *BotClient) doRequestPOST(endpoint string, params map[string]interface{}
 		return nil, fmt.Errorf("HTTP error: %d, body: %s", resp.StatusCode, string(responseBody[:min(500, len(responseBody))]))
 	}
 
-	
 	var apiError struct {
 		Error APIErrorResponse `json:"error"`
 	}
@@ -153,11 +139,9 @@ func (c *BotClient) doRequestPOST(endpoint string, params map[string]interface{}
 	return responseBody, nil
 }
 
-
 func (c *BotClient) doRequestGET(endpoint string, params map[string]interface{}) ([]byte, error) {
 	reqURL := fmt.Sprintf("%s%s", c.baseURL, endpoint)
 
-	
 	query := "access_token=" + c.token + "&v=" + c.apiVersion
 
 	for k, v := range params {
@@ -185,7 +169,6 @@ func (c *BotClient) doRequestGET(endpoint string, params map[string]interface{})
 		return nil, fmt.Errorf("HTTP error: %d", resp.StatusCode)
 	}
 
-	
 	var apiError struct {
 		Error APIErrorResponse `json:"error"`
 	}
@@ -196,14 +179,12 @@ func (c *BotClient) doRequestGET(endpoint string, params map[string]interface{})
 	return responseBody, nil
 }
 
-
 func formatValue(v interface{}) string {
 	if f, ok := v.(float64); ok && f == float64(int64(f)) {
 		return fmt.Sprintf("%.0f", f)
 	}
 	return fmt.Sprintf("%v", v)
 }
-
 
 func (c *BotClient) ensureGroupID() error {
 	if c.groupID != 0 {
@@ -233,7 +214,6 @@ func (c *BotClient) ensureGroupID() error {
 	return nil
 }
 
-
 func (c *BotClient) GetLongPollServer() (string, string, int64, error) {
 	if err := c.ensureGroupID(); err != nil {
 		return "", "", 0, err
@@ -258,7 +238,6 @@ func (c *BotClient) GetLongPollServer() (string, string, int64, error) {
 	return response.Response.Server, response.Response.Key, toInt64(response.Response.Ts), nil
 }
 
-
 func (c *BotClient) CheckUpdates(ctx context.Context, server, key string, ts int64) ([]VKMessage, int64, error) {
 	lpURL := fmt.Sprintf("%s?act=a_check&key=%s&ts=%d&wait=25", server, key, ts)
 
@@ -277,7 +256,6 @@ func (c *BotClient) CheckUpdates(ctx context.Context, server, key string, ts int
 		return nil, ts, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	
 	var result struct {
 		Failed  int         `json:"failed"`
 		Ts      interface{} `json:"ts"`
@@ -309,13 +287,11 @@ func (c *BotClient) CheckUpdates(ctx context.Context, server, key string, ts int
 	return messages, toInt64(result.Ts), nil
 }
 
-
 type lpUpdate struct {
 	Type    string                 `json:"type"`
 	Object  map[string]interface{} `json:"object"`
 	GroupID int64                  `json:"group_id"`
 }
-
 
 func parseMessageNewUpdate(object map[string]interface{}) VKMessage {
 	rawObjDump, _ := json.Marshal(object)
@@ -330,11 +306,6 @@ func parseMessageNewUpdate(object map[string]interface{}) VKMessage {
 		return VKMessage{}
 	}
 
-	
-	
-	
-	
-	
 	id := toInt64(raw["id"])
 	if id == 0 {
 		id = toInt64(object["message_id"])
@@ -363,7 +334,6 @@ func parseMessageNewUpdate(object map[string]interface{}) VKMessage {
 	return msg
 }
 
-
 func parseMessageEventUpdate(object map[string]interface{}) VKMessage {
 	var payloadStr string
 	switch p := object["payload"].(type) {
@@ -385,7 +355,6 @@ func parseMessageEventUpdate(object map[string]interface{}) VKMessage {
 	}
 }
 
-
 func toInt64(v interface{}) int64 {
 	switch n := v.(type) {
 	case float64:
@@ -406,12 +375,11 @@ func toString(v interface{}) string {
 }
 
 func extractMessageID(response interface{}) (int64, error) {
-	
+
 	if msgID, ok := response.(float64); ok {
 		return int64(msgID), nil
 	}
 
-	
 	if arr, ok := response.([]interface{}); ok {
 		if len(arr) > 0 {
 			if msgMap, ok := arr[0].(map[string]interface{}); ok {
@@ -422,7 +390,6 @@ func extractMessageID(response interface{}) (int64, error) {
 		}
 	}
 
-	
 	if msgMap, ok := response.(map[string]interface{}); ok {
 		if msgID, ok := msgMap["message_id"].(float64); ok {
 			return int64(msgID), nil
@@ -432,14 +399,12 @@ func extractMessageID(response interface{}) (int64, error) {
 	return 0, fmt.Errorf("unexpected response format: %v", response)
 }
 
-
 func (c *BotClient) SendMessage(peerID int64, text string) (int64, error) {
 	text = internalmsg.Strip(text)
 	if text == "" {
 		return 0, fmt.Errorf("empty message text")
 	}
 
-	
 	if len(text) > 2000 {
 		parts := c.splitText(text, 2000)
 		lastMsgID := int64(0)
@@ -452,7 +417,6 @@ func (c *BotClient) SendMessage(peerID int64, text string) (int64, error) {
 			}
 			lastMsgID = msgID
 
-			
 			if i < len(parts)-1 {
 				time.Sleep(300 * time.Millisecond)
 			}
@@ -463,11 +427,9 @@ func (c *BotClient) SendMessage(peerID int64, text string) (int64, error) {
 	return c.sendSingleMessage(peerID, text, "", nil)
 }
 
-
 func (c *BotClient) SendMessageWithKeyboard(peerID int64, text string, keyboard map[string]interface{}) (int64, error) {
 	return c.sendSingleMessage(peerID, text, "", keyboard)
 }
-
 
 func (c *BotClient) sendSingleMessage(peerID int64, text, attachment string, keyboard map[string]interface{}) (int64, error) {
 	stripped := internalmsg.Strip(text)
@@ -479,9 +441,9 @@ func (c *BotClient) sendSingleMessage(peerID int64, text, attachment string, key
 	}
 
 	params := map[string]interface{}{
-		"peer_id":   peerID,
-		"random_id": time.Now().UnixMilli(),
-		"v":         c.apiVersion,
+		"peer_id":      peerID,
+		"random_id":    time.Now().UnixMilli(),
+		"v":            c.apiVersion,
 		"access_token": c.token,
 	}
 	if text != "" {
@@ -500,8 +462,6 @@ func (c *BotClient) sendSingleMessage(peerID int64, text, attachment string, key
 		return 0, err
 	}
 
-	
-	
 	var fullResponse struct {
 		Response interface{} `json:"response"`
 	}
@@ -509,10 +469,8 @@ func (c *BotClient) sendSingleMessage(peerID int64, text, attachment string, key
 		return 0, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	
 	return extractMessageID(fullResponse.Response)
 }
-
 
 func (c *BotClient) EditMessage(peerID, messageID int64, text string, keyboard map[string]interface{}) error {
 	params := map[string]interface{}{
@@ -546,7 +504,6 @@ func (c *BotClient) SendMessageEventAnswer(eventID string, userID, peerID int64,
 	_, err := c.doRequestPOST("messages.sendMessageEventAnswer", params)
 	return err
 }
-
 
 func (c *BotClient) GetMessagesByID(messageIDs []int64) ([]VKMessage, error) {
 	idsStr := ""
@@ -590,7 +547,6 @@ func truncateForLog(data []byte, max int) string {
 	return string(data[:max]) + "..."
 }
 
-
 func (c *BotClient) GetBestVideoURL(ownerID, videoID int64) (string, error) {
 	params := map[string]interface{}{
 		"owner_id": ownerID,
@@ -614,7 +570,6 @@ func (c *BotClient) GetBestVideoURL(ownerID, videoID int64) (string, error) {
 	}
 	return findBestMp4(response.Response[0].Files), nil
 }
-
 
 func (c *BotClient) splitText(text string, maxLength int) []string {
 	safeLength := maxLength - 20
@@ -655,7 +610,6 @@ func (c *BotClient) splitText(text string, maxLength int) []string {
 	return parts
 }
 
-
 func splitLines(text string) []string {
 	lines := []string{}
 	currentLine := ""
@@ -673,7 +627,6 @@ func splitLines(text string) []string {
 	return lines
 }
 
-
 func (c *BotClient) SendThinking(peerID int64, content string) (int64, error) {
 	if content == "" {
 		return 0, fmt.Errorf("empty thinking content")
@@ -681,7 +634,6 @@ func (c *BotClient) SendThinking(peerID int64, content string) (int64, error) {
 
 	return c.SendMessage(peerID, content)
 }
-
 
 func CreateQuestionKeyboard(header string, questionText string, options []map[string]string) map[string]interface{} {
 	buttons := [][]map[string]interface{}{}
@@ -699,21 +651,19 @@ func CreateQuestionKeyboard(header string, questionText string, options []map[st
 	}
 
 	keyboard := map[string]interface{}{
-		"inline": false,
+		"inline":  false,
 		"buttons": buttons,
 	}
 
 	return keyboard
 }
 
-
 func CreateKeyboard(buttons [][]map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{
-		"inline": false,
+		"inline":  false,
 		"buttons": buttons,
 	}
 }
-
 
 func CreateCommandKeyboard() map[string]interface{} {
 	return map[string]interface{}{
@@ -735,41 +685,37 @@ func CreateCommandKeyboard() map[string]interface{} {
 	}
 }
 
-
-	
-	
-	
-	func CreateModelsKeyboard(models []string, currentAlias string) map[string]interface{} {
-		const buttonsPerRow = 2
-		var rows [][]map[string]interface{}
-		for i := 0; i < len(models); i += buttonsPerRow {
-			end := i + buttonsPerRow
-			if end > len(models) {
-				end = len(models)
-			}
-			row := make([]map[string]interface{}, 0, end-i)
-			for _, alias := range models[i:end] {
-				color := "secondary"
-				if alias == currentAlias {
-					color = "positive"
-				}
-				payloadJSON, _ := json.Marshal(map[string]string{
-					"command": "model_switch",
-					"alias":   alias,
-				})
-				row = append(row, map[string]interface{}{
-					"action": map[string]interface{}{
-						"type":    "callback",
-						"label":   alias,
-						"payload": string(payloadJSON),
-					},
-					"color": color,
-				})
-			}
-			rows = append(rows, row)
+func CreateModelsKeyboard(models []string, currentAlias string) map[string]interface{} {
+	const buttonsPerRow = 2
+	var rows [][]map[string]interface{}
+	for i := 0; i < len(models); i += buttonsPerRow {
+		end := i + buttonsPerRow
+		if end > len(models) {
+			end = len(models)
 		}
-		return map[string]interface{}{
-			"inline":  true,
-			"buttons": rows,
+		row := make([]map[string]interface{}, 0, end-i)
+		for _, alias := range models[i:end] {
+			color := "secondary"
+			if alias == currentAlias {
+				color = "positive"
+			}
+			payloadJSON, _ := json.Marshal(map[string]string{
+				"command": "model_switch",
+				"alias":   alias,
+			})
+			row = append(row, map[string]interface{}{
+				"action": map[string]interface{}{
+					"type":    "callback",
+					"label":   alias,
+					"payload": string(payloadJSON),
+				},
+				"color": color,
+			})
 		}
+		rows = append(rows, row)
 	}
+	return map[string]interface{}{
+		"inline":  true,
+		"buttons": rows,
+	}
+}

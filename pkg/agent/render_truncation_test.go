@@ -8,7 +8,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-
 func TestConvertHistoryToAPIMessages_TruncatesLargeToolOutput(t *testing.T) {
 	large := strings.Repeat("DATA", 5000)
 	short := "ok"
@@ -17,8 +16,8 @@ func TestConvertHistoryToAPIMessages_TruncatesLargeToolOutput(t *testing.T) {
 	s.UpdateSystemPrompt("system")
 	s.AddUserMessage("user")
 	s.AddAssistantMessage("assistant")
-	s.AddToolMessage("call-1", "read_file", large)
-	s.AddToolMessage("call-2", "read_file", short)
+	s.AddToolMessage("call-1", "read", large)
+	s.AddToolMessage("call-2", "read", short)
 
 	api := (&agentImpl{}).convertHistoryToAPIMessages(s.GetHistory())
 

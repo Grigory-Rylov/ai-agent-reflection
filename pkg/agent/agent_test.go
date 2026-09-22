@@ -15,7 +15,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-
 func TestNewAgent(t *testing.T) {
 	config := DefaultConfig()
 	config.LlamaServerURL = "127.0.0.1:8080"
@@ -70,23 +69,18 @@ func TestAgentResetSession(t *testing.T) {
 	agent := NewAgent(config)
 	peerID := int64(12345)
 
-	
 	agent.GetSession(peerID)
 
-	
 	s := agent.GetSession(peerID)
 	s.AddUserMessage("Test message")
 	s.AddAssistantMessage("Test response")
 
-	
 	if s.HistoryLength() != 2 {
 		t.Errorf("expected 2 messages, got %d", s.HistoryLength())
 	}
 
-	
 	agent.ResetSession(peerID)
 
-	
 	s = agent.GetSession(peerID)
 	if s.HistoryLength() != 0 {
 		t.Errorf("expected 0 messages after reset, got %d", s.HistoryLength())
@@ -94,10 +88,10 @@ func TestAgentResetSession(t *testing.T) {
 }
 
 func TestAgentProcessMessageWithMockServer(t *testing.T) {
-	
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		
+
 		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n"))
 		w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 		w.Write([]byte("[DONE]\n"))
@@ -118,12 +112,10 @@ func TestAgentProcessMessageWithMockServer(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	
 	if response == "" {
 		t.Error("expected non-empty response")
 	}
 }
-
 
 func TestProcessMessageAddsUserMessageToSession(t *testing.T) {
 	server := newMockSSEServer("Response")
@@ -154,7 +146,6 @@ func TestProcessMessageAddsUserMessageToSession(t *testing.T) {
 		t.Errorf("expected 2nd message content %q, got %q", "Test user message", userMsg.Content)
 	}
 }
-
 
 func TestProcessMessage_InjectsAGENTSMD(t *testing.T) {
 	dir := t.TempDir()
@@ -283,10 +274,10 @@ func newMockSSEServer(responseText string) *httptest.Server {
 }
 
 func TestAgentLoopDetectionIntegration(t *testing.T) {
-	
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		
+
 		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"I don't know\"}}]}\n\n"))
 		w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 		w.Write([]byte("[DONE]\n"))
@@ -302,25 +293,20 @@ func TestAgentLoopDetectionIntegration(t *testing.T) {
 
 	ctx := context.Background()
 
-	
 	agent.ProcessMessage(ctx, "Question 1", 12345)
 
-	
 	agent.ProcessMessage(ctx, "Question 2", 12345)
 
-	
 	s := agent.GetSession(12345)
 	if !s.IsLoopDetected() {
 		t.Error("expected loop detection to be triggered")
 	}
 
-	
 	response, err := agent.ProcessMessage(ctx, "Question 3", 12345)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	
 	if response == "" {
 		t.Error("expected non-empty response")
 	}
@@ -342,10 +328,8 @@ func TestAgentSessionPersistence(t *testing.T) {
 
 	agent := NewAgent(config)
 
-	
 	agent.ProcessMessage(context.Background(), "Hello", 12345)
 
-	
 	if _, err := os.Stat(sessionFile); os.IsNotExist(err) {
 		t.Error("session file should be created with auto-save")
 	}
@@ -360,7 +344,6 @@ func TestAgentPreservesSessionHistory(t *testing.T) {
 
 	ctx := context.Background()
 
-	
 	for i := 0; i < 20; i++ {
 		agent.ProcessMessage(ctx, "Message "+string(rune('A'+i%26)), 12345)
 	}
@@ -370,7 +353,6 @@ func TestAgentPreservesSessionHistory(t *testing.T) {
 		t.Error("expected messages to be preserved in session")
 	}
 }
-
 
 type mockStoreWorkingDir struct {
 	sessionData *store.SessionData
@@ -440,10 +422,10 @@ func (m *mockStoreWorkingDir) GetAgentSession(id string) (*store.AgentSessionDat
 func (m *mockStoreWorkingDir) GetActiveAgentSessions(peerID int64) ([]store.AgentSessionData, error) {
 	return nil, nil
 }
-func (m *mockStoreWorkingDir) CompleteAgentSession(id string) error        { return nil }
-func (m *mockStoreWorkingDir) CancelAgentSession(id string) error          { return nil }
-func (m *mockStoreWorkingDir) DeleteAgentSession(id string) error          { return nil }
-func (m *mockStoreWorkingDir) UpdateAgentSession(id, lp, msg string) error { return nil }
+func (m *mockStoreWorkingDir) CompleteAgentSession(id string) error          { return nil }
+func (m *mockStoreWorkingDir) CancelAgentSession(id string) error            { return nil }
+func (m *mockStoreWorkingDir) DeleteAgentSession(id string) error            { return nil }
+func (m *mockStoreWorkingDir) UpdateAgentSession(id, lp, msg string) error   { return nil }
 func (m *mockStoreWorkingDir) SaveAgentCheckpoint(id, ltc, msg string) error { return nil }
 func (m *mockStoreWorkingDir) GetAgentChain(peerID int64) (*store.AgentChainData, error) {
 	return nil, nil
@@ -451,7 +433,7 @@ func (m *mockStoreWorkingDir) GetAgentChain(peerID int64) (*store.AgentChainData
 func (m *mockStoreWorkingDir) SaveAgentChain(peerID int64, chain []string) error   { return nil }
 func (m *mockStoreWorkingDir) ClearAgentChain(peerID int64) error                  { return nil }
 func (m *mockStoreWorkingDir) GetAllActiveChains() ([]store.AgentChainData, error) { return nil, nil }
-func (m *mockStoreWorkingDir) ClearPeerData(peerID int64) error                  { return nil }
+func (m *mockStoreWorkingDir) ClearPeerData(peerID int64) error                    { return nil }
 
 func TestWorkingDirRestoredFromStore(t *testing.T) {
 	savedDir, err := os.MkdirTemp("", "wd_test_*")
@@ -506,7 +488,7 @@ func TestWorkingDirNotOverwrittenWhenEmpty(t *testing.T) {
 	mockSt := &mockStoreWorkingDir{
 		sessionData: &store.SessionData{
 			PeerID:     12346,
-			WorkingDir: "", 
+			WorkingDir: "",
 		},
 	}
 

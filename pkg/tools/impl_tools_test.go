@@ -8,7 +8,6 @@ import (
 	"testing"
 )
 
-
 func setupTempDir(t *testing.T) string {
 	dir, err := os.MkdirTemp("", "tools_test_*")
 	if err != nil {
@@ -21,7 +20,6 @@ func cleanupTempDir(t *testing.T, dir string) {
 	os.RemoveAll(dir)
 }
 
-
 func TestFileReadTool(t *testing.T) {
 	t.Run("reads file successfully", func(t *testing.T) {
 		dir := setupTempDir(t)
@@ -29,7 +27,6 @@ func TestFileReadTool(t *testing.T) {
 
 		tool := &FileReadTool{}
 
-		
 		testFile := filepath.Join(dir, "test.txt")
 		os.WriteFile(testFile, []byte("Hello, World!"), 0644)
 
@@ -77,7 +74,6 @@ func TestFileReadTool(t *testing.T) {
 	})
 }
 
-
 func TestFileWriteTool(t *testing.T) {
 	t.Run("writes file successfully", func(t *testing.T) {
 		dir := setupTempDir(t)
@@ -98,7 +94,6 @@ func TestFileWriteTool(t *testing.T) {
 			t.Fatalf("Expected success, got error: %s", result.Error)
 		}
 
-		
 		data, err := os.ReadFile(testFile)
 		if err != nil {
 			t.Fatalf("Failed to read written file: %v", err)
@@ -122,7 +117,6 @@ func TestFileWriteTool(t *testing.T) {
 	})
 }
 
-
 func TestTimeGetTool(t *testing.T) {
 	t.Run("returns current time", func(t *testing.T) {
 		tool := &TimeGetTool{}
@@ -142,13 +136,11 @@ func TestTimeGetTool(t *testing.T) {
 	})
 }
 
-
 func TestDirListTool(t *testing.T) {
 	t.Run("lists directory contents", func(t *testing.T) {
 		dir := setupTempDir(t)
 		defer cleanupTempDir(t, dir)
 
-		
 		os.WriteFile(filepath.Join(dir, "file1.txt"), []byte("content1"), 0644)
 		os.Mkdir(filepath.Join(dir, "subdir"), 0755)
 
@@ -183,7 +175,6 @@ func TestDirListTool(t *testing.T) {
 	})
 }
 
-
 func TestShellExecuteTool(t *testing.T) {
 	t.Run("executes command successfully", func(t *testing.T) {
 		tool := &ShellExecuteTool{}
@@ -213,7 +204,6 @@ func TestShellExecuteTool(t *testing.T) {
 		}
 	})
 }
-
 
 func TestGlobTool(t *testing.T) {
 	t.Run("finds files by pattern", func(t *testing.T) {
@@ -252,7 +242,6 @@ func TestGlobTool(t *testing.T) {
 	})
 }
 
-
 func TestGrepTool(t *testing.T) {
 	t.Run("finds pattern in files", func(t *testing.T) {
 		dir := setupTempDir(t)
@@ -290,7 +279,6 @@ func TestGrepTool(t *testing.T) {
 	})
 }
 
-
 func TestCalcTool(t *testing.T) {
 	t.Run("evaluates simple expression", func(t *testing.T) {
 		tool := &CalcTool{}
@@ -320,7 +308,6 @@ func TestCalcTool(t *testing.T) {
 		}
 	})
 }
-
 
 func TestEditTool(t *testing.T) {
 	t.Run("edits file successfully", func(t *testing.T) {
@@ -363,7 +350,6 @@ func TestEditTool(t *testing.T) {
 	})
 }
 
-
 func TestShellExecuteToolExitCode(t *testing.T) {
 	t.Run("returns exit code on failure", func(t *testing.T) {
 		tool := &ShellExecuteTool{}
@@ -389,7 +375,6 @@ func TestShellExecuteToolExitCode(t *testing.T) {
 	})
 }
 
-
 func TestShellExecuteWorkingDir(t *testing.T) {
 	t.Run("creates file in WorkingDir", func(t *testing.T) {
 		dir, err := os.MkdirTemp("", "shell_wd_test_*")
@@ -413,7 +398,6 @@ func TestShellExecuteWorkingDir(t *testing.T) {
 			t.Fatalf("Expected success, got: %s", result.Error)
 		}
 
-		
 		createdFile := filepath.Join(dir, "test_working_dir.txt")
 		if _, err := os.Stat(createdFile); os.IsNotExist(err) {
 			t.Errorf("File should have been created in WorkingDir %s, but it doesn't exist", dir)
@@ -445,7 +429,7 @@ func TestShellExecuteWorkingDir(t *testing.T) {
 
 		data := result.Data.(map[string]interface{})
 		output := data["output"].(string)
-		
+
 		pwdOutput := strings.TrimSpace(output)
 		if pwdOutput != dir {
 			t.Errorf("Expected pwd to return %q, got %q", dir, pwdOutput)
@@ -487,7 +471,6 @@ func TestShellExecuteWorkingDir(t *testing.T) {
 	})
 }
 
-
 func TestGrepToolWithInclude(t *testing.T) {
 	t.Run("filters by include pattern", func(t *testing.T) {
 		dir := setupTempDir(t)
@@ -518,7 +501,6 @@ func TestGrepToolWithInclude(t *testing.T) {
 		}
 	})
 }
-
 
 func TestRegistryAllToolsExecute(t *testing.T) {
 	registry := NewRegistry()
@@ -595,7 +577,6 @@ func TestRegistryAllToolsExecute(t *testing.T) {
 	})
 }
 
-
 func TestResolvePath(t *testing.T) {
 	t.Run("resolves absolute path", func(t *testing.T) {
 		path, err := resolvePath("/tmp")
@@ -625,7 +606,6 @@ func TestResolvePath(t *testing.T) {
 	})
 }
 
-
 func TestWebFetchTool(t *testing.T) {
 	t.Run("returns error for missing url", func(t *testing.T) {
 		tool := &WebFetchTool{}
@@ -639,7 +619,6 @@ func TestWebFetchTool(t *testing.T) {
 	})
 }
 
-
 func TestWebSearchTool(t *testing.T) {
 	t.Run("returns error for missing query", func(t *testing.T) {
 		tool := &WebSearchTool{}
@@ -652,7 +631,6 @@ func TestWebSearchTool(t *testing.T) {
 		}
 	})
 }
-
 
 func TestEvaluateExpression(t *testing.T) {
 	tests := []struct {
@@ -694,7 +672,6 @@ func TestEvaluateExpression(t *testing.T) {
 	}
 }
 
-
 func TestToolMetadata(t *testing.T) {
 	tools := []struct {
 		name string
@@ -727,7 +704,6 @@ func TestToolMetadata(t *testing.T) {
 		})
 	}
 }
-
 
 func TestUnmarshalToolResult(t *testing.T) {
 	t.Run("unmarshals valid JSON", func(t *testing.T) {

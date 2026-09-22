@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	binaryName       = "ipmitool"
-	ipmitoolTimeout  = 10 * time.Second
+	binaryName      = "ipmitool"
+	ipmitoolTimeout = 10 * time.Second
 )
 
 var (

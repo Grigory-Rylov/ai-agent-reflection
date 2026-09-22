@@ -19,17 +19,15 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 )
 
-
 type slotActionRecord struct {
 	slot   int
 	action string
 }
 
-
 func multiAgentSlotServer(t *testing.T) (srv *httptest.Server, slotIDs func() map[string]int, actions func() []slotActionRecord) {
 	t.Helper()
 	var mu sync.Mutex
-	agentSlots := map[string]int{}      
+	agentSlots := map[string]int{}
 	actionLog := []slotActionRecord{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -93,10 +91,23 @@ func multiAgentSlotServer(t *testing.T) (srv *httptest.Server, slotIDs func() ma
 	}))
 
 	return server,
-		func() map[string]int { mu.Lock(); defer mu.Unlock(); out := make(map[string]int, len(agentSlots)); for k, v := range agentSlots { out[k] = v }; return out },
-		func() []slotActionRecord { mu.Lock(); defer mu.Unlock(); out := make([]slotActionRecord, len(actionLog)); copy(out, actionLog); return out }
+		func() map[string]int {
+			mu.Lock()
+			defer mu.Unlock()
+			out := make(map[string]int, len(agentSlots))
+			for k, v := range agentSlots {
+				out[k] = v
+			}
+			return out
+		},
+		func() []slotActionRecord {
+			mu.Lock()
+			defer mu.Unlock()
+			out := make([]slotActionRecord, len(actionLog))
+			copy(out, actionLog)
+			return out
+		}
 }
-
 
 func pickMultiAgentReply(agent string, msgs []struct {
 	Role    string `json:"role"`
@@ -124,7 +135,6 @@ func pickMultiAgentReply(agent string, msgs []struct {
 	}
 	return "OK"
 }
-
 
 func TestRunAgent_MultiAgentDistinctSlots(t *testing.T) {
 	dir := t.TempDir()
@@ -174,7 +184,7 @@ func TestRunAgent_MultiAgentDistinctSlots(t *testing.T) {
 	if len(slots) != 3 {
 		t.Fatalf("expected 3 agents with slots, got %d: %v", len(slots), slots)
 	}
-	
+
 	seen := map[int]string{}
 	for agent, sid := range slots {
 		if other, ok := seen[sid]; ok {
@@ -186,13 +196,10 @@ func TestRunAgent_MultiAgentDistinctSlots(t *testing.T) {
 		}
 	}
 
-	
 	if got := orch.config.SlotManager.GetAssignedSessions(); len(got) != 0 {
 		t.Errorf("expected no assigned slots after completion, got %v", got)
 	}
 
-	
-	
 	actLog := actions()
 	saveCount, eraseCount := 0, 0
 	for _, a := range actLog {
@@ -210,7 +217,6 @@ func TestRunAgent_MultiAgentDistinctSlots(t *testing.T) {
 		t.Errorf("expected ≥3 slot erases on release, got %d (actions: %v)", eraseCount, actLog)
 	}
 }
-
 
 func TestMakeSubAgent_UnifiedSessionID(t *testing.T) {
 	server, _, _ := multiAgentSlotServer(t)
@@ -237,24 +243,20 @@ func TestMakeSubAgent_UnifiedSessionID(t *testing.T) {
 		t.Fatalf("makeSubAgent: %v", err)
 	}
 
-	
 	if got := a.GetSession(1).GetSessionID(); got != sessionID {
 		t.Errorf("session.SessionID %q != returned sessionID %q", got, sessionID)
 	}
 
-	
 	slot := orch.config.SlotManager.GetSlotID(sessionID)
 	if slot < 0 {
 		t.Fatal("expected slot assigned to sessionID")
 	}
 
-	
 	orch.releaseAgentSlot(sessionID)
 	if orch.config.SlotManager.GetSlotID(sessionID) != -1 {
 		t.Error("expected slot released after releaseAgentSlot")
 	}
 }
-
 
 func TestAssignSessionSlot_LRUEvictionSavesAndClears(t *testing.T) {
 	var mu sync.Mutex
@@ -263,7 +265,7 @@ func TestAssignSessionSlot_LRUEvictionSavesAndClears(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/slots":
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`[{"id":0},{"id":1}]`)) 
+			w.Write([]byte(`[{"id":0},{"id":1}]`))
 			return
 		case strings.HasPrefix(r.URL.Path, "/slots/") && r.Method == http.MethodPost:
 			var slotID int
@@ -273,7 +275,7 @@ func TestAssignSessionSlot_LRUEvictionSavesAndClears(t *testing.T) {
 			actions = append(actions, slotActionRecord{slot: slotID, action: action})
 			mu.Unlock()
 			if action == "restore" {
-				
+
 				w.WriteHeader(http.StatusBadRequest)
 				w.Write([]byte(`{"error":{"message":"file not found"}}`))
 				return
@@ -292,14 +294,12 @@ func TestAssignSessionSlot_LRUEvictionSavesAndClears(t *testing.T) {
 	mgr := NewSlotManager(newSlotClient())
 	client := newSlotClient()
 
-	
 	s0 := AssignSessionSlot(mgr, client, holder, "session-A", nil)
 	s1 := AssignSessionSlot(mgr, client, holder, "session-B", nil)
 	if s0 == s1 {
 		t.Fatalf("expected distinct slots, got %d/%d", s0, s1)
 	}
 
-	
 	mgr.Touch("session-A")
 	time.Sleep(1 * time.Millisecond)
 
@@ -309,8 +309,6 @@ func TestAssignSessionSlot_LRUEvictionSavesAndClears(t *testing.T) {
 		t.Errorf("expected session-C to take session-B's slot %d, got %d", s1, s2)
 	}
 
-	
-	
 	mu.Lock()
 	defer mu.Unlock()
 	var saved, erased, restored bool
@@ -334,7 +332,6 @@ func TestAssignSessionSlot_LRUEvictionSavesAndClears(t *testing.T) {
 		t.Error("restore must NOT be called for the new session after eviction (cold start)")
 	}
 
-	
 	if mgr.GetSlotID("session-B") != -1 {
 		t.Error("session-B should be evicted")
 	}

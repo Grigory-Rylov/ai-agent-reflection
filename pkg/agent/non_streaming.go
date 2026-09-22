@@ -92,9 +92,7 @@ func buildToolCallForRequest(tc ToolCall) ToolCall {
 	if argsStr == "" {
 		return tc
 	}
-	
-	
-	
+
 	raw := string(tc.Function.Arguments)
 	if len(raw) > 0 && raw[0] == '"' {
 		return tc

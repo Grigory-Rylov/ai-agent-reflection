@@ -25,7 +25,6 @@ type ToolCallResult struct {
 	IsError    bool   `json:"is_error"`
 }
 
-
 func MergeToolCalls(existing []ToolCall, delta []ToolCall) []ToolCall {
 	for _, tc := range delta {
 		found := false
@@ -58,12 +57,11 @@ func mergeToolCallDelta(existing *ToolCall, delta ToolCall) {
 	}
 }
 
-
 func mergeArguments(existing, delta json.RawMessage) json.RawMessage {
 	var existingStr string
 	if len(existing) > 0 {
 		if err := json.Unmarshal(existing, &existingStr); err != nil {
-			
+
 			raw := string(existing)
 			if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
 				existingStr = raw[1 : len(raw)-1]
@@ -90,20 +88,18 @@ func mergeArguments(existing, delta json.RawMessage) json.RawMessage {
 	return result
 }
 
-
 func ToolCallName(tc ToolCall) string {
 	return tc.Function.Name
 }
-
 
 func ToolCallArgumentsStr(tc ToolCall) string {
 	if len(tc.Function.Arguments) == 0 {
 		return ""
 	}
-	
+
 	var s string
 	if err := json.Unmarshal(tc.Function.Arguments, &s); err != nil {
-		
+
 		raw := string(tc.Function.Arguments)
 		if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
 			return raw[1 : len(raw)-1]
@@ -132,7 +128,6 @@ func parseToolCalls(rawMessage map[string]interface{}) ([]ToolCall, error) {
 	return toolCalls, nil
 }
 
-
 func parseToolArguments(tc ToolCall) (map[string]string, error) {
 	argsStr := ToolCallArgumentsStr(tc)
 	if argsStr == "" {
@@ -147,8 +142,7 @@ func parseToolArguments(tc ToolCall) (map[string]string, error) {
 	args := make(map[string]string, len(rawArgs))
 	for k, v := range rawArgs {
 		normalized := k
-		
-		
+
 		if _, hasSnake := rawArgs[toSnakeCase(k)]; !hasSnake && k != toSnakeCase(k) {
 			normalized = toSnakeCase(k)
 		}
@@ -172,7 +166,6 @@ func parseToolArguments(tc ToolCall) (map[string]string, error) {
 	}
 	return args, nil
 }
-
 
 func toSnakeCase(s string) string {
 	if s == "" {

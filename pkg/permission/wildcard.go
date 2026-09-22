@@ -5,7 +5,6 @@ import (
 	"strings"
 )
 
-
 func Match(input, pattern string) bool {
 	normalized := strings.ReplaceAll(input, "\\", "/")
 

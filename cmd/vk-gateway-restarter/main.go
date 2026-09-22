@@ -142,7 +142,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	vkClient := vk.NewBotClient(config.TokenVK) 
+	vkClient := vk.NewBotClient(config.TokenVK)
 	var agent agentProc
 	agentPath := filepath.Join(agentDir, "agent")
 
@@ -184,7 +184,6 @@ func main() {
 	fmt.Println("[restarter] Shutdown complete")
 }
 
-
 func sendWelcome(vkClient *vk.BotClient, peerID int64) {
 	if peerID <= 0 {
 		return
@@ -193,12 +192,10 @@ func sendWelcome(vkClient *vk.BotClient, peerID int64) {
 	vkClient.SendMessage(peerID, msg)
 }
 
-
 func monitorAgent(ctx context.Context, ap *agentProc, agentPath string, agentArgs []string, vkClient *vk.BotClient, peerID int64) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	
 	wd, _ := os.Getwd()
 	restartSignal := filepath.Join(wd, ".agent-restart")
 	updateSignal := filepath.Join(wd, ".agent-update")
@@ -215,7 +212,6 @@ func monitorAgent(ctx context.Context, ap *agentProc, agentPath string, agentArg
 				fmt.Println("[restarter] Agent not running — waiting for /restart command")
 			}
 
-			
 			if _, err := os.Stat(restartSignal); err == nil {
 				os.Remove(restartSignal)
 				fmt.Println("[restarter] Restart requested via signal file")
@@ -223,7 +219,6 @@ func monitorAgent(ctx context.Context, ap *agentProc, agentPath string, agentArg
 				continue
 			}
 
-			
 			if _, err := os.Stat(updateSignal); err == nil {
 				os.Remove(updateSignal)
 				fmt.Println("[restarter] Update requested via signal file")
@@ -231,7 +226,6 @@ func monitorAgent(ctx context.Context, ap *agentProc, agentPath string, agentArg
 				continue
 			}
 
-			
 			if branchData, err := os.ReadFile(branchSignal); err == nil {
 				os.Remove(branchSignal)
 				branch := strings.TrimSpace(string(branchData))
@@ -363,12 +357,6 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 					replyPeerID = config.PeerID
 				}
 
-				
-				
-				
-				
-				
-				
 				if ap.isRunning() {
 					switch {
 					case cmd == "/status":
@@ -485,7 +473,6 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 	}
 }
 
-
 func sendRestarterStatus(vkClient *vk.BotClient, peerID int64, ap *agentProc) {
 	status := fmt.Sprintf("Restarter v%s (build %s)\n", Version, buildinfo.HumanReadable())
 	if ap.isRunning() {
@@ -581,8 +568,8 @@ func handleModelSwitch(vkClient *vk.BotClient, peerID int64, cmd string) {
 }
 
 type modelsConfig struct {
-	Default string                `json:"default"`
-	Models  map[string]struct{}   `json:"models"`
+	Default string              `json:"default"`
+	Models  map[string]struct{} `json:"models"`
 }
 
 func loadConfig(path string) (Config, error) {
@@ -601,4 +588,3 @@ func loadConfig(path string) (Config, error) {
 	}
 	return config, nil
 }
-

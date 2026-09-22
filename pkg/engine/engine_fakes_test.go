@@ -26,10 +26,18 @@ func (r *recordLogger) InfoLog(msg string, args ...any)  { r.line("INF", fmt.Spr
 func (r *recordLogger) WarnLog(msg string, args ...any)  { r.line("WRN", fmt.Sprintf(msg, args...)) }
 func (r *recordLogger) ErrorLog(msg string, args ...any) { r.line("ERR", fmt.Sprintf(msg, args...)) }
 
-func (r *recordLogger) DebugLogf(format string, args ...any) { r.line("DBG", fmt.Sprintf(format, args...)) }
-func (r *recordLogger) InfoLogf(format string, args ...any)  { r.line("INF", fmt.Sprintf(format, args...)) }
-func (r *recordLogger) WarnLogf(format string, args ...any)  { r.line("WRN", fmt.Sprintf(format, args...)) }
-func (r *recordLogger) ErrorLogf(format string, args ...any) { r.line("ERR", fmt.Sprintf(format, args...)) }
+func (r *recordLogger) DebugLogf(format string, args ...any) {
+	r.line("DBG", fmt.Sprintf(format, args...))
+}
+func (r *recordLogger) InfoLogf(format string, args ...any) {
+	r.line("INF", fmt.Sprintf(format, args...))
+}
+func (r *recordLogger) WarnLogf(format string, args ...any) {
+	r.line("WRN", fmt.Sprintf(format, args...))
+}
+func (r *recordLogger) ErrorLogf(format string, args ...any) {
+	r.line("ERR", fmt.Sprintf(format, args...))
+}
 
 func (r *recordLogger) contains(sub string) bool {
 	r.mu.Lock()

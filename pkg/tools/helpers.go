@@ -12,9 +12,7 @@ import (
 	"unicode"
 )
 
-
 const maxResponseBytes = 8192
-
 
 func NewHTTPRequest(ctx context.Context, method, url string) (string, error) {
 	client := &http.Client{
@@ -51,14 +49,12 @@ func NewHTTPRequest(ctx context.Context, method, url string) (string, error) {
 	return result, nil
 }
 
-
 func EvaluateExpression(expr string) (float64, error) {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return 0, fmt.Errorf("empty expression")
 	}
 
-	
 	expr = strings.ReplaceAll(expr, "pi", fmt.Sprintf("%.15f", math.Pi))
 	expr = strings.ReplaceAll(expr, "e", fmt.Sprintf("%.15f", math.E))
 
@@ -171,7 +167,6 @@ func tokenize(expr string) ([]token, error) {
 
 	return tokens, nil
 }
-
 
 func parseExpression(tokens []token) (float64, error) {
 	result, tokens, err := parseAddSub(tokens, 0)

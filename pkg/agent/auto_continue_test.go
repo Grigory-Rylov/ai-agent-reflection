@@ -10,14 +10,12 @@ import (
 	sess "github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-
 func TestCompactIfNeeded_AddAutoContinue_ProcessMessagePath(t *testing.T) {
 	agent := newAutoContinueTestAgent(t)
 
 	s := sess.NewSession(sess.DefaultConfig())
 	s.UpdateSystemPrompt("test system prompt")
 
-	
 	for i := 0; i < 10; i++ {
 		s.AddUserMessage(strings.Repeat(fmt.Sprintf("user message %d: ", i), 20))
 		s.AddAssistantMessage(strings.Repeat(fmt.Sprintf("assistant reply %d: ", i), 20))
@@ -25,14 +23,12 @@ func TestCompactIfNeeded_AddAutoContinue_ProcessMessagePath(t *testing.T) {
 
 	ctx := context.Background()
 
-	
 	result := agent.compactIfNeeded(ctx, s, true)
 
 	if !result {
 		t.Fatal("expected compaction to succeed")
 	}
 
-	
 	history := s.GetHistory()
 	found := false
 	for _, msg := range history {
@@ -49,14 +45,12 @@ func TestCompactIfNeeded_AddAutoContinue_ProcessMessagePath(t *testing.T) {
 	}
 }
 
-
 func TestCompactIfNeeded_NoAutoContinue_ToolLoopPath(t *testing.T) {
 	agent := newAutoContinueTestAgent(t)
 
 	s := sess.NewSession(sess.DefaultConfig())
 	s.UpdateSystemPrompt("test system prompt")
 
-	
 	for i := 0; i < 10; i++ {
 		s.AddUserMessage(strings.Repeat(fmt.Sprintf("user message %d: ", i), 20))
 		s.AddAssistantMessage(strings.Repeat(fmt.Sprintf("assistant reply %d: ", i), 20))
@@ -64,14 +58,12 @@ func TestCompactIfNeeded_NoAutoContinue_ToolLoopPath(t *testing.T) {
 
 	ctx := context.Background()
 
-	
 	result := agent.compactIfNeeded(ctx, s, false)
 
 	if !result {
 		t.Fatal("expected compaction to succeed")
 	}
 
-	
 	history := s.GetHistory()
 	for _, msg := range history {
 		if msg.Role == sess.UserRole && msg.Content == tokenizers.CompactionAutoContinueText {
@@ -80,14 +72,12 @@ func TestCompactIfNeeded_NoAutoContinue_ToolLoopPath(t *testing.T) {
 	}
 }
 
-
 func TestCompactIfNeeded_AutoContinue_AllowsSecondAfterAssistantResponse(t *testing.T) {
 	agent := newAutoContinueTestAgent(t)
 
 	s := sess.NewSession(sess.DefaultConfig())
 	s.UpdateSystemPrompt("test system prompt")
 
-	
 	for i := 0; i < 10; i++ {
 		s.AddUserMessage(strings.Repeat(fmt.Sprintf("user message %d: ", i), 20))
 		s.AddAssistantMessage(strings.Repeat(fmt.Sprintf("assistant reply %d: ", i), 20))
@@ -95,7 +85,6 @@ func TestCompactIfNeeded_AutoContinue_AllowsSecondAfterAssistantResponse(t *test
 
 	ctx := context.Background()
 
-	
 	result1 := agent.compactIfNeeded(ctx, s, true)
 	if !result1 {
 		t.Fatal("expected first compaction to succeed")
@@ -106,28 +95,21 @@ func TestCompactIfNeeded_AutoContinue_AllowsSecondAfterAssistantResponse(t *test
 		t.Errorf("expected exactly 1 CompactionAutoContinueText after first compaction, got %d", countAfterFirst)
 	}
 
-	
 	for i := 0; i < 20; i++ {
 		s.AddUserMessage(strings.Repeat(fmt.Sprintf("more user message %d: ", i), 30))
 		s.AddAssistantMessage(strings.Repeat(fmt.Sprintf("more assistant reply %d: ", i), 30))
 	}
 
-	
-	
-	
-	
 	result2 := agent.compactIfNeeded(ctx, s, true)
 	if !result2 {
 		t.Fatal("expected second compaction to succeed")
 	}
 
-	
 	countAfterSecond := countUserMessages(s.GetHistory(), tokenizers.CompactionAutoContinueText)
 	if countAfterSecond != 2 {
 		t.Errorf("expected exactly 2 CompactionAutoContinueText (model responded between compactions), got %d", countAfterSecond)
 	}
 }
-
 
 func TestCompactIfNeeded_AutoContinue_GuardNoAssistantResponse(t *testing.T) {
 	agent := newAutoContinueTestAgent(t)
@@ -135,7 +117,6 @@ func TestCompactIfNeeded_AutoContinue_GuardNoAssistantResponse(t *testing.T) {
 	s := sess.NewSession(sess.DefaultConfig())
 	s.UpdateSystemPrompt("test system prompt")
 
-	
 	for i := 0; i < 10; i++ {
 		s.AddUserMessage(strings.Repeat(fmt.Sprintf("user message %d: ", i), 20))
 		s.AddAssistantMessage(strings.Repeat(fmt.Sprintf("assistant reply %d: ", i), 20))
@@ -143,7 +124,6 @@ func TestCompactIfNeeded_AutoContinue_GuardNoAssistantResponse(t *testing.T) {
 
 	ctx := context.Background()
 
-	
 	result1 := agent.compactIfNeeded(ctx, s, true)
 	if !result1 {
 		t.Fatal("expected first compaction to succeed")
@@ -154,8 +134,6 @@ func TestCompactIfNeeded_AutoContinue_GuardNoAssistantResponse(t *testing.T) {
 		t.Errorf("expected exactly 1 CompactionAutoContinueText after first compaction, got %d", countAfterFirst)
 	}
 
-	
-	
 	for i := 0; i < 20; i++ {
 		s.AddUserMessage(strings.Repeat(fmt.Sprintf("only user message %d: ", i), 30))
 	}
@@ -165,13 +143,11 @@ func TestCompactIfNeeded_AutoContinue_GuardNoAssistantResponse(t *testing.T) {
 		t.Fatal("expected second compaction to succeed")
 	}
 
-	
 	countAfterSecond := countUserMessages(s.GetHistory(), tokenizers.CompactionAutoContinueText)
 	if countAfterSecond != 1 {
 		t.Errorf("expected exactly 1 CompactionAutoContinueText (no assistant response), got %d", countAfterSecond)
 	}
 }
-
 
 func TestCompactIfNeeded_NoOverflow_NoAutoContinue(t *testing.T) {
 	agent := newAutoContinueTestAgent(t)
@@ -179,7 +155,6 @@ func TestCompactIfNeeded_NoOverflow_NoAutoContinue(t *testing.T) {
 	s := sess.NewSession(sess.DefaultConfig())
 	s.UpdateSystemPrompt("test")
 
-	
 	s.AddUserMessage("hello")
 
 	ctx := context.Background()
@@ -190,7 +165,6 @@ func TestCompactIfNeeded_NoOverflow_NoAutoContinue(t *testing.T) {
 		t.Error("expected no compaction when there is no overflow")
 	}
 
-	
 	history := s.GetHistory()
 	for _, msg := range history {
 		if msg.Role == sess.UserRole && msg.Content == tokenizers.CompactionAutoContinueText {

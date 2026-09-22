@@ -31,7 +31,6 @@ func FindCompactionMarkers(messages []tokenizers.Message) []CompactionMarker {
 	return markers
 }
 
-
 func FilterCompacted(messages []tokenizers.Message) []tokenizers.Message {
 	markers := FindCompactionMarkers(messages)
 	if len(markers) == 0 {
@@ -61,7 +60,7 @@ func FilterCompacted(messages []tokenizers.Message) []tokenizers.Message {
 	result = append(result, messages[latest.Index])
 
 	for i := tailStartID; i < len(messages); i++ {
-		
+
 		if i == compactionUserIdx || i == latest.Index {
 			continue
 		}

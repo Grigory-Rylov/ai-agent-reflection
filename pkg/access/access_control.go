@@ -8,7 +8,6 @@ import (
 	"sync"
 )
 
-
 type AccessLevel int
 
 const (
@@ -18,12 +17,10 @@ const (
 	AccessAll
 )
 
-
 type AccessResult struct {
 	Allowed bool
 	Reason  string
 }
-
 
 type Controller struct {
 	mu           sync.RWMutex
@@ -31,7 +28,6 @@ type Controller struct {
 	globalDirs   []string
 	sessionPeers map[int64][]string
 }
-
 
 func NewController(allowedDirs []string) *Controller {
 	c := &Controller{
@@ -45,7 +41,6 @@ func NewController(allowedDirs []string) *Controller {
 	return c
 }
 
-
 func (c *Controller) addAllowedDir(dir string) {
 	canonical, err := resolveCanonical(dir)
 	if err != nil {
@@ -54,23 +49,19 @@ func (c *Controller) addAllowedDir(dir string) {
 	c.allowedDirs = appendUnique(c.allowedDirs, canonical)
 }
 
-
 func (c *Controller) AddAllowedDir(dir string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.addAllowedDir(dir)
 }
 
-
 func (c *Controller) GrantPath(path string) {
 	c.grantTo(&c.globalDirs, path)
 }
 
-
 func (c *Controller) RevokePath(path string) {
 	c.revokeFrom(&c.globalDirs, path)
 }
-
 
 func (c *Controller) grantTo(store *[]string, path string) {
 	c.mu.Lock()
@@ -82,7 +73,6 @@ func (c *Controller) grantTo(store *[]string, path string) {
 	}
 	*store = appendUnique(*store, deepestExistingAncestor(canonical))
 }
-
 
 func (c *Controller) revokeFrom(store *[]string, path string) {
 	c.mu.Lock()
@@ -101,7 +91,6 @@ func (c *Controller) revokeFrom(store *[]string, path string) {
 	}
 }
 
-
 func (c *Controller) GrantPathForPeer(peerID int64, path string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -118,7 +107,6 @@ func (c *Controller) GrantPathForPeer(peerID int64, path string) {
 	}
 	c.sessionPeers[peerID] = appendUnique(existing, dir)
 }
-
 
 func (c *Controller) RevokePathForPeer(peerID int64, path string) {
 	c.mu.Lock()
@@ -142,13 +130,11 @@ func (c *Controller) RevokePathForPeer(peerID int64, path string) {
 	c.sessionPeers[peerID] = kept
 }
 
-
 func (c *Controller) ClearPeer(peerID int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.sessionPeers, peerID)
 }
-
 
 func (c *Controller) CheckAccessForPeer(peerID int64, path string) AccessResult {
 	c.mu.RLock()
@@ -174,7 +160,6 @@ func (c *Controller) CheckAccessForPeer(peerID int64, path string) AccessResult 
 	}
 }
 
-
 func (c *Controller) CheckAccess(path string) AccessResult {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -199,7 +184,6 @@ func (c *Controller) CheckAccess(path string) AccessResult {
 	}
 }
 
-
 func (c *Controller) allEffectiveDirs() []string {
 	result := make([]string, 0, len(c.allowedDirs)+len(c.globalDirs))
 	result = append(result, c.allowedDirs...)
@@ -207,13 +191,11 @@ func (c *Controller) allEffectiveDirs() []string {
 	return result
 }
 
-
 func (c *Controller) AllowedDirs() []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.allEffectiveDirs()
 }
-
 
 func isPathInAllowed(canonical string, dirs []string) bool {
 	for _, allowedDir := range dirs {
@@ -227,7 +209,6 @@ func isPathInAllowed(canonical string, dirs []string) bool {
 	return false
 }
 
-
 func appendUnique(list []string, val string) []string {
 	for _, v := range list {
 		if v == val {
@@ -236,7 +217,6 @@ func appendUnique(list []string, val string) []string {
 	}
 	return append(list, val)
 }
-
 
 func deepestExistingAncestor(p string) string {
 	cur := p
@@ -252,7 +232,6 @@ func deepestExistingAncestor(p string) string {
 		cur = parent
 	}
 }
-
 
 func resolveCanonical(path string) (string, error) {
 	path = os.ExpandEnv(path)
@@ -287,11 +266,9 @@ func resolveCanonical(path string) (string, error) {
 	return filepath.Clean(resolved), nil
 }
 
-
 func CanonicalPath(path string) (string, error) {
 	return resolveCanonical(path)
 }
-
 
 func (c *Controller) CheckWriteAccess(path string) AccessResult {
 	result := c.CheckAccess(path)
@@ -327,7 +304,6 @@ func (c *Controller) CheckWriteAccess(path string) AccessResult {
 	}
 }
 
-
 func (c *Controller) SafeReadFile(path string) ([]byte, AccessResult) {
 	result := c.CheckAccess(path)
 	if !result.Allowed {
@@ -347,7 +323,6 @@ func (c *Controller) SafeReadFile(path string) ([]byte, AccessResult) {
 		Reason:  "file read successfully",
 	}
 }
-
 
 func (c *Controller) SafeWriteFile(path string, data []byte) AccessResult {
 	result := c.CheckWriteAccess(path)
@@ -396,7 +371,6 @@ func (c *Controller) SafeWriteFile(path string, data []byte) AccessResult {
 	}
 }
 
-
 func SanitizePath(path string) string {
 	path = os.ExpandEnv(path)
 	cleaned := filepath.Clean(path)
@@ -411,7 +385,6 @@ func SanitizePath(path string) string {
 	}
 	return cleaned
 }
-
 
 func IsPathSafe(path string) bool {
 	dangerousChars := []string{";", "|", "&", "`", "$", "(", ")", "{", "}", "<", ">", "\\", "\n", "\r"}

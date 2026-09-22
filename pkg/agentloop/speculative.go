@@ -16,7 +16,7 @@ type speculativeCompact struct {
 	msgCountAt int
 	startedAt  time.Time
 	ready      bool
-	result     *compress.OpenCodeCompactResult
+	result     *compress.CompactResult
 	err        error
 	doneAt     time.Time
 }
@@ -29,15 +29,15 @@ func (al *agentLoop) maybeStartSpeculativeCompact(ctx context.Context, sess *ses
 	if al.compactor == nil {
 		return
 	}
-	usable := compress.UsableWithLimits(al.config.MaxTokens, al.config.ModelLimitInput, al.config.CompactionReserved)
-	if usable <= 0 {
+	threshold := compress.ThresholdTokens(al.compactionLimits(), al.compactionSettings())
+	if threshold <= 0 {
 		return
 	}
 
 	history := sess.GetHistory()
-	visible := al.convertHistoryToMessages(history)
-	tokens := compress.EstimateMessagesTokensSimple(visible)
-	if tokens < int(float64(usable)*ratio) {
+	tokens := compress.CompactionTokens(sess.LastUsageInputTokens(),
+		compress.EstimateMessagesTokensSimple(al.convertHistoryToMessages(history)))
+	if tokens < int(float64(threshold)*ratio) {
 		return
 	}
 
@@ -47,7 +47,7 @@ func (al *agentLoop) maybeStartSpeculativeCompact(ctx context.Context, sess *ses
 		return
 	}
 	raw := al.convertHistoryToRawMessages(history)
-	compactCtx, _ := context.WithTimeout(context.Background(), 10*time.Minute)
+	compactCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	task := &speculativeCompact{
 		peerID:     peerID,
 		snapshot:   raw,
@@ -59,18 +59,17 @@ func (al *agentLoop) maybeStartSpeculativeCompact(ctx context.Context, sess *ses
 	al.specMu.Unlock()
 
 	if al.log != nil {
-		al.log.InfoLogf("[SPEC-COMPACT] Peer %d: started at %d tokens (%.0f%% of usable %d)", peerID, tokens, float64(tokens)/float64(usable)*100, usable)
+		al.log.InfoLogf("[SPEC-COMPACT] Peer %d: started at %d tokens (%.0f%% of threshold %d)", peerID, tokens, float64(tokens)/float64(threshold)*100, threshold)
 	}
 
-	go al.runSpeculativeCompact(compactCtx, task)
+	go func() {
+		defer cancel()
+		al.runSpeculativeCompact(compactCtx, task)
+	}()
 }
 
 func (al *agentLoop) runSpeculativeCompact(ctx context.Context, task *speculativeCompact) {
-	tailTurns := al.config.TailTurns
-	if tailTurns <= 0 {
-		tailTurns = 2
-	}
-	result, err := al.compactor.CompactWithOpenCode(ctx, task.snapshot, al.config.MaxTokens, tailTurns, al.config.PreserveRecentTokens)
+	result, err := al.compactor.Compact(ctx, task.snapshot, al.compactionLimits(), al.compactionSettings())
 	if err != nil {
 		if al.log != nil {
 			al.log.WarnLogf("[SPEC-COMPACT] Peer %d: speculative compaction failed: %v", task.peerID, err)
@@ -112,7 +111,7 @@ func (al *agentLoop) tryApplySpeculativeCompact(sess *session.Session, peerID in
 		return false
 	}
 
-	al.applyOpenCodeCompactResult(sess, task.result)
+	al.applyCompactResult(sess, task.result)
 	if task.result.Summary != "" {
 		sess.AddUserMessage(tokenizers.CompactionAutoContinueText)
 	}

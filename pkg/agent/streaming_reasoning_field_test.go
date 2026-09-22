@@ -15,9 +15,9 @@ func TestParseSSEEvent_ReasoningFieldVariants(t *testing.T) {
 			wantReason: "need to think",
 		},
 		{
-			name:        "legacy reasoning_content field",
-			data:        `{"choices":[{"delta":{"reasoning_content":"think"},"finish_reason":null}]}`,
-			wantReason:  "think",
+			name:       "legacy reasoning_content field",
+			data:       `{"choices":[{"delta":{"reasoning_content":"think"},"finish_reason":null}]}`,
+			wantReason: "think",
 		},
 		{
 			name:       "both fields present prefers reasoning_content",

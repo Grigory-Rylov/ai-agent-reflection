@@ -6,7 +6,6 @@ import (
 	"strings"
 )
 
-
 type ContextOverflowError struct {
 	PromptTokens int
 	MaxContext   int
@@ -14,18 +13,16 @@ type ContextOverflowError struct {
 	RawError     string
 }
 
-
 func (e *ContextOverflowError) Error() string {
 	return fmt.Sprintf("context overflow: %d tokens exceed max %d", e.PromptTokens, e.MaxContext)
 }
-
 
 func IsContextOverflowError(err error) bool {
 	_, ok := err.(*ContextOverflowError)
 	if ok {
 		return true
 	}
-	
+
 	if err != nil {
 		errStr := strings.ToLower(err.Error())
 		return strings.Contains(errStr, "exceed") &&
@@ -34,7 +31,6 @@ func IsContextOverflowError(err error) bool {
 	return false
 }
 
-
 func ParseContextOverflowError(err error) *ContextOverflowError {
 	if err == nil {
 		return nil
@@ -42,7 +38,6 @@ func ParseContextOverflowError(err error) *ContextOverflowError {
 
 	errStr := err.Error()
 
-	
 	if !strings.Contains(errStr, "exceed") || !strings.Contains(errStr, "context") {
 		return nil
 	}
@@ -51,15 +46,12 @@ func ParseContextOverflowError(err error) *ContextOverflowError {
 		RawError: errStr,
 	}
 
-	
-	
 	if idx := strings.Index(errStr, "{"); idx >= 0 {
 		jsonPart := errStr[idx:]
 
-		
 		var apiError struct {
 			Error struct {
-				Code         interface{} `json:"code"` 
+				Code         interface{} `json:"code"`
 				Message      string      `json:"message"`
 				Type         string      `json:"type"`
 				PromptTokens int         `json:"n_prompt_tokens"`
@@ -77,11 +69,9 @@ func ParseContextOverflowError(err error) *ContextOverflowError {
 		}
 	}
 
-	
 	overflow.Message = errStr
 	return overflow
 }
-
 
 func ContextOverflowStats(err error) (promptTokens, maxContext int, isOverflow bool) {
 	overflow := ParseContextOverflowError(err)

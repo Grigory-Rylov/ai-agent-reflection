@@ -5,43 +5,38 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 )
 
-
 type ServerConfig struct {
-	Type     string            `json:"type"`              
-	Command  string            `json:"command,omitempty"` 
-	Args     []string          `json:"args,omitempty"`    
-	Env      []string          `json:"env,omitempty"`     
-	URL      string            `json:"url,omitempty"`     
-	Headers  map[string]string `json:"headers,omitempty"` 
-	Enabled  bool              `json:"enabled"`
-	Timeout  int               `json:"timeout,omitempty"` 
+	Type    string            `json:"type"`
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
+	Env     []string          `json:"env,omitempty"`
+	URL     string            `json:"url,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
+	Enabled bool              `json:"enabled"`
+	Timeout int               `json:"timeout,omitempty"`
 }
-
 
 type Settings struct {
-	InitTimeout   int `json:"initTimeout,omitempty"`   
-	ToolTimeout   int `json:"toolTimeout,omitempty"`   
-	MaxConcurrent int `json:"maxConcurrent,omitempty"` 
+	InitTimeout   int `json:"initTimeout,omitempty"`
+	ToolTimeout   int `json:"toolTimeout,omitempty"`
+	MaxConcurrent int `json:"maxConcurrent,omitempty"`
 }
-
 
 type Config struct {
 	Servers  map[string]ServerConfig `json:"mcpServers"`
 	Settings Settings                `json:"settings,omitempty"`
 }
 
-
 type MCPTool struct {
 	tool       mcp.Tool
 	serverName string
 	client     *client.Client
 }
-
 
 func NewMCPTool(tool mcp.Tool, serverName string, client *client.Client) *MCPTool {
 	return &MCPTool{
@@ -51,11 +46,9 @@ func NewMCPTool(tool mcp.Tool, serverName string, client *client.Client) *MCPToo
 	}
 }
 
-
 func (t *MCPTool) Name() string {
 	return t.serverName + "_" + t.tool.Name
 }
-
 
 func (t *MCPTool) Description() string {
 	desc := t.tool.Description
@@ -66,9 +59,8 @@ func (t *MCPTool) Description() string {
 	return fmt.Sprintf("%s [via MCP server: %s]", desc, t.serverName)
 }
 
-
 func (t *MCPTool) Schema() map[string]interface{} {
-	
+
 	data, err := t.tool.InputSchema.MarshalJSON()
 	if err != nil {
 		return map[string]interface{}{"type": "object", "additionalProperties": false}
@@ -86,9 +78,8 @@ func (t *MCPTool) Schema() map[string]interface{} {
 	return schema
 }
 
-
 func (t *MCPTool) Execute(ctx context.Context, inputs map[string]string) (tools.ToolResult, error) {
-	
+
 	args := make(map[string]interface{})
 	for k, v := range inputs {
 		args[k] = v
@@ -111,7 +102,6 @@ func (t *MCPTool) Execute(ctx context.Context, inputs map[string]string) (tools.
 	return tools.ToolResult{Success: true, Data: extractContent(result.Content)}, nil
 }
 
-
 func extractContent(content []mcp.Content) string {
 	var texts []string
 	for _, c := range content {
@@ -122,13 +112,11 @@ func extractContent(content []mcp.Content) string {
 	return fmt.Sprintf("%s", texts)
 }
 
-
 type Logger interface {
 	InfoLogf(format string, args ...interface{})
 	WarnLogf(format string, args ...interface{})
 	DebugLogf(format string, args ...interface{})
 }
-
 
 type Manager struct {
 	clients  map[string]*client.Client
@@ -137,7 +125,6 @@ type Manager struct {
 	logger   Logger
 }
 
-
 func NewManager(registry *tools.Registry, logger Logger) *Manager {
 	return &Manager{
 		clients:  make(map[string]*client.Client),
@@ -145,7 +132,6 @@ func NewManager(registry *tools.Registry, logger Logger) *Manager {
 		logger:   logger,
 	}
 }
-
 
 func (m *Manager) LoadConfig(ctx context.Context, config *Config) error {
 	m.config = config
@@ -162,13 +148,12 @@ func (m *Manager) LoadConfig(ctx context.Context, config *Config) error {
 			if m.logger != nil {
 				m.logger.WarnLogf("[MCP] Failed to initialize server '%s': %v", name, err)
 			}
-			
+
 		}
 	}
 
 	return nil
 }
-
 
 func (m *Manager) AddServer(ctx context.Context, name string, config ServerConfig) error {
 	var c *client.Client
@@ -187,7 +172,6 @@ func (m *Manager) AddServer(ctx context.Context, name string, config ServerConfi
 		return fmt.Errorf("create client: %w", err)
 	}
 
-	
 	initRequest := mcp.InitializeRequest{}
 	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
 	initRequest.Params.ClientInfo = mcp.Implementation{
@@ -202,7 +186,6 @@ func (m *Manager) AddServer(ctx context.Context, name string, config ServerConfi
 
 	m.clients[name] = c
 
-	
 	if err := m.registerTools(name, c); err != nil {
 		if m.logger != nil {
 			m.logger.WarnLogf("[MCP] Failed to register tools for '%s': %v", name, err)
@@ -215,7 +198,6 @@ func (m *Manager) AddServer(ctx context.Context, name string, config ServerConfi
 
 	return nil
 }
-
 
 func (m *Manager) registerTools(serverName string, c *client.Client) error {
 	result, err := c.ListTools(context.Background(), mcp.ListToolsRequest{})
@@ -235,7 +217,6 @@ func (m *Manager) registerTools(serverName string, c *client.Client) error {
 	return nil
 }
 
-
 func (m *Manager) Close() error {
 	for name, c := range m.clients {
 		if err := c.Close(); err != nil {
@@ -247,7 +228,6 @@ func (m *Manager) Close() error {
 	m.clients = make(map[string]*client.Client)
 	return nil
 }
-
 
 func (m *Manager) Stats() string {
 	return fmt.Sprintf("MCP Servers: %d", len(m.clients))

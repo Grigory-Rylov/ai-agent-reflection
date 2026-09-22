@@ -13,14 +13,13 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-
 type mockTaskTool struct {
 	workerResult string
 	callCount    *atomic.Int32
 }
 
 func (t *mockTaskTool) Name() string        { return "task" }
-func (t *mockTaskTool) Description() string  { return "Launch a sub-agent to handle a task" }
+func (t *mockTaskTool) Description() string { return "Launch a sub-agent to handle a task" }
 
 func (t *mockTaskTool) Schema() map[string]interface{} {
 	return map[string]interface{}{
@@ -43,10 +42,9 @@ func (t *mockTaskTool) Execute(ctx context.Context, inputs map[string]string) (t
 	}, nil
 }
 
-
 type scriptedResponse struct {
 	content      string
-	toolCalls    string 
+	toolCalls    string
 	finishReason string
 }
 
@@ -57,7 +55,7 @@ func newScriptedLLMServer(responses []scriptedResponse) (*httptest.Server, *atom
 		w.Header().Set("Content-Type", "text/event-stream")
 
 		if n >= len(responses) {
-			
+
 			fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"fallback response"},"finish_reason":"stop"}]}`+"\n\n")
 			fmt.Fprint(w, "data: [DONE]\n\n")
 			return
@@ -79,24 +77,21 @@ func newScriptedLLMServer(responses []scriptedResponse) (*httptest.Server, *atom
 	return server, &callCount
 }
 
-
 func TestPrimaryAgentContextSharing(t *testing.T) {
-	
-	
-	
+
 	responses := []scriptedResponse{
 		{
-			
+
 			toolCalls:    `[{"index":0,"id":"call_1","type":"function","function":{"name":"task","arguments":"{\"subagent_type\":\"worker\",\"prompt\":\"создай структуру проекта\"}"}}]`,
 			finishReason: "tool_calls",
 		},
 		{
-			
+
 			content:      "Отлично! Worker создал структуру проекта. Готов ответить на дополнительные вопросы.",
 			finishReason: "stop",
 		},
 		{
-			
+
 			content:      "Исходя из нашей предыдущей работы над структурой проекта, могу рассказать подробнее: проект состоит из трёх основных пакетов.",
 			finishReason: "stop",
 		},
@@ -118,7 +113,7 @@ func TestPrimaryAgentContextSharing(t *testing.T) {
 	config.Model = "test-model"
 	config.MaxTokens = 4096
 	config.EnableTools = true
-	
+
 	config.SessionConfig = sessionConfigWithPrompt("You are a Lead Agent. You can delegate tasks to worker via the task tool.", nil)
 
 	a := NewAgent(config)
@@ -128,12 +123,6 @@ func TestPrimaryAgentContextSharing(t *testing.T) {
 
 	peerID := int64(77777)
 
-	
-	
-	
-	
-	
-	
 	sess := a.GetSession(peerID)
 	originalPrompt := sess.GetSystemPrompt()
 	sess.UpdateSystemPrompt(originalPrompt + "\n\nYou are a Lead Agent. Coordinate the work and delegate to worker when needed.")
@@ -150,19 +139,14 @@ func TestPrimaryAgentContextSharing(t *testing.T) {
 	}
 	t.Logf("Step 1 — Lead response: %s", leadResponse)
 
-	
 	if taskCallCount.Load() != 1 {
 		t.Errorf("expected task tool to be called once, got %d", taskCallCount.Load())
 	}
 
-	
 	if llmCallCount.Load() != 2 {
 		t.Errorf("expected 2 LLM calls (tool_call + final), got %d", llmCallCount.Load())
 	}
 
-	
-	
-	
 	history := sess.GetHistory()
 	foundLeadTask := false
 	foundToolResult := false
@@ -181,10 +165,6 @@ func TestPrimaryAgentContextSharing(t *testing.T) {
 		t.Error("Step 2: session should contain worker tool result in history")
 	}
 
-	
-	
-	
-	
 	sess.UpdateSystemPrompt(originalPrompt)
 
 	plainMessage := "расскажи подробнее про структуру"
@@ -197,15 +177,10 @@ func TestPrimaryAgentContextSharing(t *testing.T) {
 	}
 	t.Logf("Step 3 — Plain message response: %s", plainResponse)
 
-	
 	if llmCallCount.Load() != 3 {
 		t.Errorf("expected 3 LLM calls total, got %d", llmCallCount.Load())
 	}
 
-	
-	
-	
-	
 	history = sess.GetHistory()
 	foundPlainMessage := false
 	foundLeadContext := false
@@ -213,7 +188,7 @@ func TestPrimaryAgentContextSharing(t *testing.T) {
 		if msg.Role == session.UserRole && strings.Contains(msg.Content, "расскажи подробнее") {
 			foundPlainMessage = true
 		}
-		
+
 		if msg.Role == session.AssistantRole && strings.Contains(msg.Content, "предыдущей") {
 			foundLeadContext = true
 		}
@@ -225,7 +200,6 @@ func TestPrimaryAgentContextSharing(t *testing.T) {
 		t.Log("Step 4: plain response did not explicitly reference previous context (may be model-dependent)")
 	}
 
-	
 	userMsgCount := 0
 	for _, msg := range history {
 		if msg.Role == session.UserRole {
@@ -240,23 +214,21 @@ func TestPrimaryAgentContextSharing(t *testing.T) {
 	t.Logf("LLM calls: %d, Task tool calls: %d", llmCallCount.Load(), taskCallCount.Load())
 }
 
-
 func sessionConfigWithPrompt(systemPrompt string, _ *string) session.Config {
 	cfg := session.DefaultConfig()
 	cfg.SystemPrompt = systemPrompt
 	return cfg
 }
 
-
 func TestSessionIsolation_NonPrimaryAgent(t *testing.T) {
 	responses := []scriptedResponse{
 		{
-			
+
 			content:      "I'm the main agent. How can I help?",
 			finishReason: "stop",
 		},
 		{
-			
+
 			content:      "I don't know about any worker task — I have my own context.",
 			finishReason: "stop",
 		},
@@ -274,15 +246,12 @@ func TestSessionIsolation_NonPrimaryAgent(t *testing.T) {
 	ctx := context.Background()
 	mainPeerID := int64(11111)
 
-	
 	resp1, err := mainAgent.ProcessMessage(ctx, "Привет!", mainPeerID)
 	if err != nil {
 		t.Fatalf("main agent failed: %v", err)
 	}
 	t.Logf("Main agent response 1: %s", resp1)
 
-	
-	
 	workerConfig := DefaultConfig()
 	workerConfig.LlamaServerURL = server.URL
 	workerConfig.Model = "test-model"
@@ -299,7 +268,6 @@ func TestSessionIsolation_NonPrimaryAgent(t *testing.T) {
 	}
 	t.Logf("Worker response: %s", workerResp)
 
-	
 	workerSess := workerAgent.GetSession(workerPeerID)
 	workerHistory := workerSess.GetHistory()
 	foundWorkerTask := false
@@ -312,14 +280,12 @@ func TestSessionIsolation_NonPrimaryAgent(t *testing.T) {
 		t.Error("worker session should contain worker task")
 	}
 
-	
 	mainResp2, err := mainAgent.ProcessMessage(ctx, "что ты знаешь о задаче worker-а?", mainPeerID)
 	if err != nil {
 		t.Fatalf("main agent follow-up failed: %v", err)
 	}
 	t.Logf("Main agent response 2: %s", mainResp2)
 
-	
 	mainSess := mainAgent.GetSession(mainPeerID)
 	mainHistory := mainSess.GetHistory()
 	for _, msg := range mainHistory {
@@ -328,6 +294,5 @@ func TestSessionIsolation_NonPrimaryAgent(t *testing.T) {
 		}
 	}
 
-	
 	t.Logf("LLM calls total: %d", llmCallCount.Load())
 }

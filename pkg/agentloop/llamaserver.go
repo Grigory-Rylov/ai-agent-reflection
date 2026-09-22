@@ -10,14 +10,12 @@ import (
 	"time"
 )
 
-
 type TestLlamaServerResult struct {
 	Model        string
 	ResponseTime time.Duration
 	TokensPerSec float64
 	Error        error
 }
-
 
 func TestLlamaServer(ctx context.Context, serverURL, model string) TestLlamaServerResult {
 	reqBody := map[string]interface{}{

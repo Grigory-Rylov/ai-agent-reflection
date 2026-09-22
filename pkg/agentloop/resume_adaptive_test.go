@@ -105,9 +105,9 @@ func serializeSessionForTest(t *testing.T, msgs []sess.Message) string {
 
 func TestSanitizeRestoredMessages(t *testing.T) {
 	userHello := sess.Message{Role: sess.UserRole, Content: "hello"}
-	pairA := assistantWithCalls(mkCall("ca1", "file_read", `{"path":"/a"}`), mkCall("ca2", "file_read", `{"path":"/a2"}`))
-	pairB := assistantWithCalls(mkCall("cb1", "file_read", `{"path":"/b"}`))
-	pairC := assistantWithCalls(mkCall("cc1", "file_read", `{"path":"/c"}`))
+	pairA := assistantWithCalls(mkCall("ca1", "read", `{"path":"/a"}`), mkCall("ca2", "read", `{"path":"/a2"}`))
+	pairB := assistantWithCalls(mkCall("cb1", "read", `{"path":"/b"}`))
+	pairC := assistantWithCalls(mkCall("cc1", "read", `{"path":"/c"}`))
 
 	tests := []struct {
 		name      string
@@ -116,27 +116,27 @@ func TestSanitizeRestoredMessages(t *testing.T) {
 	}{
 		{
 			name:      "drops trailing assistant with unmatched tool calls",
-			input:     []sess.Message{userHello, pairA, toolResultMsg(pairA.ToolCalls[0].ID, "file_read"), pairB},
+			input:     []sess.Message{userHello, pairA, toolResultMsg(pairA.ToolCalls[0].ID, "read"), pairB},
 			wantRoles: []sess.Role{sess.UserRole, sess.AssistantRole, sess.ToolRole},
 		},
 		{
 			name:      "drops several stacked dangling assistant tool-call messages",
-			input:     []sess.Message{userHello, pairA, toolResultMsg(pairA.ToolCalls[0].ID, "file_read"), pairB, pairC},
+			input:     []sess.Message{userHello, pairA, toolResultMsg(pairA.ToolCalls[0].ID, "read"), pairB, pairC},
 			wantRoles: []sess.Role{sess.UserRole, sess.AssistantRole, sess.ToolRole},
 		},
 		{
 			name:      "keeps matched tool result pairs intact",
-			input:     []sess.Message{userHello, pairA, toolResultMsg(pairA.ToolCalls[0].ID, "file_read"), pairB, toolResultMsg(pairB.ToolCalls[0].ID, "file_read")},
+			input:     []sess.Message{userHello, pairA, toolResultMsg(pairA.ToolCalls[0].ID, "read"), pairB, toolResultMsg(pairB.ToolCalls[0].ID, "read")},
 			wantRoles: []sess.Role{sess.UserRole, sess.AssistantRole, sess.ToolRole, sess.AssistantRole, sess.ToolRole},
 		},
 		{
 			name:      "plain assistant tail untouched",
-			input:     []sess.Message{userHello, pairA, toolResultMsg(pairA.ToolCalls[0].ID, "file_read"), {Role: sess.AssistantRole, Content: "final answer"}},
+			input:     []sess.Message{userHello, pairA, toolResultMsg(pairA.ToolCalls[0].ID, "read"), {Role: sess.AssistantRole, Content: "final answer"}},
 			wantRoles: []sess.Role{sess.UserRole, sess.AssistantRole, sess.ToolRole, sess.AssistantRole},
 		},
 		{
 			name:      "multi-call assistant kept when all results present",
-			input:     []sess.Message{userHello, pairA, toolResultMsg(pairA.ToolCalls[0].ID, "file_read"), toolResultMsg(pairA.ToolCalls[1].ID, "file_read")},
+			input:     []sess.Message{userHello, pairA, toolResultMsg(pairA.ToolCalls[0].ID, "read"), toolResultMsg(pairA.ToolCalls[1].ID, "read")},
 			wantRoles: []sess.Role{sess.UserRole, sess.AssistantRole, sess.ToolRole, sess.ToolRole},
 		},
 		{
@@ -172,12 +172,12 @@ func rolesOf(msgs []sess.Message) []sess.Role {
 func TestRestoreSessionMessages_TrimsCrashedTail(t *testing.T) {
 	o := makeOrcWithPromptFiles(t, "http://127.0.0.1:1", nil, nil)
 
-	dangling := assistantWithCalls(mkCall("tc-crash", "file_read", `{"path":"/crashed"}`))
+	dangling := assistantWithCalls(mkCall("tc-crash", "read", `{"path":"/crashed"}`))
 	payload := serializeSessionForTest(t, []sess.Message{
 		{Role: sess.SystemRole, Content: "You are a helpful assistant."},
 		{Role: sess.UserRole, Content: "do X"},
-		assistantWithCalls(mkCall("tc-a", "file_read", `{"path":"/a"}`)),
-		toolResultMsg("tc-a", "file_read"),
+		assistantWithCalls(mkCall("tc-a", "read", `{"path":"/a"}`)),
+		toolResultMsg("tc-a", "read"),
 		dangling,
 	})
 
@@ -242,9 +242,9 @@ func TestPickResumeContinuationPrompt(t *testing.T) {
 	}{
 		{name: "tool-role tail prefers tool-results wording", lastRole: sess.ToolRole, lastPrompt: "build it", wantContains: "review their results"},
 		{name: "assistant tail falls back to last prompt", lastRole: sess.AssistantRole, lastPrompt: "build it", wantContains: "Continue your task: build it"},
-		{name: "assistant tail without prompt uses default", lastRole: sess.AssistantRole, lastToolCall: "file_read", wantContains: defaultText},
-		{name: "empty history uses default", lastRole: "", lastToolCall: "file_read", lastPrompt: "anything", wantContains: defaultText},
-		{name: "child result wins over everything", lastRole: sess.ToolRole, lastToolCall: "file_read", lastPrompt: "build it", childResult: "CHILD-DONE", wantContains: "CHILD-DONE"},
+		{name: "assistant tail without prompt uses default", lastRole: sess.AssistantRole, lastToolCall: "read", wantContains: defaultText},
+		{name: "empty history uses default", lastRole: "", lastToolCall: "read", lastPrompt: "anything", wantContains: defaultText},
+		{name: "child result wins over everything", lastRole: sess.ToolRole, lastToolCall: "read", lastPrompt: "build it", childResult: "CHILD-DONE", wantContains: "CHILD-DONE"},
 		{name: "user-role tail falls back to last prompt", lastRole: sess.UserRole, lastPrompt: "investigate", wantContains: "Continue your task: investigate"},
 	}
 
@@ -288,12 +288,12 @@ func TestRunResumedAgent_ToolTailGetsAdaptivePrompt(t *testing.T) {
 	dbStore := newSubAgentToolTestStore(t)
 	orchestrator := makeOrcWithPromptFiles(t, server.url, dbStore, vkClient)
 
-	crashedTail := assistantWithCalls(mkCall("tc-crash", "file_read", `{"path":"/never-finished"}`))
+	crashedTail := assistantWithCalls(mkCall("tc-crash", "read", `{"path":"/never-finished"}`))
 	msgsJSON := serializeSessionForTest(t, []sess.Message{
 		{Role: sess.SystemRole, Content: "You are a helpful assistant."},
 		{Role: sess.UserRole, Content: "analyze the code"},
-		assistantWithCalls(mkCall("tc-a", "file_read", `{"path":"/done"}`)),
-		toolResultMsg("tc-a", "file_read"),
+		assistantWithCalls(mkCall("tc-a", "read", `{"path":"/done"}`)),
+		toolResultMsg("tc-a", "read"),
 		crashedTail,
 	})
 	seedCrashedWorkerSession(t, dbStore, 4242, "worker-resume-adapt", "analyze the code", msgsJSON)

@@ -34,7 +34,7 @@ func TestConfigUnmarshalWithAgents(t *testing.T) {
 				"review": true,
 				"prompt": "agents/reviewer.md",
 				"permission": {
-					"file_write": "deny",
+					"write": "deny",
 					"edit": "deny"
 				}
 			},
@@ -99,14 +99,14 @@ func TestConfigUnmarshalWithAgents(t *testing.T) {
 		if a.Permission == nil {
 			t.Fatal("reviewer should have permission")
 		}
-		if a.Permission.GetAction("file_write") != "deny" {
-			t.Errorf("file_write: got %q, want deny", a.Permission.GetAction("file_write"))
+		if a.Permission.GetAction("write") != "deny" {
+			t.Errorf("write: got %q, want deny", a.Permission.GetAction("write"))
 		}
 		if a.Permission.GetAction("edit") != "deny" {
 			t.Errorf("edit: got %q, want deny", a.Permission.GetAction("edit"))
 		}
-		if a.Permission.GetAction("file_read") != "allow" {
-			t.Errorf("file_read: got %q, want allow", a.Permission.GetAction("file_read"))
+		if a.Permission.GetAction("read") != "allow" {
+			t.Errorf("read: got %q, want allow", a.Permission.GetAction("read"))
 		}
 	})
 
@@ -150,7 +150,7 @@ func TestLoadConfigFileWithAgents(t *testing.T) {
 				"review": true,
 				"prompt": "agents/reviewer.md",
 				"permission": {
-					"file_write": "deny",
+					"write": "deny",
 					"edit": "deny",
 					"apply_patch": "deny"
 				}
@@ -177,8 +177,8 @@ func TestLoadConfigFileWithAgents(t *testing.T) {
 	}
 	
 	reviewer := cfg.Agents["reviewer"]
-	if reviewer.Permission.GetAction("file_write") != "deny" {
-		t.Errorf("file_write: got %q, want deny", reviewer.Permission.GetAction("file_write"))
+	if reviewer.Permission.GetAction("write") != "deny" {
+		t.Errorf("write: got %q, want deny", reviewer.Permission.GetAction("write"))
 	}
 }
 
@@ -224,7 +224,7 @@ func TestInitAgentManagerWithPrompts(t *testing.T) {
 			Review:      true,
 			Prompt:      "agents/reviewer.md",
 			Permission: agentpolicy.NewPermissionFromConfig(map[string]string{
-				"file_write": "deny",
+				"write": "deny",
 				"edit":       "deny",
 			}),
 		},
@@ -270,14 +270,14 @@ func TestInitAgentManagerWithPrompts(t *testing.T) {
 		if !info.Review {
 			t.Error("reviewer should be review")
 		}
-		if info.Permission.GetAction("file_write") != "deny" {
-			t.Errorf("file_write: got %q, want deny", info.Permission.GetAction("file_write"))
+		if info.Permission.GetAction("write") != "deny" {
+			t.Errorf("write: got %q, want deny", info.Permission.GetAction("write"))
 		}
 		if info.Permission.GetAction("edit") != "deny" {
 			t.Errorf("edit: got %q, want deny", info.Permission.GetAction("edit"))
 		}
-		if info.Permission.GetAction("file_read") != "allow" {
-			t.Errorf("file_read: got %q, want allow", info.Permission.GetAction("file_read"))
+		if info.Permission.GetAction("read") != "allow" {
+			t.Errorf("read: got %q, want allow", info.Permission.GetAction("read"))
 		}
 	})
 }

@@ -14,7 +14,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util/stringutil"
 )
 
-
 type mockVKClient struct {
 	mu             sync.Mutex
 	messages       []string
@@ -53,7 +52,6 @@ func (m *mockVKClient) GetThinking() []string {
 	return m.thinking
 }
 
-
 type mockToolRegistry struct {
 	mu     sync.Mutex
 	tools  map[string]tools.Tool
@@ -82,7 +80,6 @@ func (m *mockToolRegistry) Register(name string, tool tools.Tool) {
 	defer m.mu.Unlock()
 	m.tools[name] = tool
 }
-
 
 func testHolder() *modelsconfig.Holder {
 	return modelsconfig.NewTestHolder(&modelsconfig.ModelsConfig{
@@ -118,9 +115,9 @@ func TestNewAgentLoopEmptyConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	
+
 	if loop != nil {
-		
+
 	}
 }
 
@@ -160,7 +157,7 @@ func TestAgentLoopSyncVisionTool(t *testing.T) {
 	if !reg.IsRegistered("image2text") {
 		t.Error("expected image2text to be registered after switching to vision model")
 	}
-	if !reg.IsRegistered("file_read") {
+	if !reg.IsRegistered("read") {
 		t.Error("expected existing tools to remain registered")
 	}
 
@@ -173,7 +170,7 @@ func TestAgentLoopSyncVisionTool(t *testing.T) {
 	if reg.IsRegistered("image2text") {
 		t.Error("expected image2text to be unregistered after switching to non-vision model")
 	}
-	if !reg.IsRegistered("file_read") {
+	if !reg.IsRegistered("read") {
 		t.Error("expected non-vision tools to remain registered")
 	}
 }
@@ -189,13 +186,10 @@ func TestAgentLoopGetSession(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	
 	if loop.GetSession(123) != nil {
 		t.Error("expected nil session before any operation")
 	}
 
-	
-	
 }
 
 func TestAgentLoopResetSession(t *testing.T) {
@@ -209,7 +203,6 @@ func TestAgentLoopResetSession(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	
 	loop.ResetSession(123)
 }
 
@@ -261,7 +254,6 @@ func TestDefaultLogger(t *testing.T) {
 		t.Fatal("expected non-nil logger")
 	}
 
-	
 	l.DebugLog("test")
 	l.InfoLog("test")
 	l.WarnLog("test")
@@ -273,24 +265,23 @@ func TestDefaultLogger(t *testing.T) {
 }
 
 func TestTruncate(t *testing.T) {
-	
+
 	short := "hello"
 	long := "this is a very long string that should be truncated"
 
 	if stringutil.Truncate(short, 100, "...") != short {
 		t.Error("short string should not be truncated")
 	}
-	
+
 	if len(stringutil.Truncate(long, 10, "...")) != 13 {
 		t.Errorf("expected length 13, got %d", len(stringutil.Truncate(long, 10, "...")))
 	}
-	
+
 	truncated := stringutil.Truncate(long, 10, "...")
 	if truncated[10] != '.' || truncated[11] != '.' || truncated[12] != '.' {
 		t.Error("truncated string should end with ...")
 	}
 }
-
 
 func TestSimilarityExactMatch(t *testing.T) {
 	sim := similarity("Hello world", "Hello world")
@@ -304,7 +295,7 @@ func TestSimilarityDifferentStrings(t *testing.T) {
 	if sim < 0.0 || sim > 1.0 {
 		t.Errorf("similarity should be between 0.0 and 1.0, got %f", sim)
 	}
-	
+
 	if sim <= 0.0 {
 		t.Errorf("expected some similarity due to common word 'world', got %f", sim)
 	}
@@ -330,7 +321,6 @@ func TestSimilarityCaseInsensitive(t *testing.T) {
 		t.Errorf("expected similarity 1.0 for case-insensitive match, got %f", sim)
 	}
 }
-
 
 func TestGetStringField(t *testing.T) {
 	m := map[string]interface{}{
@@ -377,7 +367,7 @@ func TestProcessToolCallsNoRegistry(t *testing.T) {
 	loop, _ := NewAgentLoop(config, vk, reg)
 
 	toolCalls := []map[string]interface{}{
-		{"name": "file_read", "arguments": `{"path": "/test"}`},
+		{"name": "read", "arguments": `{"path": "/test"}`},
 	}
 
 	results, err := loop.(*agentLoop).processToolCalls(context.Background(), toolCalls, nil, 123)
@@ -389,7 +379,6 @@ func TestProcessToolCallsNoRegistry(t *testing.T) {
 	}
 }
 
-
 func TestSendThinkingDisabled(t *testing.T) {
 	vk := &mockVKClient{}
 	config := DefaultLoopConfig()
@@ -398,7 +387,6 @@ func TestSendThinkingDisabled(t *testing.T) {
 
 	loop, _ := NewAgentLoop(config, vk, nil)
 
-	
 	loop.(*agentLoop).sendThinking(123, "Thinking content")
 }
 
@@ -411,7 +399,6 @@ func TestSendThinkingNoThinkingPeerID(t *testing.T) {
 
 	loop, _ := NewAgentLoop(config, vk, nil)
 
-	
 	loop.(*agentLoop).sendThinking(123, "Thinking content")
 }
 
@@ -424,20 +411,17 @@ func TestSendThinkingWithVK(t *testing.T) {
 
 	loop, _ := NewAgentLoop(config, vk, nil)
 
-	
-	
 	loop.(*agentLoop).sendThinking(123, "Reading file...")
 
 	thinking := vk.GetThinking()
 	if len(thinking) != 1 {
 		t.Errorf("expected 1 thinking message, got %d", len(thinking))
 	}
-	
+
 	if thinking[0] == "" {
 		t.Error("expected non-empty thinking message")
 	}
 }
-
 
 func TestBackgroundNotificationGoesToModel(t *testing.T) {
 	vk := &mockVKClient{}
@@ -523,7 +507,6 @@ func TestEventDispatcherHandlerOrder(t *testing.T) {
 
 	dispatcher.Emit(NewEvent(EventPromptReceived, 123))
 
-	
 	if len(order) != 2 || order[0] != 1 || order[1] != 2 {
 		t.Errorf("expected handlers in order [1, 2], got %v", order)
 	}

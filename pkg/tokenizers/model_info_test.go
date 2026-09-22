@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-
 func createMockServer(response string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/models" {
@@ -29,7 +28,6 @@ func createMockServer(response string) *httptest.Server {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 }
-
 
 func TestServerInfoClient_GetModelContextLength(t *testing.T) {
 	t.Run("gets --ctx-size from /v1/models status args", func(t *testing.T) {
@@ -131,7 +129,7 @@ func TestServerInfoClient_GetModelContextLength(t *testing.T) {
 	})
 
 	t.Run("handles empty meta field - falls back to /props", func(t *testing.T) {
-		
+
 		response := `{
 			"object": "list",
 			"data": [{
@@ -149,14 +147,13 @@ func TestServerInfoClient_GetModelContextLength(t *testing.T) {
 		client := NewServerInfoClient(server.URL)
 		ctxLen := client.GetModelContextLength("test-model")
 
-		
 		if ctxLen != 8192 {
 			t.Errorf("Expected fallback to /props (8192), got %d", ctxLen)
 		}
 	})
 
 	t.Run("handles missing data array - falls back to /props", func(t *testing.T) {
-		
+
 		response := `{
 			"object": "list",
 			"data": []
@@ -168,7 +165,6 @@ func TestServerInfoClient_GetModelContextLength(t *testing.T) {
 		client := NewServerInfoClient(server.URL)
 		ctxLen := client.GetModelContextLength("test-model")
 
-		
 		if ctxLen != 8192 {
 			t.Errorf("Expected fallback to /props (8192), got %d", ctxLen)
 		}
@@ -244,7 +240,6 @@ func TestServerInfoClient_GetModelInfo(t *testing.T) {
 	})
 }
 
-
 func TestLlamaServerTokenizer_ContextDetection(t *testing.T) {
 	t.Run("resolves to actual context when available", func(t *testing.T) {
 		response := `{
@@ -273,13 +268,11 @@ func TestLlamaServerTokenizer_ContextDetection(t *testing.T) {
 			t.Errorf("Expected actual context 131072, got %d", actualCtx)
 		}
 
-		
 		maxCtx := tokenizer.MaxContextLength()
 		if maxCtx != 131072 {
 			t.Errorf("Expected MaxContextLength 131072, got %d", maxCtx)
 		}
 
-		
 		resolved := tokenizer.ResolveMaxTokens()
 		if resolved != 131072 {
 			t.Errorf("Expected ResolveMaxTokens 131072, got %d", resolved)
@@ -294,13 +287,11 @@ func TestLlamaServerTokenizer_ContextDetection(t *testing.T) {
 			t.Error("Expected error when server unavailable, got nil")
 		}
 
-		
 		maxCtx := tokenizer.MaxContextLength()
 		if maxCtx != 8192 {
 			t.Errorf("Expected MaxContextLength 8192 (fallback), got %d", maxCtx)
 		}
 
-		
 		resolved := tokenizer.ResolveMaxTokens()
 		if resolved != 8192 {
 			t.Errorf("Expected ResolveMaxTokens 8192 (fallback), got %d", resolved)
@@ -328,11 +319,9 @@ func TestLlamaServerTokenizer_ContextDetection(t *testing.T) {
 		tokenizer := NewLlamaServerTokenizer(server.URL, "test", 4096)
 		tokenizer.InitializeContextLimit()
 
-		
 		tokenizer.GetActualContextLimit()
 		firstCallCount := callCount
 
-		
 		tokenizer.GetActualContextLimit()
 		secondCallCount := callCount
 
@@ -346,7 +335,7 @@ func TestLlamaServerTokenizer_ContextDetection(t *testing.T) {
 	})
 
 	t.Run("distinguishes between configured and actual context", func(t *testing.T) {
-		
+
 		response := `{
 			"object": "list",
 			"data": [{
@@ -366,7 +355,6 @@ func TestLlamaServerTokenizer_ContextDetection(t *testing.T) {
 
 		actualCtx := tokenizer.GetActualContextLimit()
 
-		
 		if actualCtx == configuredMax {
 			t.Errorf("Expected actual context (%d) to differ from configured (%d)",
 				actualCtx, configuredMax)
@@ -376,14 +364,12 @@ func TestLlamaServerTokenizer_ContextDetection(t *testing.T) {
 			t.Errorf("Expected actual context 81920, got %d", actualCtx)
 		}
 
-		
 		maxCtx := tokenizer.MaxContextLength()
 		if maxCtx != 81920 {
 			t.Errorf("Expected MaxContextLength 81920 (actual), got %d", maxCtx)
 		}
 	})
 }
-
 
 func TestScenarios_ContextLimitMismatch(t *testing.T) {
 	scenarios := []struct {
@@ -447,7 +433,6 @@ func TestScenarios_ContextLimitMismatch(t *testing.T) {
 		})
 	}
 }
-
 
 func TestCtxSizeFromArgs(t *testing.T) {
 	t.Run("parses --ctx-size", func(t *testing.T) {
@@ -514,7 +499,7 @@ func TestServerInfoClient_DebugMode(t *testing.T) {
 		defer server.Close()
 
 		client := NewServerInfoClient(server.URL)
-		client.SetDebug(true) 
+		client.SetDebug(true)
 
 		ctxLen := client.GetModelContextLength("test-model")
 		if ctxLen != 4096 {
@@ -522,7 +507,6 @@ func TestServerInfoClient_DebugMode(t *testing.T) {
 		}
 	})
 }
-
 
 // Fixture captured from a real llama-server router (multi-instance mode, b10669).
 // Quirks that previously broke parsing:

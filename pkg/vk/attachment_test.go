@@ -27,13 +27,13 @@ func mustLogger(t *testing.T) *logger.Logger {
 
 func TestVKAttachmentUnmarshalJSON(t *testing.T) {
 	tests := []struct {
-		name       string
-		json       string
-		wantType   string
-		wantKeys   []string
-		wantPhoto  map[string]interface{}
-		wantDoc    map[string]interface{}
-		wantErr    bool
+		name      string
+		json      string
+		wantType  string
+		wantKeys  []string
+		wantPhoto map[string]interface{}
+		wantDoc   map[string]interface{}
+		wantErr   bool
 	}{
 		{
 			name: "photo attachment",
@@ -166,7 +166,6 @@ func TestVKAttachmentToRaw(t *testing.T) {
 				}
 			}
 
-			
 			data, err := json.Marshal(raw)
 			if err != nil {
 				t.Fatalf("marshal error: %v", err)
@@ -234,7 +233,6 @@ func TestDownloadAttachmentsAbsolutePath(t *testing.T) {
 	}
 }
 
-
 func TestBuildFullTextLongPollFallback(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("photo-bytes"))
@@ -252,7 +250,7 @@ func TestBuildFullTextLongPollFallback(t *testing.T) {
 		"type": "photo",
 		"photo": {
 			"id": 555,
-			"sizes": [{"type": "w", "url": "` + srv.URL + `/photo.jpg"}]
+			"sizes": [{"type": "w", "url": "`+srv.URL+`/photo.jpg"}]
 		}
 	}`)
 
@@ -260,8 +258,6 @@ func TestBuildFullTextLongPollFallback(t *testing.T) {
 	h := NewBotHandler(nil, newMockAgentLoop(), mustLogger(t))
 	h.attachmentsDir = dir
 
-	
-	
 	msg := &VKMessage{ID: 0, PeerID: 2000000001, Text: "что на фото", Attachments: []VKAttachment{att}}
 	out := h.buildFullText(msg, nil, nil)
 
@@ -271,12 +267,11 @@ func TestBuildFullTextLongPollFallback(t *testing.T) {
 	if !strings.Contains(out, "saved to:") {
 		t.Fatalf("prompt should contain downloaded file path, got: %s", out)
 	}
-	
+
 	if !strings.Contains(out, dir) {
 		t.Errorf("prompt should contain path under %s, got: %s", dir, out)
 	}
 }
-
 
 func TestBuildFullTextNoAttachmentsWithoutFullMsg(t *testing.T) {
 	h := NewBotHandler(nil, newMockAgentLoop(), mustLogger(t))
@@ -325,9 +320,9 @@ func TestExtractVideoURL(t *testing.T) {
 		{
 			name: "playUrl fallback when no files",
 			attData: map[string]interface{}{
-				"id":        float64(300),
-				"playUrl":   "http://example.com/play.mp4",
-				"title":     "fallback",
+				"id":      float64(300),
+				"playUrl": "http://example.com/play.mp4",
+				"title":   "fallback",
 			},
 			wantOK:     true,
 			wantExt:    ".mp4",
@@ -417,7 +412,6 @@ func TestDownloadAttachmentsPartialOnFailure(t *testing.T) {
 	}
 }
 
-
 func newVideosGetStub(t *testing.T, body string) (*BotClient, *httptest.Server) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -428,7 +422,6 @@ func newVideosGetStub(t *testing.T, body string) (*BotClient, *httptest.Server) 
 	client.baseURL = srv.URL + "/method/"
 	return client, srv
 }
-
 
 func TestExtractVideoURLOwnerOnlyFallsBackToAPI(t *testing.T) {
 	body := `{"response":[
@@ -459,7 +452,6 @@ func TestExtractVideoURLOwnerOnlyFallsBackToAPI(t *testing.T) {
 	}
 }
 
-
 func TestExtractVideoURLNilClientGracefulFalse(t *testing.T) {
 	attData := map[string]interface{}{
 		"id":       float64(400),
@@ -471,7 +463,6 @@ func TestExtractVideoURLNilClientGracefulFalse(t *testing.T) {
 		t.Error("expected ok=false when no inline url and no client")
 	}
 }
-
 
 func TestGetBestVideoURLShapes(t *testing.T) {
 	tests := []struct {
@@ -529,8 +520,8 @@ func TestGetBestVideoURLShapes(t *testing.T) {
 			want: "",
 		},
 		{
-			name: "api error propagates",
-			body: `{"error":{"error_code":15,"error_message":"Access denied"}}`,
+			name:    "api error propagates",
+			body:    `{"error":{"error_code":15,"error_message":"Access denied"}}`,
 			wantErr: true,
 		},
 	}

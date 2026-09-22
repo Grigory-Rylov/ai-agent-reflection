@@ -24,7 +24,6 @@ func (m *mockPermissionChecker) Evaluate(permission, pattern string) string {
 
 func (m *mockPermissionChecker) Approve(permission, pattern string) {}
 
-
 type mockToolPermissionChecker struct {
 	decisions map[string]string
 }
@@ -54,7 +53,7 @@ func TestCheckPermissionAsk(t *testing.T) {
 	t.Run("allow when no checker", func(t *testing.T) {
 		a := NewAgent(config)
 		e := newAgentToolExecutor(a)
-		result := e.checkPermissionAsk(context.Background(), "file_write", nil, 12345)
+		result := e.checkPermissionAsk(context.Background(), "write", nil, 12345)
 		if !result {
 			t.Error("expected allow when no checker set")
 		}
@@ -65,7 +64,7 @@ func TestCheckPermissionAsk(t *testing.T) {
 		cfg.AgentName = ""
 		a := NewAgent(cfg)
 		e := newAgentToolExecutor(a)
-		result := e.checkPermissionAsk(context.Background(), "file_write", nil, 12345)
+		result := e.checkPermissionAsk(context.Background(), "write", nil, 12345)
 		if !result {
 			t.Error("expected allow when no checker set (backward compat)")
 		}
@@ -75,7 +74,7 @@ func TestCheckPermissionAsk(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(&mockPermissionChecker{decision: "deny"})
 		e := newAgentToolExecutor(a)
-		result := e.checkPermissionAsk(context.Background(), "file_write", nil, 12345)
+		result := e.checkPermissionAsk(context.Background(), "write", nil, 12345)
 		if result {
 			t.Error("expected deny when permission says deny")
 		}
@@ -85,7 +84,7 @@ func TestCheckPermissionAsk(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(&mockPermissionChecker{decision: "allow"})
 		e := newAgentToolExecutor(a)
-		result := e.checkPermissionAsk(context.Background(), "file_write", nil, 12345)
+		result := e.checkPermissionAsk(context.Background(), "write", nil, 12345)
 		if !result {
 			t.Error("expected allow when permission says allow")
 		}
@@ -153,7 +152,7 @@ func TestShellExecutePermissionGrantedPath(t *testing.T) {
 
 	askChecker := &mockToolPermissionChecker{
 		decisions: map[string]string{
-			"shell_execute": "ask",
+			"bash": "ask",
 		},
 	}
 
@@ -169,7 +168,7 @@ func TestShellExecutePermissionGrantedPath(t *testing.T) {
 		})
 		defer tools.SetQuestionCallback(nil)
 
-		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 			"command": "ls /home/user/granted",
 		}, peerID)
 
@@ -188,8 +187,7 @@ func TestShellExecutePermissionAsksForUnmatched(t *testing.T) {
 
 	askChecker := &mockToolPermissionChecker{
 		decisions: map[string]string{
-			"shell_execute": "ask",
-			"bash":          "ask",
+			"bash": "ask",
 		},
 	}
 
@@ -219,7 +217,7 @@ func TestShellExecutePermissionAsksForUnmatched(t *testing.T) {
 		})
 		defer tools.SetQuestionCallback(nil)
 
-		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 			"command": "cat /etc/passwd",
 		}, 12345)
 
@@ -243,7 +241,7 @@ func TestShellExecutePermissionAsksForUnmatched(t *testing.T) {
 		})
 		defer tools.SetQuestionCallback(nil)
 
-		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 			"command": "echo hello > /tmp/outside",
 		}, 12345)
 
@@ -267,7 +265,7 @@ func TestShellExecutePermissionAsksForUnmatched(t *testing.T) {
 		})
 		defer tools.SetQuestionCallback(nil)
 
-		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 			"command": "echo hello world",
 		}, 12345)
 
@@ -291,7 +289,7 @@ func TestShellExecutePermissionAsksForUnmatched(t *testing.T) {
 		})
 		defer tools.SetQuestionCallback(nil)
 
-		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 			"command": "docker ps",
 		}, 12345)
 
@@ -324,8 +322,8 @@ func TestFileToolPermissionWithinAllowedDir(t *testing.T) {
 
 	askChecker := &mockToolPermissionChecker{
 		decisions: map[string]string{
-			"edit":       "ask",
-			"file_write": "ask",
+			"edit":  "ask",
+			"write": "ask",
 		},
 	}
 
@@ -355,7 +353,7 @@ func TestFileToolPermissionWithinAllowedDir(t *testing.T) {
 		}
 	})
 
-	t.Run("file_write in allowed dir bypasses ask", func(t *testing.T) {
+	t.Run("write in allowed dir bypasses ask", func(t *testing.T) {
 		a := NewAgent(config)
 		a.SetPermissionChecker(askChecker)
 		e := newAgentToolExecutor(a)
@@ -367,16 +365,16 @@ func TestFileToolPermissionWithinAllowedDir(t *testing.T) {
 		})
 		defer tools.SetQuestionCallback(nil)
 
-		result := e.checkPermissionAsk(context.Background(), "file_write", map[string]string{
+		result := e.checkPermissionAsk(context.Background(), "write", map[string]string{
 			"path":    "new_bot.py",
 			"content": "print('hello')",
 		}, 12345)
 
 		if !result {
-			t.Error("expected allow for file_write inside allowed dir")
+			t.Error("expected allow for write inside allowed dir")
 		}
 		if asked {
-			t.Error("expected NO permission ask for file_write inside allowed dir")
+			t.Error("expected NO permission ask for write inside allowed dir")
 		}
 	})
 
@@ -440,8 +438,7 @@ func TestShellExecutePathOutsideAllowed(t *testing.T) {
 
 	askChecker := &mockToolPermissionChecker{
 		decisions: map[string]string{
-			"shell_execute": "ask",
-			"bash":          "ask",
+			"bash": "ask",
 		},
 	}
 
@@ -457,7 +454,7 @@ func TestShellExecutePathOutsideAllowed(t *testing.T) {
 		})
 		defer tools.SetQuestionCallback(nil)
 
-		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 			"command": "cat /etc/passwd",
 		}, 12345)
 
@@ -481,7 +478,7 @@ func TestShellExecutePathOutsideAllowed(t *testing.T) {
 		})
 		defer tools.SetQuestionCallback(nil)
 
-		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 			"command": "rm -rf /important/data",
 		}, 12345)
 
@@ -505,7 +502,7 @@ func TestShellExecutePathOutsideAllowed(t *testing.T) {
 		})
 		defer tools.SetQuestionCallback(nil)
 
-		result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+		result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 			"command": "cp /etc/shadow /tmp/stolen.txt",
 		}, 12345)
 

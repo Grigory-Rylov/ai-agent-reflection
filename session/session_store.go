@@ -99,6 +99,8 @@ func messageToStoreMsg(msg Message) store.MessageData {
 		Internal:    msg.Internal,
 		Compacted:   msg.Compacted,
 		TailStartID: msg.TailStartID,
+		UsageInput:  msg.UsageInputTokens,
+		UsageOutput: msg.UsageOutputTokens,
 	}
 	if len(msg.ToolCalls) > 0 {
 		data, _ := json.Marshal(msg.ToolCalls)
@@ -110,15 +112,17 @@ func messageToStoreMsg(msg Message) store.MessageData {
 func storeMsgToMessage(d store.MessageData) (Message, error) {
 	ts, _ := time.Parse(time.RFC3339, d.Timestamp)
 	msg := Message{
-		Role:        Role(d.Role),
-		Content:     d.Content,
-		ToolCallID:  d.ToolCallID,
-		Name:        d.ToolName,
-		Timestamp:   ts,
-		Summary:     d.Summary,
-		Internal:    d.Internal,
-		Compacted:   d.Compacted,
-		TailStartID: d.TailStartID,
+		Role:              Role(d.Role),
+		Content:           d.Content,
+		ToolCallID:        d.ToolCallID,
+		Name:              d.ToolName,
+		Timestamp:         ts,
+		Summary:           d.Summary,
+		Internal:          d.Internal,
+		Compacted:         d.Compacted,
+		TailStartID:       d.TailStartID,
+		UsageInputTokens:  d.UsageInput,
+		UsageOutputTokens: d.UsageOutput,
 	}
 	if d.ToolCalls != "" {
 		var calls []MsgToolCall

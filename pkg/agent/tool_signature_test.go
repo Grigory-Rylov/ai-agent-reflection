@@ -9,13 +9,13 @@ func TestToolCallSignature(t *testing.T) {
 		ID:   "call_1",
 		Type: "function",
 		Function: ToolCallFunction{
-			Name:      "file_read",
+			Name:      "read",
 			Arguments: []byte(`"{\"path\":\"/tmp/test.txt\"}"`),
 		},
 	}
 
 	sig := toolCallSignature(tc)
-	expected := `file_read:{"path":"/tmp/test.txt"}`
+	expected := `read:{"path":"/tmp/test.txt"}`
 	if sig != expected {
 		t.Errorf("expected %q, got %q", expected, sig)
 	}
@@ -23,31 +23,30 @@ func TestToolCallSignature(t *testing.T) {
 
 func TestXMLToolCallSignature(t *testing.T) {
 	tc := XMLToolCall{
-		Name: "file_read",
+		Name: "read",
 		Args: map[string]string{"path": "/tmp/test.txt"},
 	}
 
 	sig := xmlToolCallSignature(tc)
-	expected := `file_read:{"path":"/tmp/test.txt"}`
+	expected := `read:{"path":"/tmp/test.txt"}`
 	if sig != expected {
 		t.Errorf("expected %q, got %q", expected, sig)
 	}
 }
 
 func TestToolCallSignature_Matching(t *testing.T) {
-	
+
 	nativeTC := ToolCall{
 		ID:   "call_1",
 		Type: "function",
 		Function: ToolCallFunction{
-			Name:      "file_read",
+			Name:      "read",
 			Arguments: []byte(`"{\"path\":\"/tmp/test.txt\"}"`),
 		},
 	}
 
-	
 	xmlTC := XMLToolCall{
-		Name: "file_read",
+		Name: "read",
 		Args: map[string]string{"path": "/tmp/test.txt"},
 	}
 
@@ -60,19 +59,18 @@ func TestToolCallSignature_Matching(t *testing.T) {
 }
 
 func TestToolCallSignature_Different(t *testing.T) {
-	
+
 	nativeTC := ToolCall{
 		ID:   "call_1",
 		Type: "function",
 		Function: ToolCallFunction{
-			Name:      "file_read",
+			Name:      "read",
 			Arguments: []byte(`"{\"path\":\"/tmp/test.txt\"}"`),
 		},
 	}
 
-	
 	xmlTC := XMLToolCall{
-		Name: "file_read",
+		Name: "read",
 		Args: map[string]string{"path": "/tmp/other.txt"},
 	}
 
@@ -85,19 +83,18 @@ func TestToolCallSignature_Different(t *testing.T) {
 }
 
 func TestToolCallSignature_DifferentTools(t *testing.T) {
-	
+
 	nativeTC := ToolCall{
 		ID:   "call_1",
 		Type: "function",
 		Function: ToolCallFunction{
-			Name:      "file_read",
+			Name:      "read",
 			Arguments: []byte(`"{\"path\":\"/tmp/test.txt\"}"`),
 		},
 	}
 
-	
 	xmlTC := XMLToolCall{
-		Name: "file_write",
+		Name: "write",
 		Args: map[string]string{"path": "/tmp/test.txt"},
 	}
 

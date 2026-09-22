@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-
 func TestNewEventDispatcher(t *testing.T) {
 	dispatcher := NewEventDispatcher()
 	if dispatcher == nil {
@@ -23,7 +22,7 @@ func TestEventDispatcherRegister(t *testing.T) {
 	dispatcher := NewEventDispatcher()
 
 	dispatcher.Register(EventPromptReceived, func(event Event) {
-		
+
 	})
 
 	if len(dispatcher.handlers[EventPromptReceived]) != 1 {
@@ -52,7 +51,7 @@ func TestEventDispatcherEmit(t *testing.T) {
 
 func TestEventDispatcherEmitNoHandler(t *testing.T) {
 	dispatcher := NewEventDispatcher()
-	
+
 	dispatcher.Emit(NewEvent(EventError, 123))
 }
 

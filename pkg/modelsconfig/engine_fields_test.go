@@ -86,9 +86,9 @@ func TestHolderEngineGetters(t *testing.T) {
 	})
 
 	cases := []struct {
-		name     string
-		got      string
-		want     string
+		name string
+		got  string
+		want string
 	}{
 		{"cur-type", holder.GetCurrentEngineType(), "llama"},
 		{"cur-start", holder.GetCurrentStartScript(), "sa.sh"},

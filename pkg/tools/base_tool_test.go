@@ -5,7 +5,6 @@ import (
 	"testing"
 )
 
-
 type MockTool struct {
 	name        string
 	description string
@@ -31,7 +30,6 @@ func (m *MockTool) Execute(ctx context.Context, inputs map[string]string) (ToolR
 	}
 	return ToolResult{Success: true, Data: "executed"}, nil
 }
-
 
 func TestNewRegistry(t *testing.T) {
 	t.Run("creates empty registry", func(t *testing.T) {
@@ -152,55 +150,68 @@ func TestRegistryUnregister(t *testing.T) {
 }
 
 func TestRegistryGetAliases(t *testing.T) {
-	t.Run("read_file finds file_read", func(t *testing.T) {
+	t.Run("read_file alias finds read", func(t *testing.T) {
 		registry := NewRegistry()
 		registry.Register(&FileReadTool{})
 
 		tool, ok := registry.Get("read_file")
 		if !ok {
-			t.Error("expected read_file alias to find file_read")
+			t.Error("expected read_file alias to find read")
 		}
-		if tool.Name() != "file_read" {
-			t.Errorf("expected file_read, got %q", tool.Name())
+		if tool.Name() != "read" {
+			t.Errorf("expected read, got %q", tool.Name())
 		}
 	})
 
-	t.Run("write_file finds file_write", func(t *testing.T) {
+	t.Run("file_read alias finds read", func(t *testing.T) {
+		registry := NewRegistry()
+		registry.Register(&FileReadTool{})
+
+		tool, ok := registry.Get("file_read")
+		if !ok {
+			t.Error("expected file_read alias to find read")
+		}
+		if tool.Name() != "read" {
+			t.Errorf("expected read, got %q", tool.Name())
+		}
+	})
+
+	t.Run("write_file alias finds write", func(t *testing.T) {
 		registry := NewRegistry()
 		registry.Register(&FileWriteTool{})
 
 		tool, ok := registry.Get("write_file")
 		if !ok {
-			t.Error("expected write_file alias to find file_write")
+			t.Error("expected write_file alias to find write")
 		}
-		if tool.Name() != "file_write" {
-			t.Errorf("expected file_write, got %q", tool.Name())
+		if tool.Name() != "write" {
+			t.Errorf("expected write, got %q", tool.Name())
 		}
 	})
 
-	t.Run("write finds file_write", func(t *testing.T) {
+	t.Run("write is canonical", func(t *testing.T) {
 		registry := NewRegistry()
 		registry.Register(&FileWriteTool{})
 
 		tool, ok := registry.Get("write")
 		if !ok {
-			t.Error("expected write alias to find file_write")
+			t.Error("expected write to be found")
 		}
-		if tool.Name() != "file_write" {
-			t.Errorf("expected file_write, got %q", tool.Name())
+		if tool.Name() != "write" {
+			t.Errorf("expected write, got %q", tool.Name())
 		}
 	})
 
-	t.Run("read finds file_read", func(t *testing.T) {
+	t.Run("read is canonical", func(t *testing.T) {
 		registry := NewRegistry()
 		registry.Register(&FileReadTool{})
 
 		tool, ok := registry.Get("read")
 		if !ok {
-			t.Error("expected read alias to find file_read")
+			t.Error("expected read to be found")
 		}
-		if tool.Name() != "file_read" {
-			t.Errorf("expected file_read, got %q", tool.Name())
+		if tool.Name() != "read" {
+			t.Errorf("expected read, got %q", tool.Name())
 		}
 	})
 
@@ -240,13 +251,55 @@ func TestRegistryGetAliases(t *testing.T) {
 		}
 	})
 
-	t.Run("shell finds shell_execute", func(t *testing.T) {
+	t.Run("shell alias finds bash", func(t *testing.T) {
 		registry := NewRegistry()
 		registry.Register(&ShellExecuteTool{})
 
-		_, ok := registry.Get("shell")
+		tool, ok := registry.Get("shell")
 		if !ok {
-			t.Error("expected shell alias to find shell_execute")
+			t.Fatal("expected shell alias to find bash")
+		}
+		if tool.Name() != "bash" {
+			t.Errorf("expected bash, got %q", tool.Name())
+		}
+	})
+
+	t.Run("shell_execute alias finds bash", func(t *testing.T) {
+		registry := NewRegistry()
+		registry.Register(&ShellExecuteTool{})
+
+		tool, ok := registry.Get("shell_execute")
+		if !ok {
+			t.Fatal("expected shell_execute alias to find bash")
+		}
+		if tool.Name() != "bash" {
+			t.Errorf("expected bash, got %q", tool.Name())
+		}
+	})
+
+	t.Run("search_code alias finds grep", func(t *testing.T) {
+		registry := NewRegistry()
+		registry.Register(&GrepTool{})
+
+		tool, ok := registry.Get("search_code")
+		if !ok {
+			t.Fatal("expected search_code alias to find grep")
+		}
+		if tool.Name() != "grep" {
+			t.Errorf("expected grep, got %q", tool.Name())
+		}
+	})
+
+	t.Run("question alias finds ask", func(t *testing.T) {
+		registry := NewRegistry()
+		registry.Register(&QuestionTool{})
+
+		tool, ok := registry.Get("question")
+		if !ok {
+			t.Fatal("expected question alias to find ask")
+		}
+		if tool.Name() != "ask" {
+			t.Errorf("expected ask, got %q", tool.Name())
 		}
 	})
 }
@@ -292,7 +345,6 @@ func TestRegistryToOpenAISchema(t *testing.T) {
 		}
 	})
 }
-
 
 func TestCreateStringParameter(t *testing.T) {
 	t.Run("creates string parameter", func(t *testing.T) {
@@ -354,7 +406,6 @@ func TestCreateEnumParameter(t *testing.T) {
 	})
 }
 
-
 func TestMarshalToolResult(t *testing.T) {
 	t.Run("marshals successful result", func(t *testing.T) {
 		result := ToolResult{
@@ -368,7 +419,6 @@ func TestMarshalToolResult(t *testing.T) {
 			t.Error("expected non-empty JSON string")
 		}
 
-		
 		parsed, err := UnmarshalToolResult(jsonStr)
 		if err != nil {
 			t.Fatalf("failed to unmarshal: %v", err)

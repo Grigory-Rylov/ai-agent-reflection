@@ -18,19 +18,15 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 )
 
-
 func TestProcessPromptWithSystemPrompt_AppliesLeadPrompt(t *testing.T) {
 	const mainPrompt = "You are opencode, the main coordinator assistant."
 
-	
 	promptDir := t.TempDir()
 	sysPromptFile := filepath.Join(promptDir, "system_prompt.txt")
 	if err := os.WriteFile(sysPromptFile, []byte(mainPrompt), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	
-	
 	var mu sync.Mutex
 	var capturedSystem string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +95,6 @@ func TestProcessPromptWithSystemPrompt_AppliesLeadPrompt(t *testing.T) {
 	}
 }
 
-
 func TestProcessPromptWithSystemPrompt_AppliesLeadPrompt_WithPersistedHistory(t *testing.T) {
 	const mainPrompt = "You are opencode, the main coordinator assistant."
 
@@ -160,7 +155,7 @@ func TestProcessPromptWithSystemPrompt_AppliesLeadPrompt_WithPersistedHistory(t 
 	config.EnableCompression = false
 	config.EnablePruning = false
 	config.SessionConfig.WorkingDir = promptDir
-	
+
 	config.SessionConfig.Store = dbStore
 
 	loop, err := NewAgentLoop(config, &mockVKClient{}, tools.NewRegistry())
@@ -168,13 +163,10 @@ func TestProcessPromptWithSystemPrompt_AppliesLeadPrompt_WithPersistedHistory(t 
 		t.Fatalf("NewAgentLoop: %v", err)
 	}
 
-	
-	
 	if _, err := loop.ProcessPrompt(context.Background(), "hello", 12345); err != nil {
 		t.Fatalf("priming ProcessPrompt: %v", err)
 	}
 
-	
 	const leadPrompt = "You are a Lead Agent. Delegate tasks to worker and qa via the task tool."
 	capturedSystem = ""
 	if _, err := loop.ProcessPromptWithSystemPrompt(context.Background(), "build a project", 12345, leadPrompt); err != nil {
@@ -186,12 +178,11 @@ func TestProcessPromptWithSystemPrompt_AppliesLeadPrompt_WithPersistedHistory(t 
 	if !strings.Contains(capturedSystem, "You are a Lead Agent") {
 		t.Errorf("lead system prompt was not sent to the LLM when session had persisted history.\ncaptured system prompt: %q", capturedSystem)
 	}
-	
+
 	if strings.Contains(capturedSystem, mainPrompt) {
 		t.Errorf("lead system prompt must REPLACE the main prompt, not concatenate. main prompt leaked: %q", capturedSystem)
 	}
 }
-
 
 func TestProcessPromptWithSystemPrompt_FollowUpWithoutLeadKeepsContext(t *testing.T) {
 	const mainPrompt = "You are opencode, the main coordinator assistant."
@@ -202,8 +193,6 @@ func TestProcessPromptWithSystemPrompt_FollowUpWithoutLeadKeepsContext(t *testin
 		t.Fatal(err)
 	}
 
-	
-	
 	var mu sync.Mutex
 	var lastMessages []struct {
 		Role    string `json:"role"`
@@ -266,12 +255,10 @@ func TestProcessPromptWithSystemPrompt_FollowUpWithoutLeadKeepsContext(t *testin
 
 	const leadPrompt = "You are a Lead Agent. Delegate tasks to worker and qa via the task tool."
 
-	
 	if _, err := loop.ProcessPromptWithSystemPrompt(context.Background(), "build a project", 777, leadPrompt); err != nil {
 		t.Fatalf("lead ProcessPromptWithSystemPrompt: %v", err)
 	}
 
-	
 	if _, err := loop.ProcessPrompt(context.Background(), "clarify please", 777); err != nil {
 		t.Fatalf("follow-up ProcessPrompt: %v", err)
 	}
@@ -279,7 +266,6 @@ func TestProcessPromptWithSystemPrompt_FollowUpWithoutLeadKeepsContext(t *testin
 	mu.Lock()
 	defer mu.Unlock()
 
-	
 	var sysPrompt string
 	var historyContents []string
 	for _, m := range lastMessages {
@@ -296,7 +282,6 @@ func TestProcessPromptWithSystemPrompt_FollowUpWithoutLeadKeepsContext(t *testin
 		t.Errorf("follow-up system prompt is not the original main prompt.\nsystem prompt: %q", sysPrompt)
 	}
 
-	
 	var hasLeadTask, hasLeadResponse, hasFollowUp bool
 	for _, c := range historyContents {
 		if strings.Contains(c, "build a project") {

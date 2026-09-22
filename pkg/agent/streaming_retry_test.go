@@ -11,13 +11,11 @@ import (
 	"time"
 )
 
-
 func validSSEStream() string {
 	return "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n" +
 		"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" +
 		"[DONE]\n"
 }
-
 
 func TestStreamAndCollectRetriesServerErrors(t *testing.T) {
 	var calls int32
@@ -53,14 +51,13 @@ func TestStreamAndCollectRetriesServerErrors(t *testing.T) {
 	}
 }
 
-
 func TestStreamAndCollectRetriesTruncatedStream(t *testing.T) {
 	var calls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt32(&calls, 1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		if n == 1 {
-			
+
 			return
 		}
 		fmt.Fprint(w, validSSEStream())
@@ -85,7 +82,6 @@ func TestStreamAndCollectRetriesTruncatedStream(t *testing.T) {
 	}
 }
 
-
 func TestStreamAndCollectNoRetryOnClientError(t *testing.T) {
 	var calls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +104,6 @@ func TestStreamAndCollectNoRetryOnClientError(t *testing.T) {
 		t.Errorf("expected 1 request (no retry on 4xx), got %d", got)
 	}
 }
-
 
 func TestStreamAndCollectNoRetryOnSSEContextError(t *testing.T) {
 	var calls int32
@@ -134,20 +129,19 @@ func TestStreamAndCollectNoRetryOnSSEContextError(t *testing.T) {
 	}
 }
 
-
 func TestStreamAndCollectReadableServerError(t *testing.T) {
 	tests := []struct {
-		name             string
-		getServerURL     func() string
-		ctxTimeout       time.Duration
-		expectShutdown   bool
+		name           string
+		getServerURL   func() string
+		ctxTimeout     time.Duration
+		expectShutdown bool
 	}{
 		{
 			name: "closed_server_returns_readable_error",
 			getServerURL: func() string {
 				server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 				server.Start()
-				server.Close() 
+				server.Close()
 				return server.Listener.Addr().String()
 			},
 			ctxTimeout:     100 * time.Millisecond,
@@ -161,7 +155,7 @@ func TestStreamAndCollectReadableServerError(t *testing.T) {
 
 			config := DefaultConfig()
 			config.LlamaServerURL = url
-			config.RetryDelay = 50 * time.Millisecond 
+			config.RetryDelay = 50 * time.Millisecond
 			a := NewAgent(config)
 
 			ctx, cancel := context.WithTimeout(context.Background(), tt.ctxTimeout)
@@ -175,9 +169,8 @@ func TestStreamAndCollectReadableServerError(t *testing.T) {
 			errMsg := err.Error()
 			t.Logf("error message: %s", errMsg)
 
-			
 			if tt.expectShutdown {
-				
+
 				hasReadable := strings.Contains(errMsg, "LLM request exhausted") ||
 					strings.Contains(errMsg, "shutdown") || strings.Contains(errMsg, "unreachable")
 				if !hasReadable {
@@ -188,11 +181,10 @@ func TestStreamAndCollectReadableServerError(t *testing.T) {
 	}
 }
 
-
 func TestStreamAndCollectPreservesLastErrorOnRetryExhaustion(t *testing.T) {
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	server.Start()
-	server.Close() 
+	server.Close()
 
 	config := DefaultConfig()
 	config.LlamaServerURL = "http://" + server.Listener.Addr().String()
@@ -210,7 +202,6 @@ func TestStreamAndCollectPreservesLastErrorOnRetryExhaustion(t *testing.T) {
 	errMsg := err.Error()
 	t.Logf("error message: %s", errMsg)
 
-	
 	if !strings.Contains(errMsg, "LLM request exhausted") {
 		t.Errorf("expected 'LLM request exhausted' wrapper preserving last error, got: %s", errMsg)
 	}

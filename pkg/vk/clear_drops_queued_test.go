@@ -9,10 +9,9 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 )
 
-
 type countingMockAgentLoop struct {
 	*mockAgentLoop
-	calls int64 
+	calls int64
 }
 
 func newCountingMockAgentLoop() *countingMockAgentLoop {
@@ -23,7 +22,6 @@ func (m *countingMockAgentLoop) ProcessMessage(ctx context.Context, prompt strin
 	atomic.AddInt64(&m.calls, 1)
 	return m.mockAgentLoop.ProcessMessage(ctx, prompt, peerID)
 }
-
 
 func waitForWaiting(t *testing.T, h *BotHandler, peerID int64, expected int) {
 	t.Helper()
@@ -38,7 +36,6 @@ func waitForWaiting(t *testing.T, h *BotHandler, peerID int64, expected int) {
 		peerID, expected, h.waitingMessages(peerID))
 }
 
-
 func runStaleQueueScenario(t *testing.T, resetCommand string, peerID int64) {
 	t.Helper()
 
@@ -48,17 +45,14 @@ func runStaleQueueScenario(t *testing.T, resetCommand string, peerID int64) {
 
 	handler := NewBotHandler(nil, mock, log)
 
-	
 	m1 := make(chan string, 1)
 	go func() { m1 <- handler.ProcessMessage("долгая задача", peerID) }()
-	time.Sleep(100 * time.Millisecond) 
+	time.Sleep(100 * time.Millisecond)
 
-	
 	m2 := make(chan string, 1)
 	go func() { m2 <- handler.ProcessMessage("старое сообщение", peerID) }()
-	waitForWaiting(t, handler, peerID, 1) 
+	waitForWaiting(t, handler, peerID, 1)
 
-	
 	if res := handler.ProcessMessage(resetCommand, peerID); res == "" {
 		t.Fatalf("command %q returned empty result", resetCommand)
 	}
@@ -90,7 +84,7 @@ func runStaleQueueScenario(t *testing.T, resetCommand string, peerID int64) {
 		t.Fatalf("agent must be called exactly once (only M1), got %d — stale queued message leaked into new session", got)
 	}
 
-	close(mock.blockCh) 
+	close(mock.blockCh)
 }
 
 func TestClearDropsQueuedMessages(t *testing.T) {

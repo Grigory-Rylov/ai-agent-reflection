@@ -107,7 +107,7 @@ func TestProjectFiles_AGENTSTakesPriority(t *testing.T) {
 func TestBuild_FormatsInstructions(t *testing.T) {
 	oldHome := os.Getenv("HOME")
 	t.Cleanup(func() { os.Setenv("HOME", oldHome) })
-	
+
 	home := t.TempDir()
 	os.Setenv("HOME", home)
 	configDir = filepath.Join(home, ".config", "ai-agent")

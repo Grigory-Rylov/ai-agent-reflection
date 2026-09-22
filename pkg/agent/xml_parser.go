@@ -23,25 +23,24 @@ const (
 	stateToolCall
 	stateFunction
 	stateParam
-	stateFunctionNoWrapper  
-	stateSimplifiedParam    
+	stateFunctionNoWrapper
+	stateSimplifiedParam
 )
 
-
 func ParseXMLToolCalls(input string) XMLParseResult {
-	
+
 	result := parseWithWrapper(input)
 	if len(result.ToolCalls) > 0 {
 		logger.DebugToFile("ParseXMLToolCalls: found %d tool calls with wrapper", len(result.ToolCalls))
 		return result
 	}
-	
+
 	result = parseWithoutWrapper(input)
 	if len(result.ToolCalls) > 0 {
 		logger.DebugToFile("ParseXMLToolCalls: found %d tool calls without wrapper", len(result.ToolCalls))
 		return result
 	}
-	
+
 	stripped := stripToolCallBlocks(result.Content)
 	if stripped != result.Content {
 		logger.DebugToFile("ParseXMLToolCalls: stripped tool_call blocks via fallback")
@@ -49,7 +48,6 @@ func ParseXMLToolCalls(input string) XMLParseResult {
 	}
 	return result
 }
-
 
 func stripToolCallBlocks(input string) string {
 	var result strings.Builder
@@ -65,22 +63,21 @@ func stripToolCallBlocks(input string) string {
 			result.WriteString(input)
 			break
 		}
-		
+
 		result.WriteString(input[:start])
-		
+
 		rest := input[start:]
 		end := strings.Index(rest, "</tool_call>")
 		if end < 0 {
-			
+
 			result.WriteString(rest)
 			break
 		}
-		
+
 		input = rest[end+len("</tool_call>"):]
 	}
 	return result.String()
 }
-
 
 func isInCodeBlock(input string, pos int) bool {
 	count := 0
@@ -89,10 +86,9 @@ func isInCodeBlock(input string, pos int) bool {
 			count++
 		}
 	}
-	
+
 	return count%2 == 1
 }
-
 
 func parseWithWrapper(input string) XMLParseResult {
 	var result XMLParseResult
@@ -107,9 +103,7 @@ func parseWithWrapper(input string) XMLParseResult {
 
 	i := 0
 	for i < len(input) {
-		
-		
-		
+
 		if state == stateText && isInCodeBlock(input, i) {
 			content.WriteByte(input[i])
 			i++
@@ -221,7 +215,7 @@ func parseWithWrapper(input string) XMLParseResult {
 				i = n
 				continue
 			}
-			
+
 			if attrName, content, n := parseAttrTag(input, i); n > 0 {
 				pendingContent.WriteString(input[i:n])
 				if args == nil {
@@ -259,7 +253,6 @@ func parseWithWrapper(input string) XMLParseResult {
 		}
 	}
 
-	
 	if state != stateText {
 		content.WriteString(pendingContent.String())
 		if paramName != "" {
@@ -271,7 +264,6 @@ func parseWithWrapper(input string) XMLParseResult {
 	return result
 }
 
-
 func parseWithoutWrapper(input string) XMLParseResult {
 	var result XMLParseResult
 	var content strings.Builder
@@ -281,13 +273,11 @@ func parseWithoutWrapper(input string) XMLParseResult {
 	var paramName string
 	var paramValue strings.Builder
 	var args map[string]string
-	var depth int 
+	var depth int
 
 	i := 0
 	for i < len(input) {
-		
-		
-		
+
 		if state == stateText && isInCodeBlock(input, i) {
 			content.WriteByte(input[i])
 			i++
@@ -296,7 +286,7 @@ func parseWithoutWrapper(input string) XMLParseResult {
 
 		switch state {
 		case stateText:
-			
+
 			if name, n := parseTagWithValue(input, i, "function"); n > 0 {
 				logger.DebugToFile("parseWithoutWrapper: found <function=%s> at pos %d", name, i)
 				funcName = name
@@ -317,9 +307,9 @@ func parseWithoutWrapper(input string) XMLParseResult {
 			i++
 
 		case stateFunctionNoWrapper:
-			
+
 			if n := matchCloseTag(input, i, "function"); n > 0 {
-				
+
 				if funcName != "" {
 					logger.DebugToFile("parseWithoutWrapper: completed tool call %s with %d args", funcName, len(args))
 					result.ToolCalls = append(result.ToolCalls, XMLToolCall{
@@ -342,7 +332,7 @@ func parseWithoutWrapper(input string) XMLParseResult {
 				i = n
 				continue
 			}
-			
+
 			if attrName, content, n := parseAttrTag(input, i); n > 0 {
 				logger.DebugToFile("parseWithoutWrapper: found <parameter name=%q>%s</parameter>", attrName, content)
 				if args == nil {
@@ -352,7 +342,7 @@ func parseWithoutWrapper(input string) XMLParseResult {
 				i = n
 				continue
 			}
-			
+
 			if tagName, value, n := parseSimpleTag(input, i); n > 0 {
 				logger.DebugToFile("parseWithoutWrapper: found simplified param <%s>%s</%s>", tagName, value, tagName)
 				if args == nil {
@@ -365,7 +355,7 @@ func parseWithoutWrapper(input string) XMLParseResult {
 			i++
 
 		case stateParam:
-			
+
 			if n := matchCloseTag(input, i, "parameter"); n > 0 && depth == 0 {
 				if paramName != "" {
 					args[paramName] = strings.TrimSpace(paramValue.String())
@@ -375,7 +365,7 @@ func parseWithoutWrapper(input string) XMLParseResult {
 				i = n
 				continue
 			}
-			
+
 			if i < len(input) && input[i] == '<' {
 				if i+1 < len(input) && input[i+1] == '/' {
 					depth--
@@ -440,7 +430,6 @@ func matchCloseTag(input string, i int, tagName string) int {
 	return -1
 }
 
-
 func parseFunctionTagAsContent(input string, i int) (string, int) {
 	if !hasPrefixAt(input, i, "<function>") {
 		return "", -1
@@ -455,15 +444,15 @@ func parseFunctionTagAsContent(input string, i int) (string, int) {
 	var nextPos int
 
 	if endBracket >= 0 && (firstLT < 0 || endBracket < firstLT) {
-		
+
 		name = strings.TrimSpace(input[contentStart:endBracket])
 		nextPos = endBracket + 1
 	} else if closeFunc >= 0 && (firstLT < 0 || firstLT == contentStart+closeFunc) {
-		
+
 		name = strings.TrimSpace(input[contentStart : contentStart+closeFunc])
 		nextPos = contentStart + closeFunc
 	} else if firstLT >= 0 {
-		
+
 		name = strings.TrimSpace(input[contentStart:firstLT])
 		nextPos = firstLT
 	} else {
@@ -533,7 +522,6 @@ func findChar(s string, start int, ch byte) int {
 	return -1
 }
 
-
 func parseAttrTag(input string, i int) (string, string, int) {
 	if i >= len(input) || input[i] != '<' {
 		return "", "", -1
@@ -543,7 +531,7 @@ func parseAttrTag(input string, i int) (string, string, int) {
 		return "", "", -1
 	}
 	openTag := input[i+1 : close]
-	
+
 	if !strings.HasPrefix(openTag, "parameter ") {
 		return "", "", -1
 	}
@@ -577,35 +565,30 @@ func parseAttrTag(input string, i int) (string, string, int) {
 	return attrVal, content, contentStart + closePos + len(closeTag)
 }
 
-
 func parseSimpleTag(input string, i int) (string, string, int) {
 	if i >= len(input) || input[i] != '<' {
 		return "", "", -1
 	}
 
-	
 	tagEnd := findChar(input, i+1, '>')
 	if tagEnd < 0 {
 		return "", "", -1
 	}
 
-	
 	tagName := strings.TrimSpace(input[i+1 : tagEnd])
 	if tagName == "" || strings.Contains(tagName, " ") || strings.Contains(tagName, "=") {
-		
+
 		return "", "", -1
 	}
 
-	
 	if strings.HasPrefix(tagName, "/") {
 		return "", "", -1
 	}
 
-	
 	closeTag := "</" + tagName + ">"
 	closePos := strings.Index(input[tagEnd+1:], closeTag)
 	if closePos < 0 {
-		
+
 		closeTag = "</ " + tagName + ">"
 		closePos = strings.Index(input[tagEnd+1:], closeTag)
 		if closePos < 0 {

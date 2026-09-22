@@ -27,9 +27,9 @@ const (
 )
 
 type MsgToolCall struct {
-	ID       string             `json:"id"`
-	Type     string             `json:"type,omitempty"`
-	Function MsgToolCallFunc    `json:"function,omitempty"`
+	ID       string          `json:"id"`
+	Type     string          `json:"type,omitempty"`
+	Function MsgToolCallFunc `json:"function,omitempty"`
 }
 
 type MsgToolCallFunc struct {
@@ -48,12 +48,13 @@ type Message struct {
 
 	Compacted bool `json:"compacted,omitempty"`
 
-	TailStartID int       `json:"tail_start_id,omitempty"`
-	Timestamp   time.Time `json:"timestamp,omitempty"`
+	TailStartID       int       `json:"tail_start_id,omitempty"`
+	UsageInputTokens  int       `json:"usage_input_tokens,omitempty"`
+	UsageOutputTokens int       `json:"usage_output_tokens,omitempty"`
+	Timestamp         time.Time `json:"timestamp,omitempty"`
 }
 
 type Config struct {
-
 	PeerID int64
 
 	SessionID string
@@ -88,19 +89,19 @@ func DefaultConfig() Config {
 }
 
 type Session struct {
-	config      Config
-	sessionID   string
-	messages    []Message
-	pinned      []string
-	loopHistory []string
-	loopCount   int
-	isLooped    bool
-	mu          sync.RWMutex
-	createdAt   time.Time
-	updatedAt   time.Time
-	workingDir  string
+	config       Config
+	sessionID    string
+	messages     []Message
+	pinned       []string
+	loopHistory  []string
+	loopCount    int
+	isLooped     bool
+	mu           sync.RWMutex
+	createdAt    time.Time
+	updatedAt    time.Time
+	workingDir   string
 	resumePrompt string
-	peerInput   *PeerInput
+	peerInput    *PeerInput
 }
 
 func NewSession(config Config) *Session {
@@ -641,8 +642,8 @@ func (s *Session) Reset() {
 
 	if s.config.SystemPrompt != "" {
 		s.messages = append(s.messages, Message{
-			Role:    SystemRole,
-			Content: s.config.SystemPrompt,
+			Role:      SystemRole,
+			Content:   s.config.SystemPrompt,
 			Timestamp: time.Now(),
 		})
 	}
@@ -676,22 +677,24 @@ type SessionData struct {
 }
 
 type MessageData struct {
-	Role        string                   `json:"role"`
-	Content     string                   `json:"content"`
-	ToolCalls   []ToolCallData           `json:"tool_calls,omitempty"`
-	ToolCallID  string                   `json:"tool_call_id,omitempty"`
-	Name        string                   `json:"name,omitempty"`
-	Summary     bool                     `json:"summary,omitempty"`
-	Internal    bool                     `json:"internal,omitempty"`
-	Compacted   bool                     `json:"compacted,omitempty"`
-	TailStartID int                      `json:"tail_start_id,omitempty"`
-	Timestamp   string                   `json:"timestamp,omitempty"`
+	Role              string         `json:"role"`
+	Content           string         `json:"content"`
+	ToolCalls         []ToolCallData `json:"tool_calls,omitempty"`
+	ToolCallID        string         `json:"tool_call_id,omitempty"`
+	Name              string         `json:"name,omitempty"`
+	Summary           bool           `json:"summary,omitempty"`
+	Internal          bool           `json:"internal,omitempty"`
+	Compacted         bool           `json:"compacted,omitempty"`
+	TailStartID       int            `json:"tail_start_id,omitempty"`
+	UsageInputTokens  int            `json:"usage_input_tokens,omitempty"`
+	UsageOutputTokens int            `json:"usage_output_tokens,omitempty"`
+	Timestamp         string         `json:"timestamp,omitempty"`
 }
 
 type ToolCallData struct {
-	ID       string             `json:"id"`
-	Type     string             `json:"type,omitempty"`
-	Function ToolCallFuncData   `json:"function,omitempty"`
+	ID       string           `json:"id"`
+	Type     string           `json:"type,omitempty"`
+	Function ToolCallFuncData `json:"function,omitempty"`
 }
 
 type ToolCallFuncData struct {
@@ -727,15 +730,17 @@ func (s *Session) saveInternal() error {
 	messages := make([]MessageData, len(s.messages))
 	for i, msg := range s.messages {
 		msgData := MessageData{
-			Role:        string(msg.Role),
-			Content:     msg.Content,
-			ToolCallID:  msg.ToolCallID,
-			Name:        msg.Name,
-			Summary:     msg.Summary,
-			Internal:    msg.Internal,
-			Compacted:   msg.Compacted,
-			TailStartID: msg.TailStartID,
-			Timestamp:   msg.Timestamp.Format(time.RFC3339),
+			Role:              string(msg.Role),
+			Content:           msg.Content,
+			ToolCallID:        msg.ToolCallID,
+			Name:              msg.Name,
+			Summary:           msg.Summary,
+			Internal:          msg.Internal,
+			Compacted:         msg.Compacted,
+			TailStartID:       msg.TailStartID,
+			UsageInputTokens:  msg.UsageInputTokens,
+			UsageOutputTokens: msg.UsageOutputTokens,
+			Timestamp:         msg.Timestamp.Format(time.RFC3339),
 		}
 
 		if len(msg.ToolCalls) > 0 {
@@ -814,15 +819,17 @@ func (s *Session) Load() error {
 	for i, msg := range session.Messages {
 		timestamp, _ := time.Parse(time.RFC3339, msg.Timestamp)
 		message := Message{
-			Role:        Role(msg.Role),
-			Content:     msg.Content,
-			ToolCallID:  msg.ToolCallID,
-			Name:        msg.Name,
-			Summary:     msg.Summary,
-			Internal:    msg.Internal,
-			Compacted:   msg.Compacted,
-			TailStartID: msg.TailStartID,
-			Timestamp:   timestamp,
+			Role:              Role(msg.Role),
+			Content:           msg.Content,
+			ToolCallID:        msg.ToolCallID,
+			Name:              msg.Name,
+			Summary:           msg.Summary,
+			Internal:          msg.Internal,
+			Compacted:         msg.Compacted,
+			TailStartID:       msg.TailStartID,
+			UsageInputTokens:  msg.UsageInputTokens,
+			UsageOutputTokens: msg.UsageOutputTokens,
+			Timestamp:         timestamp,
 		}
 
 		if len(msg.ToolCalls) > 0 {
@@ -946,4 +953,35 @@ func (s *Session) String() string {
 		result += fmt.Sprintf("%d. [%s]: %s\n", i+1, msg.Role, msg.Content)
 	}
 	return result
+}
+
+func (s *Session) RecordAssistantUsage(input, output int) {
+	if input <= 0 && output <= 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := len(s.messages) - 1; i >= 0; i-- {
+		if s.messages[i].Role == AssistantRole && !s.messages[i].Summary {
+			s.messages[i].UsageInputTokens = input
+			s.messages[i].UsageOutputTokens = output
+			s.updatedAt = time.Now()
+			s.saveNow()
+			return
+		}
+	}
+}
+
+func (s *Session) LastUsageInputTokens() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for i := len(s.messages) - 1; i >= 0; i-- {
+		msg := s.messages[i]
+		if msg.Role == AssistantRole && !msg.Summary && msg.UsageInputTokens > 0 {
+			return msg.UsageInputTokens
+		}
+	}
+	return 0
 }

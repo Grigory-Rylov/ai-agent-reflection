@@ -15,9 +15,7 @@ import (
 	"time"
 )
 
-
 var (
-
 	WorkingDir string
 
 	BaseDir string
@@ -31,13 +29,11 @@ func init() {
 	}
 }
 
-
 func SetWorkingDir(dir string) {
 	if dir != "" {
 		WorkingDir = dir
 	}
 }
-
 
 func resolvePath(path string) (string, error) {
 	if path == "" {
@@ -46,21 +42,18 @@ func resolvePath(path string) (string, error) {
 
 	cleaned := filepath.Clean(path)
 
-	
 	if !filepath.IsAbs(cleaned) {
 		cleaned = filepath.Join(WorkingDir, cleaned)
 	}
 
 	cleaned = filepath.Clean(cleaned)
 
-	
 	if err := CheckPathAllowed(cleaned); err != nil {
 		return "", err
 	}
 
 	return cleaned, nil
 }
-
 
 func resolveReadPath(path string) (string, error) {
 	if path == "" {
@@ -76,18 +69,16 @@ func resolveReadPath(path string) (string, error) {
 	return filepath.Clean(cleaned), nil
 }
 
-
 func parseIntParam(s string) (int, error) {
 	var result int
 	_, err := fmt.Sscanf(s, "%d", &result)
 	return result, err
 }
 
-
 type FileReadTool struct{}
 
 func (t *FileReadTool) Name() string {
-	return "file_read"
+	return "read"
 }
 
 func (t *FileReadTool) Description() string {
@@ -117,9 +108,8 @@ func (t *FileReadTool) Execute(ctx context.Context, inputs map[string]string) (T
 		return ToolResult{Success: false, Error: fmt.Sprintf("Invalid path: %v", err)}, nil
 	}
 
-	
 	offset := 0
-	limit := 1000 
+	limit := 1000
 
 	if offsetStr, ok := inputs["offset"]; ok && offsetStr != "" {
 		if o, err := parseIntParam(offsetStr); err == nil && o >= 0 {
@@ -129,13 +119,12 @@ func (t *FileReadTool) Execute(ctx context.Context, inputs map[string]string) (T
 	if limitStr, ok := inputs["limit"]; ok && limitStr != "" {
 		if l, err := parseIntParam(limitStr); err == nil && l > 0 {
 			if l > 5000 {
-				l = 5000 
+				l = 5000
 			}
 			limit = l
 		}
 	}
 
-	
 	file, err := os.Open(resolvedPath)
 	if err != nil {
 		return ToolResult{
@@ -145,7 +134,6 @@ func (t *FileReadTool) Execute(ctx context.Context, inputs map[string]string) (T
 	}
 	defer file.Close()
 
-	
 	stat, err := file.Stat()
 	if err != nil {
 		return ToolResult{
@@ -155,7 +143,6 @@ func (t *FileReadTool) Execute(ctx context.Context, inputs map[string]string) (T
 	}
 	totalSize := stat.Size()
 
-	
 	scanner := bufio.NewScanner(file)
 	var lines []string
 	lineNum := 0
@@ -168,7 +155,7 @@ func (t *FileReadTool) Execute(ctx context.Context, inputs map[string]string) (T
 		}
 		lineNum++
 		if lineNum >= offset+limit {
-			
+
 			for scanner.Scan() {
 				totalLines++
 			}
@@ -199,11 +186,10 @@ func (t *FileReadTool) Execute(ctx context.Context, inputs map[string]string) (T
 	}, nil
 }
 
-
 type FileWriteTool struct{}
 
 func (t *FileWriteTool) Name() string {
-	return "file_write"
+	return "write"
 }
 
 func (t *FileWriteTool) Description() string {
@@ -270,11 +256,10 @@ func (t *FileWriteTool) Execute(ctx context.Context, inputs map[string]string) (
 	}, nil
 }
 
-
 type ShellExecuteTool struct{}
 
 func (t *ShellExecuteTool) Name() string {
-	return "shell_execute"
+	return "bash"
 }
 
 func (t *ShellExecuteTool) Description() string {
@@ -313,12 +298,10 @@ func (t *ShellExecuteTool) Execute(ctx context.Context, inputs map[string]string
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	
 	if WorkingDir != "" {
 		cmd.Dir = WorkingDir
 	}
 
-	
 	if runtime.GOOS != "windows" {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
@@ -343,11 +326,11 @@ func (t *ShellExecuteTool) Execute(ctx context.Context, inputs map[string]string
 			}
 		}
 	case <-execCtx.Done():
-		
+
 		if cmd.Process != nil {
 			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // nolint: errcheck
 		}
-		<-done 
+		<-done
 		return ToolResult{
 			Success: false,
 			Error:   fmt.Sprintf("Command timed out after %d seconds", timeout),
@@ -366,7 +349,6 @@ func (t *ShellExecuteTool) Execute(ctx context.Context, inputs map[string]string
 	}, nil
 }
 
-
 type TimeGetTool struct{}
 
 func (t *TimeGetTool) Name() string {
@@ -379,7 +361,7 @@ func (t *TimeGetTool) Description() string {
 
 func (t *TimeGetTool) Schema() map[string]interface{} {
 	return map[string]interface{}{
-		"type": "object",
+		"type":       "object",
 		"properties": map[string]interface{}{},
 	}
 }
@@ -397,7 +379,6 @@ func (t *TimeGetTool) Execute(ctx context.Context, inputs map[string]string) (To
 		},
 	}, nil
 }
-
 
 type DirListTool struct{}
 
@@ -466,7 +447,6 @@ func (t *DirListTool) Execute(ctx context.Context, inputs map[string]string) (To
 	}, nil
 }
 
-
 type WebFetchTool struct{}
 
 func (t *WebFetchTool) Name() string {
@@ -481,7 +461,7 @@ func (t *WebFetchTool) Schema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"url":  CreateStringParameter("url", "The URL to fetch", true),
+			"url":    CreateStringParameter("url", "The URL to fetch", true),
 			"method": CreateEnumParameter("method", "HTTP method", []string{"GET", "POST"}, false),
 		},
 		"required": []string{"url"},
@@ -499,7 +479,6 @@ func (t *WebFetchTool) Execute(ctx context.Context, inputs map[string]string) (T
 		method = m
 	}
 
-	
 	fetchURL := githubToRawURL(urlStr)
 	if fetchURL != urlStr {
 		req, err := NewHTTPRequest(ctx, "GET", fetchURL)
@@ -529,13 +508,11 @@ func (t *WebFetchTool) Execute(ctx context.Context, inputs map[string]string) (T
 	}, nil
 }
 
-
 func githubToRawURL(url string) string {
 	if !strings.Contains(url, "github.com/") {
 		return url
 	}
 
-	
 	url = strings.TrimPrefix(url, "https://")
 	url = strings.TrimPrefix(url, "http://")
 	url = strings.TrimPrefix(url, "github.com/")
@@ -550,11 +527,10 @@ func githubToRawURL(url string) string {
 	repo = strings.TrimSuffix(repo, ".git")
 
 	if len(parts) == 2 {
-		
+
 		return fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/master/README.md", user, repo)
 	}
 
-	
 	branch := "master"
 	path := "README.md"
 	if len(parts) >= 4 {
@@ -569,7 +545,6 @@ func githubToRawURL(url string) string {
 
 	return url
 }
-
 
 type WebSearchTool struct{}
 
@@ -629,7 +604,6 @@ func urlQueryEscape(s string) string {
 func parseDuckDuckGoResults(html string) []map[string]string {
 	var results []map[string]string
 
-	
 	resultMarkers := strings.Split(html, `<div class="result"`)
 	for i := 1; i < len(resultMarkers); i++ {
 		block := resultMarkers[i]
@@ -644,13 +618,12 @@ func parseDuckDuckGoResults(html string) []map[string]string {
 		}
 
 		result["snippet"] = extractBetween(block, `class="result__snippet">`, `</`) + extractBetween(block, `class="result__snippet"`, `</`)
-		
+
 		if result["snippet"] == "" {
 			result["snippet"] = extractBetween(block, `result__snippet">`, `</a>`)
 		}
 		result["snippet"] = stripHTMLTags(result["snippet"])
 
-		
 		if result["title"] == "" && result["snippet"] == "" {
 			continue
 		}
@@ -705,7 +678,6 @@ func htmlUnescape(s string) string {
 	s = strings.ReplaceAll(s, "&#39;", "'")
 	return s
 }
-
 
 type GlobTool struct{}
 
@@ -764,11 +736,10 @@ func (t *GlobTool) Execute(ctx context.Context, inputs map[string]string) (ToolR
 	}, nil
 }
 
-
 type GrepTool struct{}
 
 func (t *GrepTool) Name() string {
-	return "search_code"
+	return "grep"
 }
 
 func (t *GrepTool) Description() string {
@@ -838,8 +809,8 @@ func (t *GrepTool) Execute(ctx context.Context, inputs map[string]string) (ToolR
 			line := scanner.Text()
 			if strings.Contains(line, pattern) {
 				results = append(results, map[string]interface{}{
-					"file":   path,
-					"line":   lineNum,
+					"file":    path,
+					"line":    lineNum,
 					"content": strings.TrimSpace(line),
 				})
 			}
@@ -860,7 +831,6 @@ func (t *GrepTool) Execute(ctx context.Context, inputs map[string]string) (ToolR
 		},
 	}, nil
 }
-
 
 type CalcTool struct{}
 
@@ -905,7 +875,6 @@ func (t *CalcTool) Execute(ctx context.Context, inputs map[string]string) (ToolR
 	}, nil
 }
 
-
 type EditTool struct{}
 
 func (t *EditTool) Name() string {
@@ -920,7 +889,7 @@ func (t *EditTool) Schema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"path":      CreateStringParameter("path", "The file path to edit (absolute or relative)", true),
+			"path":       CreateStringParameter("path", "The file path to edit (absolute or relative)", true),
 			"old_string": CreateStringParameter("old_string", "The text to search for", true),
 			"new_string": CreateStringParameter("new_string", "The replacement text", true),
 		},
@@ -985,10 +954,10 @@ func (t *EditTool) Execute(ctx context.Context, inputs map[string]string) (ToolR
 	return ToolResult{
 		Success: true,
 		Data: map[string]interface{}{
-			"path":         resolvedPath,
-			"occurrences":  occurrences,
-			"old_length":   len(oldString),
-			"new_length":   len(newString),
+			"path":        resolvedPath,
+			"occurrences": occurrences,
+			"old_length":  len(oldString),
+			"new_length":  len(newString),
 		},
 	}, nil
 }

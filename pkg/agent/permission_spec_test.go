@@ -32,12 +32,12 @@ func TestSpecReadOnlyFileToolNeverAsks(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "file_read", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "read", map[string]string{
 		"path": "/etc/outside.txt",
 	}, 424242)
 
 	if !result {
-		t.Error("expected file_read outside allowed dirs to be allowed")
+		t.Error("expected read outside allowed dirs to be allowed")
 	}
 	if called {
 		t.Error("expected NO question for read-only file tool")
@@ -70,12 +70,12 @@ func TestSpecFileWriteOutsideAsksThenGrantsParentDir(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	first := e.checkPermissionAsk(context.Background(), "file_write", map[string]string{
+	first := e.checkPermissionAsk(context.Background(), "write", map[string]string{
 		"path":    target,
 		"content": "hi",
 	}, peerID)
 	if !first {
-		t.Fatal("expected file_write to be allowed after user answered Allow")
+		t.Fatal("expected write to be allowed after user answered Allow")
 	}
 	if asks != 1 {
 		t.Fatalf("expected exactly 1 question, got %d", asks)
@@ -84,20 +84,20 @@ func TestSpecFileWriteOutsideAsksThenGrantsParentDir(t *testing.T) {
 		t.Error("expected path to be granted after Allow")
 	}
 
-	again := e.checkPermissionAsk(context.Background(), "file_write", map[string]string{
+	again := e.checkPermissionAsk(context.Background(), "write", map[string]string{
 		"path":    target,
 		"content": "hi again",
 	}, peerID)
 	if !again {
-		t.Error("expected repeat file_write on same path to be allowed without question")
+		t.Error("expected repeat write on same path to be allowed without question")
 	}
 
-	next := e.checkPermissionAsk(context.Background(), "file_write", map[string]string{
+	next := e.checkPermissionAsk(context.Background(), "write", map[string]string{
 		"path":    sibling,
 		"content": "sibling",
 	}, peerID)
 	if !next {
-		t.Error("expected file_write on sibling file in granted dir to be allowed without question")
+		t.Error("expected write on sibling file in granted dir to be allowed without question")
 	}
 	if asks != 1 {
 		t.Errorf("expected no additional questions, total asks = %d", asks)
@@ -125,7 +125,7 @@ func TestSpecShellReadOnlyCatOutsideDoesNotAsk(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "cat /etc/outside.txt",
 	}, 666666)
 
@@ -158,7 +158,7 @@ func TestSpecShellTrReadingProcEnvironDoesNotAsk(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": `tr '\0' '\n' < /proc/34947/environ`,
 	}, 666666)
 
@@ -195,7 +195,7 @@ func TestSpecShellTeeOutsideAsksOnceThenGrantCoversRepeat(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	first := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	first := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": cmd,
 	}, peerID)
 	if !first {
@@ -205,7 +205,7 @@ func TestSpecShellTeeOutsideAsksOnceThenGrantCoversRepeat(t *testing.T) {
 		t.Fatalf("expected exactly 1 question, got %d", asks)
 	}
 
-	repeat := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	repeat := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": cmd,
 	}, peerID)
 	if !repeat {
@@ -246,7 +246,7 @@ func TestSpecWriteThroughSymlinkGrantsRealDir(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	write := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	write := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "touch " + newViaLink,
 	}, peerID)
 	if !write {
@@ -256,7 +256,7 @@ func TestSpecWriteThroughSymlinkGrantsRealDir(t *testing.T) {
 		t.Fatalf("expected exactly 1 question, got %d", asks)
 	}
 
-	read := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	read := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "cat " + otherViaLink,
 	}, peerID)
 	if !read {

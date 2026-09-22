@@ -5,7 +5,6 @@ import (
 	"testing"
 )
 
-
 func TestContextSizeAddCompletion(t *testing.T) {
 	t.Run("adds completion tokens correctly", func(t *testing.T) {
 		cs := &ContextSize{
@@ -108,7 +107,6 @@ func TestMessageString(t *testing.T) {
 		t.Errorf("expected '[user] Hello world', got '%s'", str)
 	}
 }
-
 
 type mockTokenizer struct {
 	count int

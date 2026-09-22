@@ -65,9 +65,9 @@ func TestPermissionCheck(t *testing.T) {
 			wantAct: "allow",
 		},
 		{
-			name:    "glob pattern deny file_*",
-			perm:    Permission{"file_*": "deny"},
-			tool:    "file_write",
+			name:    "glob pattern deny w*",
+			perm:    Permission{"w*": "deny"},
+			tool:    "write",
 			want:    false,
 			wantAct: "deny",
 		},
@@ -209,33 +209,32 @@ func TestPermissionAdapter(t *testing.T) {
 	})
 
 	t.Run("delegates to GetAction", func(t *testing.T) {
-		perm := Permission{"edit": "deny", "file_write": "deny", "*": "allow"}
+		perm := Permission{"edit": "deny", "write": "deny", "*": "allow"}
 		adapter := NewPermissionAdapter(perm)
 
 		if adapter.Check("edit") != "deny" {
 			t.Errorf("edit: got %q, want deny", adapter.Check("edit"))
 		}
-		if adapter.Check("file_write") != "deny" {
-			t.Errorf("file_write: got %q, want deny", adapter.Check("file_write"))
+		if adapter.Check("write") != "deny" {
+			t.Errorf("write: got %q, want deny", adapter.Check("write"))
 		}
-		if adapter.Check("file_read") != "allow" {
-			t.Errorf("file_read: got %q, want allow", adapter.Check("file_read"))
+		if adapter.Check("read") != "allow" {
+			t.Errorf("read: got %q, want allow", adapter.Check("read"))
 		}
-		if adapter.Check("shell_execute") != "allow" {
-			t.Errorf("shell_execute: got %q, want allow", adapter.Check("shell_execute"))
+		if adapter.Check("bash") != "allow" {
+			t.Errorf("bash: got %q, want allow", adapter.Check("bash"))
 		}
 	})
 }
 
 func TestPermissionAdapterEvaluate(t *testing.T) {
 	adapter := NewPermissionAdapter(Permission{
-		"bash":          "ask",
-		"file_write":    "ask",
-		"shell_execute": "ask",
+		"bash":  "ask",
+		"write": "ask",
 	})
 
-	if got := adapter.Check("file_write"); got != "ask" {
-		t.Errorf("Check(file_write) = %q, want ask", got)
+	if got := adapter.Check("write"); got != "ask" {
+		t.Errorf("Check(write) = %q, want ask", got)
 	}
 	if got := adapter.Check("bash"); got != "ask" {
 		t.Errorf("Check(bash) = %q, want ask", got)
@@ -280,9 +279,9 @@ func TestPermissionAdapterApprove(t *testing.T) {
 
 func TestToRulesetSkipsWildcardKey(t *testing.T) {
 	p := Permission{
-		"*":          "allow",
-		"bash":       "ask",
-		"file_write": "deny",
+		"*":     "allow",
+		"bash":  "ask",
+		"write": "deny",
 	}
 	rs := toRuleset(p)
 	if rs == nil {
@@ -296,8 +295,8 @@ func TestToRulesetSkipsWildcardKey(t *testing.T) {
 	if got := permission.Evaluate("bash", "*", *rs).Action; got != permission.Ask {
 		t.Errorf("Evaluate(bash) = %q, want ask (no bash allow override)", got)
 	}
-	if got := permission.Evaluate("file_write", "*", *rs).Action; got != permission.Deny {
-		t.Errorf("Evaluate(file_write) = %q, want deny", got)
+	if got := permission.Evaluate("write", "*", *rs).Action; got != permission.Deny {
+		t.Errorf("Evaluate(write) = %q, want deny", got)
 	}
 }
 

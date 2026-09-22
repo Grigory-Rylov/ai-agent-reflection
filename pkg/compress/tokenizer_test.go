@@ -8,7 +8,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
 )
 
-
 type mockTokenizer struct {
 	countTokens    func(text string) (int, error)
 	countMsgTokens func(messages []tokenizers.Message) (int, error)
@@ -46,7 +45,6 @@ func (m *mockTokenizer) Name() string {
 	return m.name
 }
 
-
 func TestRealEstimator_EstimateMessages(t *testing.T) {
 	msgs := []tokenizers.Message{
 		{Role: "user", Content: "Hello world"},
@@ -80,7 +78,6 @@ func TestRealEstimator_EstimateMessages(t *testing.T) {
 	})
 }
 
-
 func TestRealEstimator_ReturnsZeroOnError(t *testing.T) {
 	mock := &mockTokenizer{
 		countTokens: func(text string) (int, error) {
@@ -108,136 +105,6 @@ func TestRealEstimator_ReturnsZeroOnError(t *testing.T) {
 	})
 }
 
-
-func TestOverflow_RealTokenizerVsHeuristic(t *testing.T) {
-	tests := []struct {
-		name           string
-		messages       []tokenizers.Message
-		tokenizerCount int 
-		contextLimit   int
-		inputLimit     int
-		reserved       int
-	}{
-		{
-			name: "real tokenizer shows no overflow, heuristic does",
-			messages: []tokenizers.Message{
-				{Role: "user", Content: string(make([]byte, 50000))}, 
-			},
-			tokenizerCount: 5000, 
-			contextLimit:   128000,
-			inputLimit:     0,
-			reserved:       0,
-		},
-		{
-			name: "both agree on overflow",
-			messages: []tokenizers.Message{
-				{Role: "user", Content: string(make([]byte, 200000))},
-			},
-			tokenizerCount: 100000,
-			contextLimit:   32000,
-			inputLimit:     0,
-			reserved:       0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mock := &mockTokenizer{
-				countMsgTokens: func(messages []tokenizers.Message) (int, error) {
-					return tt.tokenizerCount, nil
-				},
-			}
-
-			heuristicTokens := EstimateMessagesTokensSimple(tt.messages)
-			realTokens := NewRealEstimator(mock).EstimateMessages(tt.messages)
-
-			reservedPtr := tt.reserved
-
-			overflowHeuristic := IsOverflowWithLimits(heuristicTokens, tt.contextLimit, tt.inputLimit, &reservedPtr)
-			overflowReal := IsOverflowWithLimits(realTokens, tt.contextLimit, tt.inputLimit, &reservedPtr)
-
-			t.Logf("heuristic=%d, real=%d, overflow(heuristic)=%v, overflow(real)=%v",
-				heuristicTokens, realTokens, overflowHeuristic, overflowReal)
-
-			usable := UsableWithLimits(tt.contextLimit, tt.inputLimit, &reservedPtr)
-			if realTokens >= usable {
-				if !overflowReal {
-					t.Errorf("expected overflow with real tokens %d >= usable %d", realTokens, usable)
-				}
-			} else {
-				if overflowReal {
-					t.Errorf("expected no overflow with real tokens %d < usable %d", realTokens, usable)
-				}
-			}
-		})
-	}
-}
-
-
-func TestIsOverflowWithProviderTokens_InfluencesDecision(t *testing.T) {
-	tests := []struct {
-		name         string
-		tokens       ProviderTokens
-		contextLimit int
-		inputLimit   int
-		reserved     int
-		wantOverflow bool
-	}{
-		{
-			name:         "total tokens just below usable — no overflow",
-			tokens:       ProviderTokens{Total: 95999},
-			contextLimit: 128000,
-			inputLimit:   0,
-			reserved:     0,
-			wantOverflow: false,
-		},
-		{
-			name:         "total tokens at usable — overflow",
-			tokens:       ProviderTokens{Total: 96000},
-			contextLimit: 128000,
-			inputLimit:   0,
-			reserved:     0,
-			wantOverflow: true,
-		},
-		{
-			name:         "input+output+cache exceeds usable — overflow",
-			tokens:       ProviderTokens{Input: 50000, Output: 50000, CacheRead: 10000},
-			contextLimit: 128000,
-			inputLimit:   0,
-			reserved:     0,
-			wantOverflow: true,
-		},
-		{
-			name:         "inputLimit with provider tokens — overflow",
-			tokens:       ProviderTokens{Total: 110000},
-			contextLimit: 128000,
-			inputLimit:   120000,
-			reserved:     0,
-			wantOverflow: true,
-		},
-		{
-			name:         "inputLimit with provider tokens — no overflow",
-			tokens:       ProviderTokens{Total: 99999},
-			contextLimit: 128000,
-			inputLimit:   120000,
-			reserved:     0,
-			wantOverflow: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			reservedPtr := tt.reserved
-			got := IsOverflowWithProviderTokens(tt.tokens, tt.contextLimit, tt.inputLimit, &reservedPtr)
-			if got != tt.wantOverflow {
-				t.Errorf("IsOverflowWithProviderTokens() = %v, want %v (tokens.Count()=%d)",
-					got, tt.wantOverflow, tt.tokens.Count())
-			}
-		})
-	}
-}
-
-
 func TestCompactor_WithTokenizer(t *testing.T) {
 	mock := &mockTokenizer{
 		countTokens: func(text string) (int, error) {
@@ -251,7 +118,6 @@ func TestCompactor_WithTokenizer(t *testing.T) {
 	llm := &stubCompressor{}
 	c := NewCompactorWithEstimator(llm, NewRealEstimator(mock))
 
-	
 	msgs := []tokenizers.Message{
 		{Role: "user", Content: "test"},
 	}
@@ -275,9 +141,12 @@ func TestCompactor_WithoutTokenizer(t *testing.T) {
 	}
 }
 
-
 type stubCompressor struct{}
 
 func (s *stubCompressor) Compress(ctx context.Context, req *CompressionRequest) (*CompressionResult, error) {
 	return &CompressionResult{Summary: "summary"}, nil
+}
+
+func (s *stubCompressor) Complete(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error) {
+	return "summary", nil
 }

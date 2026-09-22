@@ -10,8 +10,8 @@ import (
 )
 
 func TestFileToolPaths(t *testing.T) {
-	t.Run("returns path for file_read", func(t *testing.T) {
-		paths := tools.FileToolPaths("file_read", map[string]string{"path": "/tmp/test.txt"})
+	t.Run("returns path for read", func(t *testing.T) {
+		paths := tools.FileToolPaths("read", map[string]string{"path": "/tmp/test.txt"})
 		if len(paths) != 1 || paths[0] != "/tmp/test.txt" {
 			t.Errorf("expected [/tmp/test.txt], got %v", paths)
 		}
@@ -24,8 +24,8 @@ func TestFileToolPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("returns default dot for search_code without path", func(t *testing.T) {
-		paths := tools.FileToolPaths("search_code", map[string]string{"pattern": "func"})
+	t.Run("returns default dot for grep without path", func(t *testing.T) {
+		paths := tools.FileToolPaths("grep", map[string]string{"pattern": "func"})
 		if len(paths) != 1 || paths[0] != "." {
 			t.Errorf("expected [.], got %v", paths)
 		}
@@ -92,7 +92,7 @@ func TestCheckPathAccess(t *testing.T) {
 	}
 
 	t.Run("allows path inside allowed dir", func(t *testing.T) {
-		result := agent.checkPathAccess(context.Background(), "file_read",
+		result := agent.checkPathAccess(context.Background(), "read",
 			map[string]string{"path": allowedDir}, 0)
 		if !result {
 			t.Error("expected allowed for path inside allowed dir")
@@ -100,7 +100,7 @@ func TestCheckPathAccess(t *testing.T) {
 	})
 
 	t.Run("allows path outside allowed dir when no question callback", func(t *testing.T) {
-		result := agent.checkPathAccess(context.Background(), "file_read",
+		result := agent.checkPathAccess(context.Background(), "read",
 			map[string]string{"path": "/etc"}, 0)
 		if !result {
 			t.Error("expected allowed (fallback) when no question callback set")
@@ -119,7 +119,7 @@ func TestCheckPathAccess(t *testing.T) {
 		tools.SetAccessController(nil)
 		defer tools.SetAccessController(ctrl)
 
-		result := agent.checkPathAccess(context.Background(), "file_read",
+		result := agent.checkPathAccess(context.Background(), "read",
 			map[string]string{"path": "/any/path"}, 0)
 		if !result {
 			t.Error("expected allowed when controller is nil")
@@ -148,16 +148,13 @@ func TestCheckPathAccessGrantsAccess(t *testing.T) {
 	tools.WorkingDir = allowedDir
 	defer func() { tools.WorkingDir = oldWD }()
 
-	
 	err = tools.CheckPathAllowed(outsideDir)
 	if err == nil {
 		t.Fatal("expected outside dir to be blocked initially")
 	}
 
-	
 	ctrl.GrantPath(outsideDir)
 
-	
 	err = tools.CheckPathAllowed(outsideDir)
 	if err != nil {
 		t.Errorf("expected outside dir to be allowed after grant, got: %v", err)

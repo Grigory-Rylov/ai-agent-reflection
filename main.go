@@ -33,29 +33,27 @@ import (
 var Version = "dev"
 
 type Config struct {
-	TokenVK             string                          `json:"token_vk"`
-	PeerID              int64                           `json:"peer_id"`
-	ThinkingPeerID      int64                           `json:"thinking_peer_id"`
-	MaxTokens           int                             `json:"max_tokens"`
-	ModelLimitInput     int                             `json:"model_limit_input"`
-	SummarizeReasoning  bool                          `json:"summarize_reasoning"`
-	Temperature         float64                         `json:"temperature"`
-	StreamIdleTimeoutSec int                            `json:"stream_idle_timeout_sec"`
-	MaxToolCallDepth    int                             `json:"max_tool_call_depth"`
-	MCPConfigPath       string                          `json:"mcp_config_path"`
-	AllowedDirs         []string                        `json:"allowed_dirs"`
-	DBPath              string                          `json:"db_path"`
-	PromptsDir          string                          `json:"prompts_dir"`
-	MaxReviewIterations int                             `json:"max_review_iterations"`
-	MaxBackgroundTasks  int                             `json:"max_background_tasks"`
-	SpeculativeCompactRatio float64                    `json:"speculative_compact_ratio"`
-	Agents              map[string]agentpolicy.AgentCfg `json:"agents"`
-	ToolOutput          ToolOutputConfig                `json:"tool_output"`
-	
-	
+	TokenVK                 string                          `json:"token_vk"`
+	PeerID                  int64                           `json:"peer_id"`
+	ThinkingPeerID          int64                           `json:"thinking_peer_id"`
+	MaxTokens               int                             `json:"max_tokens"`
+	ModelLimitInput         int                             `json:"model_limit_input"`
+	SummarizeReasoning      bool                            `json:"summarize_reasoning"`
+	Temperature             float64                         `json:"temperature"`
+	StreamIdleTimeoutSec    int                             `json:"stream_idle_timeout_sec"`
+	MaxToolCallDepth        int                             `json:"max_tool_call_depth"`
+	MCPConfigPath           string                          `json:"mcp_config_path"`
+	AllowedDirs             []string                        `json:"allowed_dirs"`
+	DBPath                  string                          `json:"db_path"`
+	PromptsDir              string                          `json:"prompts_dir"`
+	MaxReviewIterations     int                             `json:"max_review_iterations"`
+	MaxBackgroundTasks      int                             `json:"max_background_tasks"`
+	SpeculativeCompactRatio float64                         `json:"speculative_compact_ratio"`
+	Agents                  map[string]agentpolicy.AgentCfg `json:"agents"`
+	ToolOutput              ToolOutputConfig                `json:"tool_output"`
+
 	SkipShellPermissionForPathless bool `json:"skip_shell_permission_without_paths"`
 }
-
 
 type ToolOutputConfig struct {
 	MaxLines int `json:"max_lines"`
@@ -172,7 +170,6 @@ func main() {
 			}
 		}
 
-		
 		if config.PeerID > 0 {
 			sd, err := dbStore.GetSession(config.PeerID)
 			if err != nil {
@@ -212,16 +209,12 @@ func main() {
 		}
 	}
 
-	
-	
 	ctxResolver := agentloop.NewModelContextResolver(modelHolder, log)
 	maxTokens := retryResolveContext(ctxResolver, log, config.MaxTokens)
 	log.InfoLogf("Model context: %d tokens", maxTokens)
 
 	tools.SetMediaConfig(tools.MediaConfig{
 		ModelHolder: modelHolder,
-
-
 
 		MaxTokens: 4096,
 	})
@@ -276,8 +269,7 @@ func main() {
 
 	if config.PeerID > 0 {
 		if *reset {
-			
-			
+
 			clearCtx, clearCancel := context.WithTimeout(context.Background(), 30*time.Second)
 			agentLoop.ClearAllSlots(clearCtx)
 			clearCancel()
@@ -304,18 +296,18 @@ func main() {
 	alias, modelName, llamaURL := modelHolder.GetCurrent()
 	sysPromptDir := filepath.Join(agentDir, "agents")
 	subAgentCfg := agent.Config{
-		LlamaServerURL:      llamaURL,
-		EngineType:          modelHolder.GetCurrentEngineType(),
-		Model:               modelName,
-		MaxTokens:           maxTokens,
-		ModelLimitInput:     config.ModelLimitInput,
-		SummarizeReasoning:  config.SummarizeReasoning,
-		Temperature:         config.Temperature,
-		EnableTools:         true,
-		MaxToolCallDepth:    config.MaxToolCallDepth,
-		ToolOutputMaxLines:  config.ToolOutput.MaxLines,
-		ToolOutputMaxBytes:  config.ToolOutput.MaxBytes,
-		Debug:               *debug,
+		LlamaServerURL:     llamaURL,
+		EngineType:         modelHolder.GetCurrentEngineType(),
+		Model:              modelName,
+		MaxTokens:          maxTokens,
+		ModelLimitInput:    config.ModelLimitInput,
+		SummarizeReasoning: config.SummarizeReasoning,
+		Temperature:        config.Temperature,
+		EnableTools:        true,
+		MaxToolCallDepth:   config.MaxToolCallDepth,
+		ToolOutputMaxLines: config.ToolOutput.MaxLines,
+		ToolOutputMaxBytes: config.ToolOutput.MaxBytes,
+		Debug:              *debug,
 		SessionConfig: session.Config{
 			SessionFile: "",
 		},
@@ -599,7 +591,6 @@ func buildQuestionText(q map[string]interface{}) string {
 	return truncateQuestion(b.String())
 }
 
-
 func truncateQuestion(text string) string {
 	const vkMessageLimit = 4096
 	runes := []rune(text)
@@ -607,7 +598,6 @@ func truncateQuestion(text string) string {
 		return text
 	}
 
-	
 	marker := "\n\nOptions:"
 	markerIdx := strings.LastIndex(text, marker)
 	if markerIdx == -1 {
@@ -623,7 +613,6 @@ func truncateQuestion(text string) string {
 	}
 	return string(head) + "..." + optionsPart
 }
-
 
 func retryResolveContext(resolver *agentloop.ModelContextResolver, log *logger.Logger, configuredFallback int) int {
 	const maxAttempts = 12
@@ -658,6 +647,9 @@ func registerTools(r *tools.Registry) {
 	r.Register(&tools.WebSearchTool{})
 	r.Register(&tools.GlobTool{})
 	r.Register(&tools.GrepTool{})
+	r.Register(&tools.AstGrepTool{})
+	r.Register(&tools.AstEditTool{})
+	r.Register(&tools.EvalTool{})
 	r.Register(&tools.CalcTool{})
 	r.Register(&tools.EditTool{})
 	r.Register(&tools.ApplyPatchTool{})
@@ -732,4 +724,3 @@ func initAgentManager(agents map[string]agentpolicy.AgentCfg, agentDir string, l
 	log.InfoLogf("AgentManager: %d agents registered", len(am.ListAgentNames()))
 	return am
 }
-

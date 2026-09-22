@@ -10,7 +10,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-
 func TestOrchestratorLeafSessionPersistsAndCleans(t *testing.T) {
 	st := newSubAgentToolTestStore(t)
 	orchestrator := NewOrchestrator(OrchestratorConfig{Store: st})
@@ -40,7 +39,6 @@ func TestOrchestratorLeafSessionPersistsAndCleans(t *testing.T) {
 		t.Errorf("expected empty chain after end, got %+v", chain)
 	}
 }
-
 
 func TestOrchestratorSaveAgentHistory(t *testing.T) {
 	st := newSubAgentToolTestStore(t)
@@ -88,7 +86,6 @@ func TestOrchestratorSaveAgentHistory(t *testing.T) {
 		t.Error("expected messages JSON to be persisted")
 	}
 }
-
 
 func TestAgentLoopResumeInterruptedTask(t *testing.T) {
 	st := newSubAgentToolTestStore(t)
@@ -138,7 +135,6 @@ func TestAgentLoopResumeInterruptedTask(t *testing.T) {
 	}
 }
 
-
 func TestAgentLoopResumeInterruptedTaskNoop(t *testing.T) {
 	server, _, _, chatCount := scriptedLLM(t)
 	defer server.Close()
@@ -152,8 +148,6 @@ func TestAgentLoopResumeInterruptedTaskNoop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	
-	
 	before := chatCount()
 	loop.EnsureSession(7)
 	loop.ResumeInterruptedTask(context.Background(), 7)

@@ -19,9 +19,9 @@ func TestSubAgentToolDeliveryLifecycle(t *testing.T) {
 
 	vk := &bgThinkingVK{}
 	tool := &SubAgentTool{
-		PeerID:       1,
-		MaxDepth:     4,
-		VKClient:     vk,
+		PeerID:         1,
+		MaxDepth:       4,
+		VKClient:       vk,
 		ThinkingPeerID: 99,
 	}
 

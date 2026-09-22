@@ -56,7 +56,7 @@ func TestRunAgentNoStoreIsNoop(t *testing.T) {
 	if id := orchestrator.beginRootSession("lead", "sys", "t", 1, "root-uuid"); id != "" {
 		t.Errorf("expected empty root ID without store, got %q", id)
 	}
-	orchestrator.endRootSession(1, "") 
+	orchestrator.endRootSession(1, "")
 }
 
 func TestRunAgentWiresRootIntoSubAgentTool(t *testing.T) {
@@ -102,7 +102,6 @@ func TestRunAgentWiresRootIntoSubAgentTool(t *testing.T) {
 	}
 }
 
-
 func hangingWorkerLLM(t *testing.T) (*httptest.Server, func() int32) {
 	t.Helper()
 	var calls int32
@@ -120,7 +119,6 @@ func hangingWorkerLLM(t *testing.T) (*httptest.Server, func() int32) {
 	}))
 	return server, func() int32 { return atomic.LoadInt32(&calls) }
 }
-
 
 func TestRunAgentPersistsRootChainWhileWorkerInFlight(t *testing.T) {
 	dir := t.TempDir()

@@ -86,12 +86,12 @@ func scriptedFinalRound(content string) []string {
 	}
 }
 
-func TestProcessToolResults_CheckpointFiredPerRound(t *testing.T) {
+func TestRunTurn_CheckpointFiredPerRound(t *testing.T) {
 	tests := []struct {
-		name       string
-		scripts    [][]string
-		setHook    bool
-		wantCalls  []string
+		name      string
+		scripts   [][]string
+		setHook   bool
+		wantCalls []string
 	}{
 		{
 			name:      "single tool round fires once",
@@ -100,14 +100,14 @@ func TestProcessToolResults_CheckpointFiredPerRound(t *testing.T) {
 			wantCalls: []string{"time_get"},
 		},
 		{
-			name:      "two tool rounds fire twice",
+			name: "two tool rounds fire twice",
 			scripts: [][]string{
 				scriptedToolCallRound([2]string{"time_get", "{}"}),
-				scriptedToolCallRound([2]string{"calc", "{\"expression\":\"2+2\"}"}, [2]string{"file_read", "{\"path\":\"/etc/hostname\"}"}),
+				scriptedToolCallRound([2]string{"calc", "{\"expression\":\"2+2\"}"}, [2]string{"read", "{\"path\":\"/etc/hostname\"}"}),
 				scriptedFinalRound("done"),
 			},
 			setHook:   true,
-			wantCalls: []string{"time_get", "calc,file_read"},
+			wantCalls: []string{"time_get", "calc,read"},
 		},
 		{
 			name:      "nil checkpoint hook stays silent",
@@ -130,13 +130,15 @@ func TestProcessToolResults_CheckpointFiredPerRound(t *testing.T) {
 				cs.SetCheckpoint(rec.Record)
 			}
 
-			ctx := context.Background()
-			result, err := a.processWithTools(ctx, []Message{{Role: "user", Content: "start"}}, a.getSession(77))
+			s := a.getSession(77)
+			s.AddUserMessage("start")
+
+			result, err := a.runTurn(context.Background(), s)
 			if err != nil {
-				t.Fatalf("processWithTools: %v", err)
+				t.Fatalf("runTurn: %v", err)
 			}
-			if result.Response != "finished" && result.Response != "done" {
-				t.Errorf("unexpected final response %q", result.Response)
+			if result != "finished" && result != "done" {
+				t.Errorf("unexpected final response %q", result)
 			}
 
 			got := rec.recorded()

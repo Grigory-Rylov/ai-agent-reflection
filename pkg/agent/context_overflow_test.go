@@ -7,11 +7,11 @@ import (
 
 func TestParseContextOverflowError(t *testing.T) {
 	tests := []struct {
-		name          string
-		err           error
-		wantOverflow  bool
-		wantTokens    int
-		wantMaxCtx    int
+		name         string
+		err          error
+		wantOverflow bool
+		wantTokens   int
+		wantMaxCtx   int
 	}{
 		{
 			name:         "nil error",
@@ -24,17 +24,17 @@ func TestParseContextOverflowError(t *testing.T) {
 			wantOverflow: false,
 		},
 		{
-			name: "real llama-server error",
-			err: fmt.Errorf(`API error: status 400, body: {"error":{"code":400,"message":"request (100010 tokens) exceeds the available context size (64000 tokens), try increasing it","type":"exceed_context_size_error","n_prompt_tokens":100010,"n_ctx":64000}}`),
-			wantOverflow:  true,
-			wantTokens:    100010,
-			wantMaxCtx:    64000,
+			name:         "real llama-server error",
+			err:          fmt.Errorf(`API error: status 400, body: {"error":{"code":400,"message":"request (100010 tokens) exceeds the available context size (64000 tokens), try increasing it","type":"exceed_context_size_error","n_prompt_tokens":100010,"n_ctx":64000}}`),
+			wantOverflow: true,
+			wantTokens:   100010,
+			wantMaxCtx:   64000,
 		},
 		{
 			name:         "context exceed without JSON",
 			err:          fmt.Errorf("request exceeds context size"),
 			wantOverflow: true,
-			wantTokens:   0, 
+			wantTokens:   0,
 			wantMaxCtx:   0,
 		},
 	}

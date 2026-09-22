@@ -87,44 +87,45 @@ func PathsAllAllowedForPeer(peerID int64, paths []string) bool {
 type FileToolKind int
 
 const (
-	ToolRead  FileToolKind = iota
+	ToolRead FileToolKind = iota
 	ToolWrite
 )
 
 func FileToolPaths(toolName string, args map[string]string) []string {
+	toolName = ResolveToolAlias(toolName)
 	switch toolName {
-	case "file_read", "read_file":
+	case "read":
 		if p, ok := args["path"]; ok && p != "" {
 			return []string{p}
 		}
 		return []string{"."}
-	case "file_write", "write_file":
+	case "write":
 		if p, ok := args["path"]; ok && p != "" {
 			return []string{p}
 		}
 		return []string{"."}
-	case "edit", "edit_file":
+	case "edit":
 		if p, ok := args["path"]; ok && p != "" {
 			return []string{p}
 		}
 		return []string{"."}
-	case "file_list", "list_dir", "dir_list":
+	case "file_list":
 		if p, ok := args["path"]; ok && p != "" {
 			return []string{p}
 		}
 		return []string{"."}
-	case "glob", "find_files":
+	case "glob":
 		var paths []string
 		if p, ok := args["path"]; ok && p != "" {
 			paths = append(paths, p)
 		}
 		return paths
-	case "search_code", "grep", "grep_search":
+	case "grep":
 		if p, ok := args["path"]; ok && p != "" {
 			return []string{p}
 		}
 		return []string{"."}
-	case "shell_execute", "shell":
+	case "bash":
 		return nil
 	}
 	return nil
@@ -784,8 +785,8 @@ var readOnlyCommands = map[string]bool{
 	"echo": true, "printf": true, "pwd": true, "date": true, "env": true,
 	"export": true, "unset": true,
 	"ps": true, "top": true, "free": true, "df": true, "du": true, "uptime": true, "uname": true,
-	"find": true,
-	"go": true,
+	"find":   true,
+	"go":     true,
 	"docker": true,
 }
 

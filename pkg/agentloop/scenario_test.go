@@ -83,8 +83,7 @@ func (s *Scenario) MockServer() *httptest.Server {
 	callIndex := 0
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		
-		
+
 		if r.URL.Path == "/tokenize" {
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprint(w, `{"tokens":[1]}`)
@@ -102,7 +101,7 @@ func (s *Scenario) MockServer() *httptest.Server {
 		if idx < len(s.Steps) {
 			content = s.Steps[idx].Content
 		} else if len(s.Steps) > 0 {
-			
+
 			content = s.Steps[len(s.Steps)-1].Content
 		} else {
 			content = "Done."
@@ -114,7 +113,6 @@ func (s *Scenario) MockServer() *httptest.Server {
 		fmt.Fprintf(w, "data: [DONE]\n")
 	}))
 }
-
 
 func (s *Scenario) AssertResult(t testing.TB, result string) {
 	t.Helper()

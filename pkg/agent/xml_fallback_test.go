@@ -16,6 +16,15 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
+func xmlToolRoundFallback(ctx context.Context, a *agentImpl, responseText string, s *session.Session) (FunctionCallResult, bool) {
+	calls, content, ok := parseEmbeddedXMLToolCalls(roundResult{text: responseText, finishReason: "stop"})
+	if !ok {
+		return FunctionCallResult{}, false
+	}
+	a.executeAndAppendBatch(ctx, a.newTurnContext(s), content, calls)
+	return FunctionCallResult{Success: true, Response: content}, true
+}
+
 func newTestAgentWithStub(t *testing.T, config Config) (*agentImpl, *StubToolExecutor) {
 	t.Helper()
 	config.EnableTools = true
@@ -76,13 +85,9 @@ func TestConvertXMLToolCalls(t *testing.T) {
 func TestXMLFallback_NoToolCalls(t *testing.T) {
 	a := &agentImpl{}
 	ctx := context.Background()
-	messages := []Message{{Role: "user", Content: "Hello"}}
 	s := session.NewSession(session.DefaultConfig())
 
-	result, used, err := a.xmlFallback(ctx, "Just a normal response.", messages, s)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result, used := xmlToolRoundFallback(ctx, a, "Just a normal response.", s)
 	if used {
 		t.Error("expected not used for normal text")
 	}
@@ -94,13 +99,9 @@ func TestXMLFallback_NoToolCalls(t *testing.T) {
 func TestXMLFallback_EmptyResponse(t *testing.T) {
 	a := &agentImpl{}
 	ctx := context.Background()
-	messages := []Message{{Role: "user", Content: "Hello"}}
 	s := session.NewSession(session.DefaultConfig())
 
-	result, used, err := a.xmlFallback(ctx, "", messages, s)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result, used := xmlToolRoundFallback(ctx, a, "", s)
 	if used {
 		t.Error("expected not used for empty text")
 	}
@@ -115,7 +116,6 @@ func TestXMLFallback_WithXMLButNoRegistry(t *testing.T) {
 		debugLog:      debug.NewLogger(false),
 	}
 	ctx := context.Background()
-	messages := []Message{{Role: "user", Content: "Check time"}}
 	s := session.NewSession(session.DefaultConfig())
 
 	responseText := `<tool_call>
@@ -123,18 +123,20 @@ func TestXMLFallback_WithXMLButNoRegistry(t *testing.T) {
 </function>
 </tool_call>`
 
-	result, used, err := a.xmlFallback(ctx, responseText, messages, s)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, used := xmlToolRoundFallback(ctx, a, responseText, s)
+	if !used {
+		t.Fatal("expected XML tool call to be parsed even when tool is not registered")
 	}
-	if used {
-		t.Error("expected not used when tool not in registry")
+	foundNotFound := false
+	for _, m := range s.GetHistory() {
+		if m.Role == session.ToolRole && strings.Contains(m.Content, "not found") {
+			foundNotFound = true
+		}
 	}
-	if result.Success {
-		t.Error("expected result to not be success when not used")
+	if !foundNotFound {
+		t.Error("expected tool-not-found error result appended to session")
 	}
 }
-
 
 func TestXMLFallback_Integration(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -165,16 +167,9 @@ func TestXMLFallback_Integration(t *testing.T) {
 
 Here is the result.`
 
-	messages := []Message{
-		{Role: "system", Content: a.GetSystemPrompt()},
-		{Role: "user", Content: "What time is it?"},
-	}
 	s := a.GetSession(99910)
 
-	result, used, err := a.xmlFallback(context.Background(), responseText, messages, s)
-	if err != nil {
-		t.Fatalf("xmlFallback failed: %v", err)
-	}
+	result, used := xmlToolRoundFallback(context.Background(), a, responseText, s)
 	if !used {
 		t.Fatal("expected xmlFallback to be used")
 	}
@@ -189,7 +184,6 @@ Here is the result.`
 	}
 	t.Logf("Response: %s", result.Response)
 }
-
 
 func TestXMLFallback_MultipleXMLToolCalls(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -221,15 +215,9 @@ func TestXMLFallback_MultipleXMLToolCalls(t *testing.T) {
 </function>
 </tool_call>`
 
-	messages := []Message{
-		{Role: "user", Content: "What time is it and what is 2+2?"},
-	}
 	s := a.GetSession(99912)
 
-	result, used, err := a.xmlFallback(context.Background(), responseText, messages, s)
-	if err != nil {
-		t.Fatalf("xmlFallback failed: %v", err)
-	}
+	result, used := xmlToolRoundFallback(context.Background(), a, responseText, s)
 	if !used {
 		t.Fatal("expected xmlFallback to be used")
 	}
@@ -242,10 +230,9 @@ func TestXMLFallback_MultipleXMLToolCalls(t *testing.T) {
 	t.Logf("Response: %s", result.Response)
 }
 
-
 func TestParseXMLToolCalls_FileWriteRead(t *testing.T) {
 	input := `<tool_call>
-<function=file_write>
+<function=write>
 <parameter=path>/tmp/xml_test.txt</parameter>
 <parameter=content>Hello from XML tool call</parameter>
 </function>
@@ -255,8 +242,8 @@ func TestParseXMLToolCalls_FileWriteRead(t *testing.T) {
 	if len(result.ToolCalls) != 1 {
 		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
 	}
-	if result.ToolCalls[0].Name != "file_write" {
-		t.Errorf("expected file_write, got %q", result.ToolCalls[0].Name)
+	if result.ToolCalls[0].Name != "write" {
+		t.Errorf("expected write, got %q", result.ToolCalls[0].Name)
 	}
 	if result.ToolCalls[0].Args["path"] != "/tmp/xml_test.txt" {
 		t.Errorf("expected /tmp/xml_test.txt, got %q", result.ToolCalls[0].Args["path"])
@@ -265,7 +252,6 @@ func TestParseXMLToolCalls_FileWriteRead(t *testing.T) {
 		t.Errorf("expected 'Hello from XML tool call', got %q", result.ToolCalls[0].Args["content"])
 	}
 }
-
 
 func TestProcessWithTools_XMLFallback(t *testing.T) {
 	callCount := 0
@@ -312,7 +298,6 @@ func TestProcessWithTools_XMLFallback(t *testing.T) {
 	}
 	t.Logf("Final response: %s", response)
 }
-
 
 func TestProcessWithTools_XMLAndTextFallback(t *testing.T) {
 	callCount := 0
@@ -366,14 +351,7 @@ Done!`
 	s := a.GetSession(99914)
 	s.AddUserMessage("What time is it?")
 
-	messages := []Message{
-		{Role: "user", Content: "What time is it?"},
-	}
-
-	result, used, err := a.xmlFallback(context.Background(), xmlText, messages, s)
-	if err != nil {
-		t.Fatalf("xmlFallback failed: %v", err)
-	}
+	result, used := xmlToolRoundFallback(context.Background(), a, xmlText, s)
 	if !used {
 		t.Fatal("expected xmlFallback to be used")
 	}
@@ -426,16 +404,15 @@ func TestConvertXMLToolCalls_NilArgs(t *testing.T) {
 	}
 }
 
-
 func TestXMLInReasoning(t *testing.T) {
-	reasoningText := "I need to read a file.\n\n<function=read_file>\n<parameter=path>/tmp/test.txt</parameter>\n</function>"
+	reasoningText := "I need to read a file.\n\n<function=read>\n<parameter=path>/tmp/test.txt</parameter>\n</function>"
 
 	parsed := ParseXMLToolCalls(reasoningText)
 	if len(parsed.ToolCalls) != 1 {
 		t.Fatalf("expected 1 tool call in reasoning, got %d", len(parsed.ToolCalls))
 	}
-	if parsed.ToolCalls[0].Name != "read_file" {
-		t.Errorf("expected read_file, got %q", parsed.ToolCalls[0].Name)
+	if parsed.ToolCalls[0].Name != "read" {
+		t.Errorf("expected read, got %q", parsed.ToolCalls[0].Name)
 	}
 	if parsed.ToolCalls[0].Args["path"] != "/tmp/test.txt" {
 		t.Errorf("expected /tmp/test.txt, got %q", parsed.ToolCalls[0].Args["path"])
@@ -450,13 +427,13 @@ func TestXMLDuplicateFiltering(t *testing.T) {
 		ID:   "call_1",
 		Type: "function",
 		Function: ToolCallFunction{
-			Name:      "file_read",
+			Name:      "read",
 			Arguments: []byte(`{"path":"/tmp/test.txt"}`),
 		},
 	}
 
 	xmlTC := XMLToolCall{
-		Name: "file_read",
+		Name: "read",
 		Args: map[string]string{"path": "/tmp/test.txt"},
 	}
 
@@ -480,13 +457,13 @@ func TestXMLDifferentArgsNotFiltered(t *testing.T) {
 		ID:   "call_1",
 		Type: "function",
 		Function: ToolCallFunction{
-			Name:      "file_read",
+			Name:      "read",
 			Arguments: []byte(`{"path":"/tmp/a.txt"}`),
 		},
 	}
 
 	xmlTC := XMLToolCall{
-		Name: "file_read",
+		Name: "read",
 		Args: map[string]string{"path": "/tmp/b.txt"},
 	}
 
@@ -503,13 +480,13 @@ func TestXMLDifferentToolsNotFiltered(t *testing.T) {
 		ID:   "call_1",
 		Type: "function",
 		Function: ToolCallFunction{
-			Name:      "file_read",
+			Name:      "read",
 			Arguments: []byte(`{"path":"/tmp/test.txt"}`),
 		},
 	}
 
 	xmlTC := XMLToolCall{
-		Name: "file_write",
+		Name: "write",
 		Args: map[string]string{"path": "/tmp/test.txt"},
 	}
 
@@ -533,7 +510,6 @@ func TestCleanedReasoningSentToThinking(t *testing.T) {
 		t.Errorf("content should contain reasoning text, got %q", parsed.Content)
 	}
 }
-
 
 func TestProcessXMLToolResults_ChainedToolCalls(t *testing.T) {
 	callCount := 0
@@ -567,24 +543,15 @@ func TestProcessXMLToolResults_ChainedToolCalls(t *testing.T) {
 	s := a.GetSession(99920)
 	s.AddUserMessage("What time is it and calculate 2+2?")
 
-	messages := []Message{
-		{Role: "user", Content: "What time is it and calculate 2+2?"},
-		{Role: "assistant", Content: "", ToolCalls: []ToolCall{
-			{ID: "call_1", Type: "function", Function: ToolCallFunction{Name: "time_get", Arguments: []byte("{}")}},
-		}},
-		{Role: "tool", ToolCallID: "call_1", Name: "time_get", Content: `{"time": "2024-01-01T12:00:00Z"}`},
-	}
+	s.AddAssistantMessageWithToolCalls("", []session.MsgToolCall{
+		{ID: "call_1", Type: "function", Function: session.MsgToolCallFunc{Name: "time_get", Arguments: "{}"}},
+	})
+	s.AddToolMessage("call_1", "time_get", `{"time": "2024-01-01T12:00:00Z"}`)
 
-	toolResults := []ToolCallResult{
-		{ToolCallID: "call_1", ToolName: "time_get", Content: `{"time": "2024-01-01T12:00:00Z"}`, IsError: false},
-	}
-
-	response, err := a.processToolResults(context.Background(), messages, "", []ToolCall{
-		{ID: "call_1", Type: "function", Function: ToolCallFunction{Name: "time_get", Arguments: []byte("{}")}},
-	}, toolResults, s, make(map[string]bool))
+	response, err := a.runTurn(context.Background(), s)
 
 	if err != nil {
-		t.Fatalf("processToolResults failed: %v", err)
+		t.Fatalf("runTurn failed: %v", err)
 	}
 
 	if callCount < 2 {
@@ -601,7 +568,6 @@ func TestProcessXMLToolResults_ChainedToolCalls(t *testing.T) {
 
 	t.Logf("Final response: %s", response)
 }
-
 
 func TestProcessMessage_InvalidXMLToolCall_ShouldNotForwardToUser(t *testing.T) {
 	callCount := 0
@@ -652,14 +618,12 @@ func TestProcessMessage_InvalidXMLToolCall_ShouldNotForwardToUser(t *testing.T) 
 		t.Errorf("expected at least 2 LLM calls, got %d", callCount)
 	}
 
-	
 	if !executor.Contains("[TOOL] Call:") {
 		t.Error("expected at least one tool call via stub executor")
 	}
 
 	t.Logf("Final response: %s, LLM calls: %d", response, callCount)
 }
-
 
 func TestProcessToolResults_DeduplicateSameToolAcrossRecursion(t *testing.T) {
 	llmCallCount := 0
@@ -669,18 +633,17 @@ func TestProcessToolResults_DeduplicateSameToolAcrossRecursion(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 
 		if llmCallCount == 1 {
-			
+
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"<tool_call>\\n<function=counting>\\n</function>\\n</tool_call>\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 			w.Write([]byte("[DONE]\n"))
 		} else if llmCallCount == 2 {
-			
-			
+
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Already counted.\\n<tool_call>\\n<function=counting>\\n</function>\\n</tool_call>\\nDone.\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 			w.Write([]byte("[DONE]\n"))
 		} else {
-			
+
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Done.\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 			w.Write([]byte("[DONE]\n"))
@@ -710,24 +673,20 @@ func TestProcessToolResults_DeduplicateSameToolAcrossRecursion(t *testing.T) {
 
 	t.Logf("LLM calls: %d, tool log entries: %d", llmCallCount, len(executor.ReadLog()))
 
-	
 	countingCalls := executor.Count("[TOOL] Call: counting")
 	if countingCalls != 1 {
 		t.Errorf("expected counting tool to execute exactly 1 time (dedup), got %d calls in log", countingCalls)
 		t.Logf("Full log: %v", executor.ReadLog())
 	}
 
-	
 	if strings.Contains(response, "<tool_call>") || strings.Contains(response, "<function") {
 		t.Errorf("response should not contain XML tool call tags, got: %q", response)
 	}
 
-	
 	if llmCallCount < 2 {
 		t.Errorf("expected at least 2 LLM calls, got %d", llmCallCount)
 	}
 }
-
 
 func TestProcessToolResults_InvalidXMLToolCall(t *testing.T) {
 	callCount := 0
@@ -761,27 +720,17 @@ func TestProcessToolResults_InvalidXMLToolCall(t *testing.T) {
 	s := a.GetSession(99940)
 	s.AddUserMessage("do something")
 
-	messages := []Message{
-		{Role: "user", Content: "do something"},
-		{Role: "assistant", Content: "", ToolCalls: []ToolCall{
-			{ID: "call_1", Type: "function", Function: ToolCallFunction{Name: "counting", Arguments: []byte("{}")}},
-		}},
-		{Role: "tool", ToolCallID: "call_1", Name: "counting", Content: `ok`},
-	}
+	s.AddAssistantMessageWithToolCalls("", []session.MsgToolCall{
+		{ID: "call_1", Type: "function", Function: session.MsgToolCallFunc{Name: "counting", Arguments: "{}"}},
+	})
+	s.AddToolMessage("call_1", "counting", `ok`)
 
-	toolResults := []ToolCallResult{
-		{ToolCallID: "call_1", ToolName: "counting", Content: `ok`, IsError: false},
-	}
-
-	response, err := a.processToolResults(context.Background(), messages, "", []ToolCall{
-		{ID: "call_1", Type: "function", Function: ToolCallFunction{Name: "counting", Arguments: []byte("{}")}},
-	}, toolResults, s, make(map[string]bool))
+	response, err := a.runTurn(context.Background(), s)
 
 	if err != nil {
-		t.Fatalf("processToolResults failed: %v", err)
+		t.Fatalf("runTurn failed: %v", err)
 	}
 
-	
 	if !executor.Contains("counting") {
 		t.Error("expected counting tool to be called via stub executor")
 	}
@@ -802,7 +751,6 @@ func TestProcessToolResults_InvalidXMLToolCall(t *testing.T) {
 
 	t.Logf("Response: %s, LLM calls: %d, tool log: %v", response, callCount, executor.ReadLog())
 }
-
 
 func TestProcessMessage_Integration_NativeToolCallsThenXMLInToolResults(t *testing.T) {
 	callCount := 0
@@ -846,8 +794,6 @@ func TestProcessMessage_Integration_NativeToolCallsThenXMLInToolResults(t *testi
 		t.Errorf("response should not contain XML tool call tags, got: %q", response)
 	}
 
-	
-	
 	countingCalls := executor.Count("[TOOL] Call: counting")
 	if countingCalls != 1 {
 		t.Errorf("expected counting tool to execute exactly 1 time (from native tool_calls), got %d times in log", countingCalls)
@@ -867,7 +813,6 @@ func TestProcessMessage_Integration_NativeToolCallsThenXMLInToolResults(t *testi
 
 	t.Logf("Final response: %s, LLM calls: %d, tool log: %v", response, callCount, executor.ReadLog())
 }
-
 
 func TestReasoningSentToThinkingInToolCallsFlow(t *testing.T) {
 	var mu sync.Mutex
@@ -946,14 +891,12 @@ func TestReasoningSentToThinkingInToolCallsFlow(t *testing.T) {
 	}
 }
 
-
 func TestReasoningNotLeakedToResponse(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		w.Header().Set("Content-Type", "text/event-stream")
 
-		
 		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Это reasoning текст который должен остаться только в thinking канале.\"}}]}\n\n"))
 		w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 		w.Write([]byte("[DONE]\n"))
@@ -977,14 +920,12 @@ func TestReasoningNotLeakedToResponse(t *testing.T) {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
 
-	
 	if strings.Contains(response, "Это reasoning текст") {
 		t.Error("BUG: response contains reasoning text — reasoning leaked into regular chat")
 	}
 
 	t.Logf("Final response: %q, LLM calls: %d", response, callCount)
 }
-
 
 func TestMalformedXMLInReasoning_NotSilentlyReturned(t *testing.T) {
 	callCount := 0
@@ -993,8 +934,7 @@ func TestMalformedXMLInReasoning_NotSilentlyReturned(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 
 		if callCount == 1 {
-			
-			
+
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Нужно создать исправленный код и отправить его на QA для проверки\\n\\n<tool_call>\\n<subagent>\\n<name>\\nworker\\n</name>\\n</subagent>\\n</tool_call>\"}}]}\n\n"))
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 		} else {
@@ -1022,19 +962,16 @@ func TestMalformedXMLInReasoning_NotSilentlyReturned(t *testing.T) {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
 
-	
 	if strings.Contains(response, "Нужно создать исправленный код") {
 		t.Error("BUG: response contains reasoning text instead of proper response — malformed XML was silently stripped and returned as answer")
 	}
 
-	
 	if callCount < 2 {
 		t.Errorf("BUG: expected at least 2 LLM calls (format error should retry), got %d", callCount)
 	}
 
 	t.Logf("Final response: %s, LLM calls: %d", response, callCount)
 }
-
 
 func TestEmptyToolCallInReasoning_SendsCorrectiveFeedback(t *testing.T) {
 	callCount := 0
@@ -1081,7 +1018,6 @@ func TestEmptyToolCallInReasoning_SendsCorrectiveFeedback(t *testing.T) {
 	t.Logf("Final response: %s, LLM calls: %d", response, callCount)
 }
 
-
 func TestProcessWithTools_XMLInResponseText_LongerReasoning(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1089,7 +1025,7 @@ func TestProcessWithTools_XMLInResponseText_LongerReasoning(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 
 		if callCount == 1 {
-			content := "Let me read some files.\n\n<tool_call>\n<function=file_read>\n<parameter=path>/tmp/test.txt</parameter>\n</function>\n</tool_call>\n\nDone."
+			content := "Let me read some files.\n\n<tool_call>\n<function=read>\n<parameter=path>/tmp/test.txt</parameter>\n</function>\n</tool_call>\n\nDone."
 			longReasoning := "I need to analyze the project structure. Let me read the key files first. "
 			longReasoning += strings.Repeat("more reasoning ", 300)
 
@@ -1130,8 +1066,8 @@ func TestProcessWithTools_XMLInResponseText_LongerReasoning(t *testing.T) {
 		t.Fatal("expected non-empty response")
 	}
 
-	if !executor.Contains("file_read") {
-		t.Error("BUG: file_read tool was NOT called — XML in responseText was ignored because reasoningText was longer")
+	if !executor.Contains("read") {
+		t.Error("BUG: read tool was NOT called — XML in responseText was ignored because reasoningText was longer")
 	}
 	if strings.Contains(response, "<tool_call>") || strings.Contains(response, "<function") {
 		t.Error("response should not contain XML tool call tags")
@@ -1151,14 +1087,13 @@ func TestProcessWithTools_XMLInResponseText_LongerReasoning(t *testing.T) {
 	t.Logf("Final response: %s, LLM calls: %d", response, callCount)
 }
 
-
 func TestTruncatedStream_NoCorrectiveFeedback(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		w.Header().Set("Content-Type", "text/event-stream")
 
-		reasoningWithPartial := "Let me write.\\n\\n<tool_call>\\n<function=file_write>\\n<parameter=path>/tmp/test.txt</parameter>"
+		reasoningWithPartial := "Let me write.\\n\\n<tool_call>\\n<function=write>\\n<parameter=path>/tmp/test.txt</parameter>"
 		w.Write([]byte(`data: {"choices":[{"delta":{"reasoning_content":"` + reasoningWithPartial + `"}}]}` + "\n\n"))
 		w.Write([]byte("[DONE]\n"))
 	}))
@@ -1190,7 +1125,6 @@ func TestTruncatedStream_NoCorrectiveFeedback(t *testing.T) {
 	}
 }
 
-
 func TestMalformedXMLInReasoning_WithFinishStop(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1198,7 +1132,7 @@ func TestMalformedXMLInReasoning_WithFinishStop(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 
 		if callCount == 1 {
-			reasoningWithPartial := "Let me write.\\n\\n<tool_call>\\n<function=file_write>\\n<parameter=path>/tmp/test.txt</parameter>"
+			reasoningWithPartial := "Let me write.\\n\\n<tool_call>\\n<function=write>\\n<parameter=path>/tmp/test.txt</parameter>"
 			w.Write([]byte(`data: {"choices":[{"delta":{"reasoning_content":"` + reasoningWithPartial + `"}}]}` + "\n\n"))
 			w.Write([]byte(`data: {"choices":[{"delta":{},"finish_reason":"stop"}]}` + "\n\n"))
 		} else {
@@ -1236,5 +1170,3 @@ func TestMalformedXMLInReasoning_WithFinishStop(t *testing.T) {
 
 	t.Logf("Final response: %s, LLM calls: %d", response, callCount)
 }
-
-

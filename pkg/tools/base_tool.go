@@ -6,53 +6,53 @@ import (
 	"fmt"
 )
 
-
 type ToolResult struct {
 	Success bool        `json:"success"`
 	Data    interface{} `json:"data,omitempty"`
 	Error   string      `json:"error,omitempty"`
 }
 
-
 type Tool interface {
-	
 	Name() string
 
-	
 	Description() string
 
-	
 	Schema() map[string]interface{}
 
-	
 	Execute(ctx context.Context, inputs map[string]string) (ToolResult, error)
 }
 
-
 var toolAliases = map[string]string{
-	"read_file":    "file_read",
-	"read":         "file_read",
-	"write_file":   "file_write",
-	"write":        "file_write",
-	"edit_file":    "edit",
-	"list_dir":     "file_list",
-	"list_files":   "file_list",
-	"dir_list":     "file_list",
-	"shell":        "shell_execute",
-	"execute":      "shell_execute",
-	"web_fetch":    "web_fetch",
-	"fetch":        "web_fetch",
-	"web_search":   "web_search",
-	"search":       "web_search",
-	"grep_search":  "grep",
-	"find_files":   "glob",
-	"calculate":    "calc",
+	"file_read":     "read",
+	"read_file":     "read",
+	"file_write":    "write",
+	"write_file":    "write",
+	"shell":         "bash",
+	"shell_execute": "bash",
+	"execute":       "bash",
+	"search_code":   "grep",
+	"grep_search":   "grep",
+	"question":      "ask",
+	"edit_file":     "edit",
+	"list_dir":      "file_list",
+	"list_files":    "file_list",
+	"dir_list":      "file_list",
+	"fetch":         "web_fetch",
+	"search":        "web_search",
+	"find_files":    "glob",
+	"calculate":     "calc",
+}
+
+func ResolveToolAlias(name string) string {
+	if alias, ok := toolAliases[name]; ok {
+		return alias
+	}
+	return name
 }
 
 type Registry struct {
 	tools map[string]Tool
 }
-
 
 func NewRegistry() *Registry {
 	return &Registry{
@@ -60,24 +60,20 @@ func NewRegistry() *Registry {
 	}
 }
 
-
 func (r *Registry) Register(tool Tool) {
 	r.tools[tool.Name()] = tool
 }
-
 
 func (r *Registry) Unregister(name string) {
 	delete(r.tools, name)
 }
 
-
 func (r *Registry) Get(name string) (Tool, bool) {
-	
+
 	if tool, ok := r.tools[name]; ok {
 		return tool, true
 	}
 
-	
 	if alias, ok := toolAliases[name]; ok {
 		tool, ok := r.tools[alias]
 		return tool, ok
@@ -86,7 +82,6 @@ func (r *Registry) Get(name string) (Tool, bool) {
 	return nil, false
 }
 
-
 func (r *Registry) GetAll() []Tool {
 	result := make([]Tool, 0, len(r.tools))
 	for _, tool := range r.tools {
@@ -94,7 +89,6 @@ func (r *Registry) GetAll() []Tool {
 	}
 	return result
 }
-
 
 func (r *Registry) IsRegistered(name string) bool {
 	if _, ok := r.tools[name]; ok {
@@ -107,12 +101,11 @@ func (r *Registry) IsRegistered(name string) bool {
 	return false
 }
 
-
 func (r *Registry) ToOpenAISchema() []map[string]interface{} {
 	schema := make([]map[string]interface{}, 0)
 
 	for _, tool := range r.GetAll() {
-		
+
 		item := map[string]interface{}{
 			"type": "function",
 			"function": map[string]interface{}{
@@ -127,7 +120,6 @@ func (r *Registry) ToOpenAISchema() []map[string]interface{} {
 	return schema
 }
 
-
 func CreateStringParameter(name, description string, required bool) map[string]interface{} {
 	param := map[string]interface{}{
 		"type":        "string",
@@ -138,7 +130,6 @@ func CreateStringParameter(name, description string, required bool) map[string]i
 	}
 	return param
 }
-
 
 func CreateIntegerParameter(name, description string, required bool) map[string]interface{} {
 	param := map[string]interface{}{
@@ -151,7 +142,6 @@ func CreateIntegerParameter(name, description string, required bool) map[string]
 	return param
 }
 
-
 func CreateBooleanParameter(name, description string, required bool) map[string]interface{} {
 	param := map[string]interface{}{
 		"type":        "boolean",
@@ -162,7 +152,6 @@ func CreateBooleanParameter(name, description string, required bool) map[string]
 	}
 	return param
 }
-
 
 func CreateEnumParameter(name, description string, values []string, required bool) map[string]interface{} {
 	param := map[string]interface{}{
@@ -176,7 +165,6 @@ func CreateEnumParameter(name, description string, values []string, required boo
 	return param
 }
 
-
 func MarshalToolResult(result ToolResult) string {
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -184,7 +172,6 @@ func MarshalToolResult(result ToolResult) string {
 	}
 	return string(data)
 }
-
 
 func UnmarshalToolResult(data string) (ToolResult, error) {
 	var result ToolResult
