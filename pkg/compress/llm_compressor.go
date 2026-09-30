@@ -5,7 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -34,7 +37,7 @@ func NewLLMCompressor(serverURL, model string, temperature float64) *LLMCompress
 		model:       model,
 		temperature: temperature,
 		client: &http.Client{
-			Timeout: 2 * time.Minute,
+			Timeout: 2 * time.Hour,
 		},
 	}
 }
@@ -79,15 +82,53 @@ func (c *LLMCompressor) Compress(ctx context.Context, req *CompressionRequest) (
 	}, nil
 }
 
+const summarizationAttempts = 3
+
+var summarizationRetryDelay = 2 * time.Second
+
 func (c *LLMCompressor) Complete(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error) {
 	if maxTokens <= 0 {
 		maxTokens = 2000
 	}
+
+	var lastErr error
+	for attempt := 1; attempt <= summarizationAttempts; attempt++ {
+		text, err := c.completeOnce(ctx, systemPrompt, userPrompt, maxTokens)
+		if err == nil {
+			return text, nil
+		}
+		lastErr = err
+		if !isTransientSummarizationError(ctx, err) {
+			return "", err
+		}
+		if attempt < summarizationAttempts {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(summarizationRetryDelay):
+			}
+		}
+	}
+	return "", fmt.Errorf("completion request failed after %d attempts: %w", summarizationAttempts, lastErr)
+}
+
+func (c *LLMCompressor) completeOnce(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error) {
 	text, _, err := c.sendCompressionRequestStreaming(ctx, systemPrompt, userPrompt, maxTokens)
 	if err != nil {
 		return "", fmt.Errorf("completion request failed: %w", err)
 	}
 	return text, nil
+}
+
+func isTransientSummarizationError(ctx context.Context, err error) bool {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if strings.Contains(err.Error(), "API error: status") {
+		return false
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 func (c *LLMCompressor) buildCompressionSystemPrompt(req *CompressionRequest) string {

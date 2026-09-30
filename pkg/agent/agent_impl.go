@@ -287,8 +287,8 @@ func (a *agentImpl) forceCompact(ctx context.Context, s *session.Session, addAut
 	raw := a.convertSessionHistoryRaw(s.GetHistory())
 	result, err := a.compactor.Compact(ctx, raw, a.compactionLimits(), a.compactionSettings())
 	if err != nil {
-		a.debugLog.Warn("LLM compaction failed: %v, falling back to head pruning", err)
-		return a.applyFallbackHeadCut(s)
+		a.debugLog.Warn("LLM compaction failed: %v; leaving transcript intact", err)
+		return false
 	}
 	if result.Summary == "" {
 		return false
@@ -302,29 +302,6 @@ func (a *agentImpl) forceCompact(ctx context.Context, s *session.Session, addAut
 
 	return true
 }
-
-func (a *agentImpl) applyFallbackHeadCut(s *session.Session) bool {
-	keepRecent := compress.ResolveKeepRecent(a.compactionSettings())
-	cut := compress.FindCutPoint(a.convertSessionHistoryRaw(s.GetHistory()), keepRecent)
-	if !cut.Found {
-		return false
-	}
-	a.markCompactedHead(s, cut.FirstKept)
-	s.MarkCompaction(cut.FirstKept, compactionFallbackSummary)
-	return true
-}
-
-func (a *agentImpl) markCompactedHead(s *session.Session, tailStartID int) {
-	for i := 0; i < tailStartID && i < len(s.GetHistory()); i++ {
-		msg := s.GetHistory()[i]
-		if msg.Role != session.SystemRole {
-			s.MarkMessageCompacted(i, compress.PRUNED_OUTPUT_PLACEHOLDER)
-		}
-	}
-	a.debugLog.Info("Compaction fallback: marked %d head messages as compacted", tailStartID)
-}
-
-const compactionFallbackSummary = "## Goal\n- [context compacted — summary unavailable]\n\n## Constraints & Preferences\n- (none)\n\n## Progress\n### Done\n- (compact failed)\n\n### In Progress\n- (truncated)\n\n### Blocked\n- context overflow during summarization\n\n## Key Decisions\n- (lost during compaction fallback)\n\n## Next Steps\n- continue current task\n\n## Critical Context\n- [compaction summary could not be generated]\n\n## Relevant Files\n- (none)"
 
 func (a *agentImpl) convertSessionHistory(history []session.Message) []tokenizers.Message {
 	return compress.FilterCompacted(a.convertSessionHistoryRaw(history))

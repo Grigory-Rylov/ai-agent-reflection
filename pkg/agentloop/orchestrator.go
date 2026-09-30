@@ -790,6 +790,7 @@ func (o *Orchestrator) makeAgentConfig() (agent.Config, error) {
 		maxTokens = ctx
 	}
 	return agent.Config{
+		SubagentWatch:      jobWatcher{},
 		LlamaServerURL:     llamaURL,
 		EngineType:         o.config.ModelHolder.GetCurrentEngineType(),
 		Model:              modelName,
@@ -877,6 +878,8 @@ func (o *Orchestrator) makeSubAgentTool(name string, a agent.Agent, peerID int64
 		Store:            o.config.Store,
 		ParentSessionID:  sessionID,
 		AgentSessionID:   sessionID,
+		BGOwner:          sessionID,
+		Blocking:         true,
 		ParentAgent:      a,
 		Chain:            chain,
 		ParentAgentName:  name,

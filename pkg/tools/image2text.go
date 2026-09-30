@@ -151,7 +151,7 @@ func postChatCompletion(ctx context.Context, host string, jsonData []byte) (stri
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: 2 * time.Hour}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("media recognize: request failed: %w", err)

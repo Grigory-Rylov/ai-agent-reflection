@@ -36,12 +36,12 @@ type Config struct {
 	TokenVK                 string                          `json:"token_vk"`
 	PeerID                  int64                           `json:"peer_id"`
 	ThinkingPeerID          int64                           `json:"thinking_peer_id"`
-	MaxTokens               int                             `json:"max_tokens"`
 	ModelLimitInput         int                             `json:"model_limit_input"`
 	SummarizeReasoning      bool                            `json:"summarize_reasoning"`
 	Temperature             float64                         `json:"temperature"`
 	StreamIdleTimeoutSec    int                             `json:"stream_idle_timeout_sec"`
 	MaxToolCallDepth        int                             `json:"max_tool_call_depth"`
+	BlockingSubagents       bool                            `json:"blocking_subagents"`
 	MCPConfigPath           string                          `json:"mcp_config_path"`
 	AllowedDirs             []string                        `json:"allowed_dirs"`
 	DBPath                  string                          `json:"db_path"`
@@ -210,7 +210,7 @@ func main() {
 	}
 
 	ctxResolver := agentloop.NewModelContextResolver(modelHolder, log)
-	maxTokens := retryResolveContext(ctxResolver, log, config.MaxTokens)
+	maxTokens := retryResolveContext(ctxResolver, log)
 	log.InfoLogf("Model context: %d tokens", maxTokens)
 
 	tools.SetMediaConfig(tools.MediaConfig{
@@ -296,6 +296,7 @@ func main() {
 	alias, modelName, llamaURL := modelHolder.GetCurrent()
 	sysPromptDir := filepath.Join(agentDir, "agents")
 	subAgentCfg := agent.Config{
+		SubagentWatch:      agentloop.NewSubagentWatcher(),
 		LlamaServerURL:     llamaURL,
 		EngineType:         modelHolder.GetCurrentEngineType(),
 		Model:              modelName,
@@ -320,6 +321,7 @@ func main() {
 		AgentManager:    agentManager,
 		CurrentDepth:    0,
 		MaxDepth:        4,
+		Blocking:        config.BlockingSubagents,
 		PeerID:          config.PeerID,
 		ThinkingPeerID:  config.ThinkingPeerID,
 		VKClient:        vkClient,
@@ -331,6 +333,7 @@ func main() {
 		SlotManager:     agentLoop.GetSlotManager(),
 		Slots:           agentLoop.GetSlots(),
 	})
+	toolRegistry.Register(&agentloop.SubagentsTool{})
 
 	orchestrator := agentloop.NewOrchestrator(agentloop.OrchestratorConfig{
 		ModelHolder:         modelHolder,
@@ -614,7 +617,7 @@ func truncateQuestion(text string) string {
 	return string(head) + "..." + optionsPart
 }
 
-func retryResolveContext(resolver *agentloop.ModelContextResolver, log *logger.Logger, configuredFallback int) int {
+func retryResolveContext(resolver *agentloop.ModelContextResolver, log *logger.Logger) int {
 	const maxAttempts = 12
 	const retryDelay = 5 * time.Second
 
@@ -629,10 +632,7 @@ func retryResolveContext(resolver *agentloop.ModelContextResolver, log *logger.L
 		time.Sleep(retryDelay)
 	}
 
-	fallback := configuredFallback
-	if fallback <= 0 {
-		fallback = agentloop.DefaultLoopConfig().MaxTokens
-	}
+	fallback := agentloop.DefaultLoopConfig().MaxTokens
 	log.WarnLogf("Model context resolution stopped after %d attempts (%v); starting with fallback max_tokens=%d", maxAttempts, lastErr, fallback)
 	return fallback
 }
@@ -700,27 +700,46 @@ func loadMCPConfig(path string) (*mcp.Config, error) {
 
 func initAgentManager(agents map[string]agentpolicy.AgentCfg, agentDir string, log interface{ InfoLogf(string, ...interface{}) }) *agentpolicy.AgentManager {
 	am := agentpolicy.NewAgentManager()
-	if agents == nil {
-		log.InfoLogf("AgentManager: %d agents registered (defaults only)", len(am.ListAgentNames()))
-		return am
-	}
-	resolved := make(map[string]agentpolicy.AgentCfg)
-	for name, ac := range agents {
-		if ac.Prompt != "" {
-			promptPath := ac.Prompt
-			if !filepath.IsAbs(promptPath) {
-				promptPath = filepath.Join(agentDir, promptPath)
+	if agents != nil {
+		resolved := make(map[string]agentpolicy.AgentCfg)
+		for name, ac := range agents {
+			if ac.Prompt != "" {
+				promptPath := ac.Prompt
+				if !filepath.IsAbs(promptPath) {
+					promptPath = filepath.Join(agentDir, promptPath)
+				}
+				prompt, err := agentpolicy.LoadMDPrompt(promptPath)
+				if err != nil {
+					log.InfoLogf("Skipping agent %s: failed to load prompt from %s: %v", name, promptPath, err)
+					continue
+				}
+				ac.Prompt = prompt
 			}
-			prompt, err := agentpolicy.LoadMDPrompt(promptPath)
-			if err != nil {
-				log.InfoLogf("Skipping agent %s: failed to load prompt from %s: %v", name, promptPath, err)
-				continue
-			}
-			ac.Prompt = prompt
+			resolved[name] = ac
 		}
-		resolved[name] = ac
+		am.LoadFromConfig(resolved)
 	}
-	am.LoadFromConfig(resolved)
+	am.LoadFromConfig(loadDiscoveredAgents(agentDir, log))
 	log.InfoLogf("AgentManager: %d agents registered", len(am.ListAgentNames()))
 	return am
+}
+
+func loadDiscoveredAgents(agentDir string, log interface{ InfoLogf(string, ...interface{}) }) map[string]agentpolicy.AgentCfg {
+	discovered, err := agentpolicy.DiscoverAgentFiles(agentSearchDirs(agentDir))
+	if err != nil {
+		log.InfoLogf("AgentManager: agent file discovery failed: %v", err)
+		return nil
+	}
+	if len(discovered) > 0 {
+		log.InfoLogf("AgentManager: %d agents discovered from files", len(discovered))
+	}
+	return discovered
+}
+func agentSearchDirs(agentDir string) []string {
+	var dirs []string
+	if home, err := os.UserHomeDir(); err == nil {
+		dirs = append(dirs, filepath.Join(home, ".omp", "agent", "agents"))
+	}
+	dirs = append(dirs, filepath.Join(agentDir, "agents"))
+	return dirs
 }

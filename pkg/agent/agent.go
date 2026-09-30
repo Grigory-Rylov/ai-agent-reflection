@@ -82,10 +82,16 @@ type Config struct {
 
 	BGOwner       string
 	BGParentOwner string
+
+	SubagentWatch SubagentWatcher
 }
 
 type SlotSaver interface {
 	SaveSlot(ctx context.Context)
+}
+type SubagentWatcher interface {
+	PendingSubagents(owner string) int
+	WaitForSubagent(ctx context.Context, owner string, timeout time.Duration) bool
 }
 
 func DefaultConfig() Config {

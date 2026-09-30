@@ -20,7 +20,7 @@ const (
 
 const TOOL_OUTPUT_MAX_CHARS = 2000
 
-const OUTPUT_TOKEN_MAX = 32_000
+const OUTPUT_TOKEN_MAX = 32_768
 
 func TruncateToolOutput(content string) string {
 	if len(content) <= TOOL_OUTPUT_MAX_CHARS {

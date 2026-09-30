@@ -865,6 +865,7 @@ func (al *agentLoop) buildAgentConfig() agent.Config {
 		Debug:                          al.config.Debug,
 		SkipShellPermissionForPathless: al.config.SkipShellPermissionForPathless,
 		MaxToolCallDepth:               al.config.MaxToolCallDepth,
+		SubagentWatch:                  jobWatcher{},
 	}
 
 	if al.registry != nil {

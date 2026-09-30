@@ -26,6 +26,12 @@ type AgentInfo struct {
 	Temperature   *float64               `json:"temperature"`
 	TopP          *float64               `json:"topP"`
 	Color         string                 `json:"color"`
+	Tools         []string               `json:"tools"`
+	ThinkingLevel string                 `json:"thinkingLevel"`
+	Blocking      bool                   `json:"blocking"`
+	OutputSchema  string                 `json:"outputSchema"`
+	RequestBudget int                    `json:"requestBudget"`
+	MaxRuntimeSec int                    `json:"maxRuntimeSec"`
 	Permission    Permission             `json:"permission"`
 	Options       map[string]interface{} `json:"options"`
 }
@@ -236,6 +242,12 @@ func (am *AgentManager) LoadFromConfig(cfg map[string]AgentCfg) {
 			SubagentTypes: ac.SubagentTypes,
 			Prompt:        ac.Prompt,
 			Permission:    perm,
+			Tools:         ac.Tools,
+			ThinkingLevel: ac.ThinkingLevel,
+			Blocking:      ac.Blocking,
+			OutputSchema:  ac.OutputSchema,
+			RequestBudget: ac.RequestBudget,
+			MaxRuntimeSec: ac.MaxRuntimeSec,
 		})
 	}
 }
@@ -250,5 +262,11 @@ type AgentCfg struct {
 	Review        bool       `json:"review"`
 	Coordinator   bool       `json:"coordinator"`
 	SubagentTypes []string   `json:"subagentTypes"`
+	Tools         []string   `json:"tools"`
+	ThinkingLevel string     `json:"thinkingLevel"`
+	Blocking      bool       `json:"blocking"`
+	OutputSchema  string     `json:"outputSchema"`
+	RequestBudget int        `json:"requestBudget"`
+	MaxRuntimeSec int        `json:"maxRuntimeSec"`
 	Permission    Permission `json:"permission"`
 }

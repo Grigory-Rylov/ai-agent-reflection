@@ -95,7 +95,7 @@ func TestRunTurn_CheckpointFiredPerRound(t *testing.T) {
 	}{
 		{
 			name:      "single tool round fires once",
-			scripts:   [][]string{scriptedToolCallRound([2]string{"time_get", "{"}), scriptedFinalRound("finished")},
+			scripts:   [][]string{scriptedToolCallRound([2]string{"time_get", "{}"}), scriptedFinalRound("finished")},
 			setHook:   true,
 			wantCalls: []string{"time_get"},
 		},

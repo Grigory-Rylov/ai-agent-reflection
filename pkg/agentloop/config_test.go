@@ -2,7 +2,6 @@ package agentloop
 
 import (
 	"testing"
-	"time"
 )
 
 func TestDefaultLoopConfig(t *testing.T) {
@@ -25,8 +24,6 @@ func TestDefaultLoopConfig(t *testing.T) {
 	}
 	if !config.EnableTools {
 		t.Error("expected EnableTools to be true")
-	}
-	if config.ToolTimeout != 30*time.Second {
 	}
 	if config.ThinkingPeerID != 0 {
 		t.Errorf("expected ThinkingPeerID 0, got %d", config.ThinkingPeerID)

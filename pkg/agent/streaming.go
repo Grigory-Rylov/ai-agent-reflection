@@ -166,7 +166,7 @@ func (a *agentImpl) createStreamingRequest(ctx context.Context, jsonData []byte)
 
 const maxSSELineBytes = 16 * 1024 * 1024
 
-const DefaultStreamIdleTimeout = 5 * time.Minute
+const DefaultStreamIdleTimeout = 0
 
 const ErrCodeStreamIdleTimeout = "stream_idle_timeout"
 

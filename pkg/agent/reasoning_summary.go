@@ -24,7 +24,7 @@ const (
 	reasoningSummaryMinLen    = 200
 	reasoningSummaryMaxInput  = 12000
 	reasoningSummaryMaxOut    = 1200
-	reasoningSummaryTimeout   = 90 * time.Second
+	reasoningSummaryTimeout   = 2 * time.Hour
 	reasoningSummaryTemp      = 0.2
 	reasoningSummaryStatusCap = 1024
 )

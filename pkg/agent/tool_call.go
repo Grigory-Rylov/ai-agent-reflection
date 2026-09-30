@@ -109,6 +109,24 @@ func ToolCallArgumentsStr(tc ToolCall) string {
 	return s
 }
 
+func hasUnparseableToolCall(toolCalls []ToolCall) bool {
+	return unparseableToolCallName(toolCalls) != ""
+}
+
+func unparseableToolCallName(toolCalls []ToolCall) string {
+	for _, tc := range toolCalls {
+		args := ToolCallArgumentsStr(tc)
+		if args == "" {
+			continue
+		}
+		var obj map[string]interface{}
+		if json.Unmarshal([]byte(args), &obj) != nil {
+			return ToolCallName(tc)
+		}
+	}
+	return ""
+}
+
 func parseToolCalls(rawMessage map[string]interface{}) ([]ToolCall, error) {
 	toolCallsField, ok := rawMessage["tool_calls"]
 	if !ok {

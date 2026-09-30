@@ -3,7 +3,9 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/compress"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/internalmsg"
@@ -29,6 +31,10 @@ const (
 	formatCorrectionMessage      = "FORMAT ERROR: You tried to use XML tool call tags (<tool_call>, <function=...>) but the format was malformed or incomplete. Use native function calling provided by the API. Re-send your message with the correct format or answer in plain text."
 	emptyResponseReminder        = "[SYSTEM] Your previous response was empty. Please generate a text response based on the tool results above."
 	lengthTruncationContinuation = "Your previous response was truncated by the output token limit. Continue exactly where you stopped."
+	truncatedToolCallCorrection  = "[SYSTEM] Your previous tool call was cut off before its arguments were complete, so the JSON was invalid and could not run. Re-send the tool call with complete, valid JSON. Keep large arguments (a prompt, file contents) concise enough that the entire tool call fits within the output limit."
+
+	subagentHoldWait     = 30 * time.Second
+	subagentHoldMaxTotal = 60 * time.Minute
 )
 
 type turnContext struct {
@@ -69,9 +75,42 @@ func (a *agentImpl) runTurn(ctx context.Context, s *sess.Session) (string, error
 
 		pending = a.drainSteering(s)
 		if len(pending) == 0 {
+			pending = a.awaitSubagentResult(ctx, s)
+		}
+		if len(pending) == 0 {
 			return tc.finalText, nil
 		}
 	}
+}
+
+func (a *agentImpl) awaitSubagentResult(ctx context.Context, s *sess.Session) []string {
+	w := a.config.SubagentWatch
+	if w == nil {
+		return nil
+	}
+	owner := a.subagentOwner(s)
+	if w.PendingSubagents(owner) == 0 {
+		return nil
+	}
+	deadline := time.Now().Add(subagentHoldMaxTotal)
+	for time.Now().Before(deadline) && w.PendingSubagents(owner) > 0 {
+		if ctx.Err() != nil {
+			break
+		}
+		if w.WaitForSubagent(ctx, owner, subagentHoldWait) {
+			if pending := a.drainSteering(s); len(pending) > 0 {
+				return pending
+			}
+		}
+	}
+	return a.drainSteering(s)
+}
+
+func (a *agentImpl) subagentOwner(s *sess.Session) string {
+	if a.config.BGOwner != "" {
+		return a.config.BGOwner
+	}
+	return "main:" + strconv.FormatInt(s.GetPeerID(), 10)
 }
 
 func (a *agentImpl) runInnerLoop(ctx context.Context, tc *turnContext, pending []string) (string, bool, error) {
@@ -280,6 +319,9 @@ func (a *agentImpl) streamOnce(ctx context.Context, tc *turnContext, messages []
 }
 
 func (a *agentImpl) resolveToolCalls(ctx context.Context, tc *turnContext, messages []Message, round roundResult) turnCalls {
+	if name := unparseableToolCallName(round.toolCalls); name != "" {
+		return a.retryUnparseableToolCall(tc, name)
+	}
 	if calls, ok := a.nativeToolCalls(ctx, messages, round); ok {
 		return turnCalls{toolCalls: calls}
 	}
@@ -301,6 +343,19 @@ func (a *agentImpl) resolveToolCalls(ctx context.Context, tc *turnContext, messa
 	}
 
 	return turnCalls{}
+}
+
+func (a *agentImpl) retryUnparseableToolCall(tc *turnContext, name string) turnCalls {
+	if tc.malformedRetries >= maxMalformedCallRetries {
+		logger.DebugToFile("%s[TOOL] Tool call '%s' still invalid after %d corrections, skipping execution", a.agentPrefix(), name, maxMalformedCallRetries)
+		return turnCalls{}
+	}
+
+	tc.malformedRetries++
+	fmt.Printf("%s[TOOL] Tool call '%s' has incomplete/invalid JSON arguments, sending correction (%d/%d)\n", a.agentPrefix(), name, tc.malformedRetries, maxMalformedCallRetries)
+	logger.DebugToFile("%s[TOOL] Tool call '%s' invalid JSON arguments, correction %d/%d", a.agentPrefix(), name, tc.malformedRetries, maxMalformedCallRetries)
+	tc.session.AddUserMessage(truncatedToolCallCorrection)
+	return turnCalls{retryRequested: true}
 }
 
 func (a *agentImpl) nativeToolCalls(ctx context.Context, messages []Message, round roundResult) ([]ToolCall, bool) {

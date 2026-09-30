@@ -24,7 +24,6 @@ type LoopConfig struct {
 	EnableLoopDetection            bool
 	LoopThreshold                  float64
 	EnableTools                    bool
-	ToolTimeout                    time.Duration
 	ThinkingPeerID                 int64
 	EnableThinking                 bool
 	EnableLogging                  bool
@@ -52,7 +51,6 @@ func DefaultLoopConfig() LoopConfig {
 		EnableLoopDetection:            true,
 		LoopThreshold:                  0.85,
 		EnableTools:                    true,
-		ToolTimeout:                    30 * time.Second,
 		ThinkingPeerID:                 0,
 		EnableThinking:                 false,
 		EnableLogging:                  true,
