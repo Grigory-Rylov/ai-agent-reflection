@@ -727,8 +727,7 @@ func initAgentManager(agents map[string]agentpolicy.AgentCfg, agentDir string, l
 func loadDiscoveredAgents(agentDir string, log interface{ InfoLogf(string, ...interface{}) }) map[string]agentpolicy.AgentCfg {
 	discovered, err := agentpolicy.DiscoverAgentFiles(agentSearchDirs(agentDir))
 	if err != nil {
-		log.InfoLogf("AgentManager: agent file discovery failed: %v", err)
-		return nil
+		log.InfoLogf("AgentManager: agent file discovery partially failed: %v", err)
 	}
 	if len(discovered) > 0 {
 		log.InfoLogf("AgentManager: %d agents discovered from files", len(discovered))

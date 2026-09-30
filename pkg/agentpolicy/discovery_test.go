@@ -3,6 +3,8 @@ package agentpolicy
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -103,5 +105,58 @@ func TestDiscoverAgentFilesPrecedenceAndSkip(t *testing.T) {
 	}
 	if _, ok := got["useronly"]; !ok {
 		t.Errorf("useronly agent missing")
+	}
+}
+func TestParseAgentMarkdownAcceptsCommaSeparatedToolLists(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want []string
+	}{
+		{"comma separated", "tools: read, grep, glob", []string{"read", "grep", "glob"}},
+		{"no spaces", "tools: read,grep", []string{"read", "grep"}},
+		{"flow list", "tools: [read, grep]", []string{"read", "grep"}},
+		{"block list", "tools:\n  - read\n  - grep", []string{"read", "grep"}},
+		{"single value", "tools: read", []string{"read"}},
+		{"empty", "tools:", nil},
+		{"comma subagentTypes", "subagentTypes: worker, qa", []string{"worker", "qa"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeAgentMD(t, dir, "agent.md", "---\n"+tc.line+"\n---\nbody\n")
+			_, cfg, err := parseAgentMarkdown(filepath.Join(dir, "agent.md"))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			var got []string
+			if strings.Contains(tc.line, "subagentTypes") {
+				got = cfg.SubagentTypes
+			} else {
+				got = cfg.Tools
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+func TestDiscoverAgentFilesSurvivesBrokenFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentMD(t, dir, "good.md", "---\ndescription: good\n---\ngood body\n")
+	writeAgentMD(t, dir, "broken.md", "---\ndescription: [unclosed\n---\nbroken body\n")
+
+	got, err := DiscoverAgentFiles([]string{dir})
+	if err == nil {
+		t.Fatal("expected error for broken agent file")
+	}
+	if !strings.Contains(err.Error(), "broken.md") {
+		t.Errorf("error should name offending file: %v", err)
+	}
+	if got["good"].Description != "good" {
+		t.Errorf("surviving agent lost, got %v", got)
+	}
+	if _, ok := got["broken"]; ok {
+		t.Error("broken agent should be skipped")
 	}
 }
