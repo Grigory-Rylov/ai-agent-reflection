@@ -23,8 +23,8 @@ type Message struct {
 	Role       string     `json:"role"`
 	Content    string     `json:"content"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"` 
-	Name       string     `json:"name,omitempty"`         
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Name       string     `json:"name,omitempty"`
 }
 
 type StreamingConfig struct {
@@ -66,10 +66,7 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 	resp, err := a.client.Do(req)
 	if err != nil {
 		logger.DebugToFile("%s[LLM REQUEST] Failed to send: %v", a.agentPrefix(), err)
-		
-		
-		
-		
+
 		if errors.Is(err, context.Canceled) {
 			return nil, err
 		}
@@ -81,14 +78,13 @@ func (a *agentImpl) streamingRequest(ctx context.Context, config StreamingConfig
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		
+
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		a.debugLog.Error("API ERROR: Status %d, response: %s", resp.StatusCode, string(body))
 		logger.DebugToFile("%s[LLM REQUEST] API error: status %d", a.agentPrefix(), resp.StatusCode)
 		apiErr := fmt.Errorf("API error: status %d, body: %s", resp.StatusCode, string(body))
-		
-		
+
 		if resp.StatusCode >= 500 {
 			return nil, &retryableError{err: apiErr}
 		}
@@ -110,7 +106,6 @@ func (a *agentImpl) buildRequestJSON(config StreamingConfig, messages []Message)
 
 	jsonData, _ := json.Marshal(reqBody)
 
-	
 	if a.config.Debug {
 		a.saveDebugPrompt(jsonData)
 	}
@@ -118,9 +113,8 @@ func (a *agentImpl) buildRequestJSON(config StreamingConfig, messages []Message)
 	return jsonData
 }
 
-
 func (a *agentImpl) buildBaseRequestJSON(model string, messages []Message, stream bool) map[string]interface{} {
-	
+
 	maxOutput := compress.OUTPUT_TOKEN_MAX
 	if a.config.MaxTokens > 0 && a.config.MaxTokens < maxOutput {
 		maxOutput = a.config.MaxTokens
@@ -139,13 +133,12 @@ func (a *agentImpl) buildBaseRequestJSON(model string, messages []Message, strea
 			"enable_thinking": true,
 		}
 	}
-	
+
 	if a.config.SlotID >= 0 {
 		req["slot_id"] = a.config.SlotID
 	}
 	return req
 }
-
 
 func (a *agentImpl) saveDebugPrompt(jsonData []byte) {
 	debugDir := filepath.Join(tools.BaseDir, "debug")
@@ -173,7 +166,7 @@ func (a *agentImpl) createStreamingRequest(ctx context.Context, jsonData []byte)
 
 const maxSSELineBytes = 16 * 1024 * 1024
 
-const DefaultStreamIdleTimeout = 5 * time.Minute
+const DefaultStreamIdleTimeout = 0
 
 const ErrCodeStreamIdleTimeout = "stream_idle_timeout"
 
@@ -316,8 +309,8 @@ func (a *agentImpl) sendStreamError(chunkChan chan StreamChunkEvent, err error) 
 
 func (a *agentImpl) sendDoneEvent(chunkChan chan StreamChunkEvent) {
 	chunkChan <- StreamChunkEvent{
-		Content:  "",
-		IsDone:   true,
+		Content:   "",
+		IsDone:    true,
 		Timestamp: time.Now(),
 	}
 }
@@ -330,14 +323,13 @@ func (a *agentImpl) processSSEData(lineStr string, chunkChan chan StreamChunkEve
 
 	event := a.parseSSEEvent(jsonData)
 
-	
 	if event != nil && event.Error != nil {
 		chunkChan <- StreamChunkEvent{
-			Content:      fmt.Sprintf("API Error: %s", event.Error.Message),
-			IsError:      true,
-			ErrorCode:    event.Error.Code,
-			IsDone:       true,
-			Timestamp:    time.Now(),
+			Content:   fmt.Sprintf("API Error: %s", event.Error.Message),
+			IsError:   true,
+			ErrorCode: event.Error.Code,
+			IsDone:    true,
+			Timestamp: time.Now(),
 		}
 		return
 	}
@@ -356,7 +348,7 @@ func (a *agentImpl) processSSEData(lineStr string, chunkChan chan StreamChunkEve
 	}
 
 	if finishReason != "" {
-		
+
 		promptTokens, completionTokens := tokenCounts(event)
 		chunkChan <- StreamChunkEvent{
 			Content:          content,
@@ -422,19 +414,18 @@ type SSEEvent struct {
 		Delta        SSEDelta `json:"delta"`
 		FinishReason *string  `json:"finish_reason"`
 	} `json:"choices"`
-	
+
 	Usage *struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`
 	} `json:"usage"`
-	
+
 	Timings *struct {
 		PromptN    int `json:"prompt_n"`
 		PredictedN int `json:"predicted_n"`
 	} `json:"timings"`
 }
-
 
 func tokenCounts(event *SSEEvent) (int, int) {
 	if event == nil {

@@ -127,7 +127,7 @@ func TestMessageCRUD(t *testing.T) {
 	msgs := []MessageData{
 		{PeerID: 1, Role: "user", Content: "hello", Timestamp: "t1"},
 		{PeerID: 1, Role: "assistant", Content: "hi", ToolCalls: `[{"id":"1"}]`, Timestamp: "t2"},
-		{PeerID: 1, Role: "tool", Content: "result", ToolCallID: "1", ToolName: "file_read", Timestamp: "t3"},
+		{PeerID: 1, Role: "tool", Content: "result", ToolCallID: "1", ToolName: "read", Timestamp: "t3"},
 	}
 
 	for _, m := range msgs {
@@ -150,7 +150,7 @@ func TestMessageCRUD(t *testing.T) {
 	if loaded[1].ToolCalls != `[{"id":"1"}]` {
 		t.Errorf("unexpected tool_calls: %s", loaded[1].ToolCalls)
 	}
-	if loaded[2].ToolCallID != "1" || loaded[2].ToolName != "file_read" {
+	if loaded[2].ToolCallID != "1" || loaded[2].ToolName != "read" {
 		t.Errorf("unexpected tool message")
 	}
 }
@@ -248,7 +248,7 @@ func TestPermissionCRUD(t *testing.T) {
 	s := newTestStore(t)
 
 	sessionID := "peer_1"
-	p, err := s.GetPermission(sessionID, "file_write", "/tmp/file.txt")
+	p, err := s.GetPermission(sessionID, "write", "/tmp/file.txt")
 	if err != nil {
 		t.Fatalf("GetPermission: %v", err)
 	}
@@ -256,11 +256,11 @@ func TestPermissionCRUD(t *testing.T) {
 		t.Error("expected nil for non-existent permission")
 	}
 
-	if err := s.SavePermission(sessionID, "file_write", "/tmp/file.txt", "allow"); err != nil {
+	if err := s.SavePermission(sessionID, "write", "/tmp/file.txt", "allow"); err != nil {
 		t.Fatalf("SavePermission: %v", err)
 	}
 
-	p, err = s.GetPermission(sessionID, "file_write", "/tmp/file.txt")
+	p, err = s.GetPermission(sessionID, "write", "/tmp/file.txt")
 	if err != nil {
 		t.Fatalf("GetPermission: %v", err)
 	}
@@ -271,8 +271,8 @@ func TestPermissionCRUD(t *testing.T) {
 		t.Errorf("expected allow, got %s", p.Decision)
 	}
 
-	s.SavePermission(sessionID, "file_write", "/tmp/file.txt", "deny")
-	p, _ = s.GetPermission(sessionID, "file_write", "/tmp/file.txt")
+	s.SavePermission(sessionID, "write", "/tmp/file.txt", "deny")
+	p, _ = s.GetPermission(sessionID, "write", "/tmp/file.txt")
 	if p.Decision != "deny" {
 		t.Errorf("expected deny after update, got %s", p.Decision)
 	}

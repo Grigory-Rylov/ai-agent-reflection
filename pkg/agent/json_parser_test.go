@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
@@ -26,11 +27,11 @@ func TestParseJSONToolCalls_PlainText(t *testing.T) {
 }
 
 func TestParseJSONToolCalls_ShellExecute(t *testing.T) {
-	input := `{"name": "shell_execute", "arguments": {"command": "msg test", "timeout": 30}}`
+	input := `{"name": "bash", "arguments": {"command": "msg test", "timeout": 30}}`
 	expected := XMLParseResult{
 		ToolCalls: []XMLToolCall{
 			{
-				Name: "shell_execute",
+				Name: "bash",
 				Args: map[string]string{
 					"command": "msg test",
 					"timeout": "30",
@@ -52,12 +53,12 @@ func TestParseJSONToolCalls_TimeGet(t *testing.T) {
 }
 
 func TestParseJSONToolCalls_TextBeforeAndAfter(t *testing.T) {
-	input := `Let me run this command: {"name": "shell_execute", "arguments": {"command": "ls -la", "timeout": 10}} Done!`
+	input := `Let me run this command: {"name": "bash", "arguments": {"command": "ls -la", "timeout": 10}} Done!`
 	expected := XMLParseResult{
 		Content: "Let me run this command:  Done!",
 		ToolCalls: []XMLToolCall{
 			{
-				Name: "shell_execute",
+				Name: "bash",
 				Args: map[string]string{
 					"command": "ls -la",
 					"timeout": "10",
@@ -81,7 +82,7 @@ func TestParseJSONToolCalls_MultipleJSON(t *testing.T) {
 }
 
 func TestParseJSONToolCalls_NotAToolCall(t *testing.T) {
-	
+
 	input := `Some text {"foo": "bar"} more text`
 	expected := XMLParseResult{
 		Content: `Some text {"foo": "bar"} more text`,
@@ -101,11 +102,11 @@ func TestParseJSONToolCalls_MixedContent(t *testing.T) {
 }
 
 func TestParseJSONToolCalls_FileWrite(t *testing.T) {
-	input := `{"name": "file_write", "arguments": {"path": "/tmp/test.txt", "content": "hello"}}`
+	input := `{"name": "write", "arguments": {"path": "/tmp/test.txt", "content": "hello"}}`
 	expected := XMLParseResult{
 		ToolCalls: []XMLToolCall{
 			{
-				Name: "file_write",
+				Name: "write",
 				Args: map[string]string{
 					"path":    "/tmp/test.txt",
 					"content": "hello",
@@ -133,14 +134,14 @@ func TestParseJSONToolCalls_WebFetch(t *testing.T) {
 }
 
 func TestParseJSONToolCalls_NestedJSONInArgs(t *testing.T) {
-	input := `{"name": "file_write", "arguments": {"path": "/tmp/test.json", "content": "{\"key\": \"value\"}"}}`
+	input := `{"name": "write", "arguments": {"path": "/tmp/test.json", "content": "{\"key\": \"value\"}"}}`
 	result := ParseJSONToolCalls(input)
 	if len(result.ToolCalls) != 1 {
 		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
 	}
 	tc := result.ToolCalls[0]
-	if tc.Name != "file_write" {
-		t.Errorf("expected file_write, got %q", tc.Name)
+	if tc.Name != "write" {
+		t.Errorf("expected write, got %q", tc.Name)
 	}
 	if tc.Args["path"] != "/tmp/test.json" {
 		t.Errorf("expected /tmp/test.json, got %q", tc.Args["path"])
@@ -151,14 +152,14 @@ func TestParseJSONToolCalls_NestedJSONInArgs(t *testing.T) {
 }
 
 func TestParseJSONToolCalls_NumberArgs(t *testing.T) {
-	input := `{"name": "shell_execute", "arguments": {"command": "sleep 5", "timeout": 30}}`
+	input := `{"name": "bash", "arguments": {"command": "sleep 5", "timeout": 30}}`
 	result := ParseJSONToolCalls(input)
 	if len(result.ToolCalls) != 1 {
 		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
 	}
 	tc := result.ToolCalls[0]
-	if tc.Name != "shell_execute" {
-		t.Errorf("expected shell_execute, got %q", tc.Name)
+	if tc.Name != "bash" {
+		t.Errorf("expected bash, got %q", tc.Name)
 	}
 	if tc.Args["command"] != "sleep 5" {
 		t.Errorf("expected 'sleep 5', got %q", tc.Args["command"])
@@ -169,7 +170,7 @@ func TestParseJSONToolCalls_NumberArgs(t *testing.T) {
 }
 
 func TestParseJSONToolCalls_NoToolCallsPartialJSON(t *testing.T) {
-	input := `This is not complete: {"name": "shell_execute", "arguments": {"command": "test"`
+	input := `This is not complete: {"name": "bash", "arguments": {"command": "test"`
 	expected := XMLParseResult{
 		Content: input,
 	}
@@ -177,8 +178,8 @@ func TestParseJSONToolCalls_NoToolCallsPartialJSON(t *testing.T) {
 }
 
 func TestParseJSONToolCalls_JsonInCodeBlock(t *testing.T) {
-	input := "```json\n{\"name\": \"shell_execute\", \"arguments\": {\"command\": \"ls\"}}\n```"
-	
+	input := "```json\n{\"name\": \"bash\", \"arguments\": {\"command\": \"ls\"}}\n```"
+
 	expected := XMLParseResult{
 		Content: input,
 	}
@@ -186,7 +187,7 @@ func TestParseJSONToolCalls_JsonInCodeBlock(t *testing.T) {
 }
 
 func TestParseJSONToolCalls_OutsideAndInsideCodeBlock(t *testing.T) {
-	input := "First: {\"name\": \"time_get\", \"arguments\": {}}\n\n```json\n{\"name\": \"shell_execute\", \"arguments\": {\"command\": \"ls\"}}\n```\n\nThen done."
+	input := "First: {\"name\": \"time_get\", \"arguments\": {}}\n\n```json\n{\"name\": \"bash\", \"arguments\": {\"command\": \"ls\"}}\n```\n\nThen done."
 	result := ParseJSONToolCalls(input)
 	if len(result.ToolCalls) != 1 {
 		t.Fatalf("expected 1 tool call (only outside code block), got %d", len(result.ToolCalls))
@@ -197,7 +198,7 @@ func TestParseJSONToolCalls_OutsideAndInsideCodeBlock(t *testing.T) {
 }
 
 func TestParseJSONToolCalls_CodeBlockNoLanguage(t *testing.T) {
-	input := "```\n{\"name\": \"shell_execute\", \"arguments\": {\"command\": \"ls\"}}\n```"
+	input := "```\n{\"name\": \"bash\", \"arguments\": {\"command\": \"ls\"}}\n```"
 	result := ParseJSONToolCalls(input)
 	if len(result.ToolCalls) != 0 {
 		t.Errorf("expected 0 tool calls inside code block, got %d", len(result.ToolCalls))
@@ -208,7 +209,7 @@ func TestParseJSONToolCalls_CodeBlockNoLanguage(t *testing.T) {
 }
 
 func TestParseJSONToolCalls_InlineTripleBacktick(t *testing.T) {
-	
+
 	input := "a```\n{\"name\": \"time_get\", \"arguments\": {}}\n```b"
 	result := ParseJSONToolCalls(input)
 	if len(result.ToolCalls) != 1 {
@@ -284,9 +285,15 @@ func TestParseJSONToolCalls_BoolArg(t *testing.T) {
 }
 
 func TestJSONFallback_Integration(t *testing.T) {
+	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
 		w.Header().Set("Content-Type", "text/event-stream")
-		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Executed successfully.\"}}]}\n\n"))
+		if callCount == 1 {
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"name\\\": \\\"bash\\\", \\\"arguments\\\": {\\\"command\\\": \\\"echo hello\\\", \\\"timeout\\\": 10}}\"}}]}\n\n"))
+		} else {
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Executed successfully.\"}}]}\n\n"))
+		}
 		w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
 		w.Write([]byte("[DONE]\n"))
 	}))
@@ -303,28 +310,24 @@ func TestJSONFallback_Integration(t *testing.T) {
 
 	a, executor := newTestAgentWithStub(t, config)
 
-	responseText := `{"name": "shell_execute", "arguments": {"command": "echo hello", "timeout": 10}}`
-
-	messages := []Message{
-		{Role: "user", Content: "run echo hello"},
-	}
-	s := a.GetSession(99920)
-
-	result, used, err := a.jsonFallback(context.Background(), responseText, messages, s)
+	response, err := a.ProcessMessage(context.Background(), "run echo hello", 99920)
 	if err != nil {
-		t.Fatalf("jsonFallback failed: %v", err)
+		t.Fatalf("ProcessMessage failed: %v", err)
 	}
-	if !used {
-		t.Fatal("expected jsonFallback to be used")
+	if response != "Executed successfully." {
+		t.Errorf("expected final response %q, got %q", "Executed successfully.", response)
 	}
-	if !result.Success {
-		t.Fatal("expected success")
+	if !executor.Contains("bash") {
+		t.Error("expected bash tool to be called via stub executor")
 	}
-	if result.Response == "" {
-		t.Fatal("expected non-empty response")
+
+	var toolMsgFound bool
+	for _, m := range a.GetSession(99920).GetHistory() {
+		if m.Role == session.ToolRole && strings.Contains(m.Content, "stub") {
+			toolMsgFound = true
+		}
 	}
-	if !executor.Contains("shell_execute") {
-		t.Error("expected shell_execute tool to be called via stub executor")
+	if !toolMsgFound {
+		t.Error("expected tool result message in session history")
 	}
-	t.Logf("Response: %s", result.Response)
 }

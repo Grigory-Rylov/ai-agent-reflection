@@ -2,41 +2,43 @@ package agentpolicy
 
 import "fmt"
 
-
 type AgentMode string
 
 const (
-	ModePrimary  AgentMode = "primary"  
-	ModeSubagent AgentMode = "subagent" 
-	ModeAll      AgentMode = "all"      
+	ModePrimary  AgentMode = "primary"
+	ModeSubagent AgentMode = "subagent"
+	ModeAll      AgentMode = "all"
 )
 
-
 type AgentInfo struct {
-	Name        string                   `json:"name"`
-	Description string                   `json:"description"`
-	Mode        AgentMode                `json:"mode"`
-	Native      bool                     `json:"native"`
-	Hidden      bool                     `json:"hidden"`
-	Internal    bool                     `json:"internal"`
-	Leaf        bool                     `json:"leaf"`
-	Review      bool                     `json:"review"`
-	Coordinator bool                   `json:"coordinator"`
-	SubagentTypes []string             `json:"subagentTypes"`
-	Prompt      string                   `json:"prompt"`
-	Model       string                   `json:"model"`
-	Temperature *float64                 `json:"temperature"`
-	TopP        *float64                 `json:"topP"`
-	Color       string                   `json:"color"`
-	Permission  Permission               `json:"permission"`
-	Options     map[string]interface{}    `json:"options"`
+	Name          string                 `json:"name"`
+	Description   string                 `json:"description"`
+	Mode          AgentMode              `json:"mode"`
+	Native        bool                   `json:"native"`
+	Hidden        bool                   `json:"hidden"`
+	Internal      bool                   `json:"internal"`
+	Leaf          bool                   `json:"leaf"`
+	Review        bool                   `json:"review"`
+	Coordinator   bool                   `json:"coordinator"`
+	SubagentTypes []string               `json:"subagentTypes"`
+	Prompt        string                 `json:"prompt"`
+	Model         string                 `json:"model"`
+	Temperature   *float64               `json:"temperature"`
+	TopP          *float64               `json:"topP"`
+	Color         string                 `json:"color"`
+	Tools         []string               `json:"tools"`
+	ThinkingLevel string                 `json:"thinkingLevel"`
+	Blocking      bool                   `json:"blocking"`
+	OutputSchema  string                 `json:"outputSchema"`
+	RequestBudget int                    `json:"requestBudget"`
+	MaxRuntimeSec int                    `json:"maxRuntimeSec"`
+	Permission    Permission             `json:"permission"`
+	Options       map[string]interface{} `json:"options"`
 }
-
 
 type AgentManager struct {
 	agents map[string]AgentInfo
 }
-
 
 func NewAgentManager() *AgentManager {
 	am := &AgentManager{
@@ -46,11 +48,9 @@ func NewAgentManager() *AgentManager {
 	return am
 }
 
-
 func (am *AgentManager) initDefaults() {
 	defaultPerm := DefaultPermission()
 
-	
 	am.agents["build"] = AgentInfo{
 		Name:        "build",
 		Description: "The default agent. Executes tools based on configured permissions.",
@@ -61,7 +61,6 @@ func (am *AgentManager) initDefaults() {
 		Options:     map[string]interface{}{},
 	}
 
-	
 	planPerm := MergePermissions(
 		defaultPerm,
 		NewPermissionFromConfig(map[string]string{
@@ -77,27 +76,22 @@ func (am *AgentManager) initDefaults() {
 		Options:     map[string]interface{}{},
 	}
 
-	
-	
-
-	
 	am.agents["general"] = AgentInfo{
 		Name:        "general",
 		Description: "General-purpose agent for researching complex questions and executing multi-step tasks.",
 		Mode:        ModeSubagent,
 		Native:      true,
 		Permission:  defaultPerm,
-		Prompt:      `You are a General-purpose agent. Research and execute multi-step tasks autonomously.
+		Prompt: `You are a General-purpose agent. Research and execute multi-step tasks autonomously.
 
 ## Instructions
 1. Use available tools to gather information and execute tasks
 2. Be thorough — search widely, read strategically
 3. Return clear, structured results to the caller
 4. Do NOT make assumptions — verify with tools`,
-		Options:     map[string]interface{}{},
+		Options: map[string]interface{}{},
 	}
 
-	
 	am.agents["qa"] = AgentInfo{
 		Name:        "qa",
 		Description: "Reviews code, builds/tests it, calls worker for fixes, approves when done.",
@@ -108,18 +102,16 @@ func (am *AgentManager) initDefaults() {
 		Options:     map[string]interface{}{},
 	}
 
-	
 	explorePerm := NewPermissionFromConfig(map[string]string{
-		"grep":        "allow",
-		"glob":        "allow",
-		"read":        "allow",
-		"file_list":   "allow",
-		"file_read":   "allow",
-		"web_fetch":   "allow",
-		"web_search":  "allow",
-		"shell_execute": "allow",
-		"file_write":  "deny",
-		"file_edit":   "deny",
+		"grep":       "allow",
+		"glob":       "allow",
+		"read":       "allow",
+		"file_list":  "allow",
+		"web_fetch":  "allow",
+		"web_search": "allow",
+		"bash":       "allow",
+		"write":      "deny",
+		"file_edit":  "deny",
 	})
 	am.agents["explore"] = AgentInfo{
 		Name:        "explore",
@@ -127,18 +119,17 @@ func (am *AgentManager) initDefaults() {
 		Mode:        ModeSubagent,
 		Native:      true,
 		Permission:  explorePerm,
-		Prompt:      `You are an Explorer. Search and investigate the codebase quickly.
+		Prompt: `You are an Explorer. Search and investigate the codebase quickly.
 
 ## Available tools
 - glob — find files by pattern
 - grep — search code for keywords
-- file_read — read file contents
-- shell_execute — run commands (read-only)
+- read — read file contents
+- bash — run commands (read-only)
 - web_fetch — fetch URLs`,
-		Options:     map[string]interface{}{},
+		Options: map[string]interface{}{},
 	}
 
-	
 	am.agents["summary"] = AgentInfo{
 		Name:        "summary",
 		Description: "Agent for creating concise summaries of conversations and files.",
@@ -150,7 +141,6 @@ func (am *AgentManager) initDefaults() {
 	}
 }
 
-
 func (am *AgentManager) GetAgent(name string) (AgentInfo, error) {
 	a, ok := am.agents[name]
 	if !ok {
@@ -158,7 +148,6 @@ func (am *AgentManager) GetAgent(name string) (AgentInfo, error) {
 	}
 	return a, nil
 }
-
 
 func (am *AgentManager) ListAgentNames() []string {
 	names := make([]string, 0, len(am.agents))
@@ -168,7 +157,6 @@ func (am *AgentManager) ListAgentNames() []string {
 	return names
 }
 
-
 func (am *AgentManager) ListAgents() []AgentInfo {
 	agents := make([]AgentInfo, 0, len(am.agents))
 	for _, a := range am.agents {
@@ -176,7 +164,6 @@ func (am *AgentManager) ListAgents() []AgentInfo {
 	}
 	return agents
 }
-
 
 func (am *AgentManager) SubagentTypesFor(name string) []string {
 	if am == nil {
@@ -189,7 +176,6 @@ func (am *AgentManager) SubagentTypesFor(name string) []string {
 	return a.SubagentTypes
 }
 
-
 func (am *AgentManager) CanAccess(agentName, toolName string) (bool, error) {
 	a, err := am.GetAgent(agentName)
 	if err != nil {
@@ -198,19 +184,17 @@ func (am *AgentManager) CanAccess(agentName, toolName string) (bool, error) {
 	return a.Permission.Check(toolName), nil
 }
 
-
 func (am *AgentManager) DeriveSubagentPermission(parentPerm Permission, subagentName string) Permission {
 	subagent, err := am.GetAgent(subagentName)
 	if err != nil {
-		return parentPerm 
+		return parentPerm
 	}
-	
+
 	return MergePermissions(parentPerm, subagent.Permission)
 }
 
-
 func (am *AgentManager) RegisterAgent(info AgentInfo) {
-	
+
 	if info.Permission == nil || len(info.Permission) == 0 {
 		info.Permission = DefaultPermission()
 	}
@@ -220,7 +204,6 @@ func (am *AgentManager) RegisterAgent(info AgentInfo) {
 	am.agents[info.Name] = info
 }
 
-
 func (am *AgentManager) RemoveAgent(name string) bool {
 	if _, ok := am.agents[name]; ok {
 		delete(am.agents, name)
@@ -229,16 +212,13 @@ func (am *AgentManager) RemoveAgent(name string) bool {
 	return false
 }
 
-
 func (am *AgentManager) DefaultAgent() (AgentInfo, error) {
 	return am.GetAgent("build")
 }
 
-
 func (am *AgentManager) GetAvailableModes() []AgentMode {
 	return []AgentMode{ModePrimary, ModeSubagent, ModeAll}
 }
-
 
 func (am *AgentManager) LoadFromConfig(cfg map[string]AgentCfg) {
 	for name, ac := range cfg {
@@ -251,31 +231,42 @@ func (am *AgentManager) LoadFromConfig(cfg map[string]AgentCfg) {
 			perm = DefaultPermission()
 		}
 		am.RegisterAgent(AgentInfo{
-			Name:        name,
-			Description: ac.Description,
-			Mode:        mode,
-			Hidden:      ac.Hidden,
-			Internal:    ac.Internal,
-			Leaf:        ac.Leaf,
-			Review:      ac.Review,
-			Coordinator: ac.Coordinator,
+			Name:          name,
+			Description:   ac.Description,
+			Mode:          mode,
+			Hidden:        ac.Hidden,
+			Internal:      ac.Internal,
+			Leaf:          ac.Leaf,
+			Review:        ac.Review,
+			Coordinator:   ac.Coordinator,
 			SubagentTypes: ac.SubagentTypes,
-			Prompt:      ac.Prompt,
-			Permission:  perm,
+			Prompt:        ac.Prompt,
+			Permission:    perm,
+			Tools:         ac.Tools,
+			ThinkingLevel: ac.ThinkingLevel,
+			Blocking:      ac.Blocking,
+			OutputSchema:  ac.OutputSchema,
+			RequestBudget: ac.RequestBudget,
+			MaxRuntimeSec: ac.MaxRuntimeSec,
 		})
 	}
 }
 
-
 type AgentCfg struct {
-	Mode        string     `json:"mode"`
-	Description string     `json:"description"`
-	Prompt      string     `json:"prompt"`
-	Hidden      bool       `json:"hidden"`
-	Internal    bool       `json:"internal"`
-	Leaf        bool       `json:"leaf"`
-	Review      bool       `json:"review"`
-	Coordinator bool       `json:"coordinator"`
-	SubagentTypes []string `json:"subagentTypes"`
-	Permission  Permission `json:"permission"`
+	Mode          string     `json:"mode"`
+	Description   string     `json:"description"`
+	Prompt        string     `json:"prompt"`
+	Hidden        bool       `json:"hidden"`
+	Internal      bool       `json:"internal"`
+	Leaf          bool       `json:"leaf"`
+	Review        bool       `json:"review"`
+	Coordinator   bool       `json:"coordinator"`
+	SubagentTypes []string   `json:"subagentTypes"`
+	Tools         []string   `json:"tools"`
+	ThinkingLevel string     `json:"thinkingLevel"`
+	Blocking      bool       `json:"blocking"`
+	OutputSchema  string     `json:"outputSchema"`
+	RequestBudget int        `json:"requestBudget"`
+	MaxRuntimeSec int        `json:"maxRuntimeSec"`
+	Permission    Permission `json:"permission"`
 }

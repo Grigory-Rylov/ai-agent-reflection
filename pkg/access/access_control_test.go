@@ -427,7 +427,6 @@ func TestCheckAccess_Symlink(t *testing.T) {
 		defer cleanupTempDir(t, allowedDir)
 		defer cleanupTempDir(t, outsideDir)
 
-		
 		linkPath := filepath.Join(allowedDir, "outside_link")
 		if err := os.Symlink(outsideDir, linkPath); err != nil {
 			t.Skip("symlink not supported on this system")
@@ -435,13 +434,11 @@ func TestCheckAccess_Symlink(t *testing.T) {
 
 		controller := NewController([]string{allowedDir})
 
-		
 		result := controller.CheckAccess(linkPath)
 		if result.Allowed {
 			t.Error("symlink that resolves outside allowed dir should be blocked")
 		}
 
-		
 		result = controller.CheckAccess(filepath.Join(linkPath, "secret.txt"))
 		if result.Allowed {
 			t.Error("file accessed through symlink to outside should be denied")

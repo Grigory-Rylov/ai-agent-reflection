@@ -10,7 +10,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-
 func bigUserMsg(i int) string {
 	return fmt.Sprintf("%d-%s", i, strings.Repeat("u", 490))
 }
@@ -18,7 +17,6 @@ func bigUserMsg(i int) string {
 func bigAssistantMsg(i int) string {
 	return fmt.Sprintf("%d-%s", i, strings.Repeat("a", 490))
 }
-
 
 func findLastSummaryIndex(t *testing.T, hist []session.Message) int {
 	t.Helper()
@@ -29,7 +27,6 @@ func findLastSummaryIndex(t *testing.T, hist []session.Message) int {
 	}
 	return -1
 }
-
 
 func assertNoOldHeadInContext(t *testing.T, visible []session.Message, headTurns int) {
 	t.Helper()
@@ -42,7 +39,6 @@ func assertNoOldHeadInContext(t *testing.T, visible []session.Message, headTurns
 		}
 	}
 }
-
 
 func assertTailInOrder(t *testing.T, hist []session.Message, tsid int, visible []session.Message) {
 	t.Helper()
@@ -65,12 +61,10 @@ func assertTailInOrder(t *testing.T, hist []session.Message, tsid int, visible [
 	}
 }
 
-
 func TestRepeatedCompaction_TailStartIDAlignment(t *testing.T) {
 	agent := newPinnedTestAgent(t)
 	s := session.NewSession(session.DefaultConfig())
 
-	
 	for i := 0; i < 8; i++ {
 		s.AddUserMessage(bigUserMsg(i))
 		s.AddAssistantMessage(bigAssistantMsg(i))
@@ -88,18 +82,15 @@ func TestRepeatedCompaction_TailStartIDAlignment(t *testing.T) {
 		t.Fatalf("expected tail_start_id > 0 after first compaction, got %d", firstTailStart)
 	}
 
-	
 	for i := 8; i < 14; i++ {
 		s.AddUserMessage(bigUserMsg(i))
 		s.AddAssistantMessage(bigAssistantMsg(i))
 	}
 
-	
 	agent.compactIfNeeded(ctx, s, false)
 
 	hist := s.GetHistory()
 
-	
 	if len(hist) <= len(histAfterFirst) {
 		t.Errorf("history should grow across compactions (no Reset), %d -> %d", len(histAfterFirst), len(hist))
 	}
@@ -128,11 +119,9 @@ func TestRepeatedCompaction_TailStartIDAlignment(t *testing.T) {
 		t.Errorf("second context message should be the compaction marker, got %q", visible[1].Content)
 	}
 
-	
 	assertNoOldHeadInContext(t, visible, 8)
 	assertTailInOrder(t, hist, tsid, visible)
 }
-
 
 func TestRepeatedCompaction_RawIndexAlignment(t *testing.T) {
 	agent := newPinnedTestAgent(t)

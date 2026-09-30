@@ -47,7 +47,7 @@ func TestShellPermissionNonFileCommandSkipsAsk(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			askCalled = false
-			result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+			result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 				"command": tt.command,
 			}, 12345)
 			if !result {
@@ -81,7 +81,7 @@ func TestShellPermissionMutatingOutsideAllowedAsks(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "cp /etc/passwd /tmp/stolen",
 	}, 12345)
 	if !result {
@@ -114,7 +114,7 @@ func TestShellPermissionGrepInsideCwdSkipsAsk(t *testing.T) {
 	e := newAgentToolExecutor(a)
 
 	cmd := `grep -rn '"cat /etc/passwd"' --include='*_test.go' pkg/agent/ && cut -d: -f1,2`
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": cmd,
 	}, 12345)
 	if !result {
@@ -147,7 +147,7 @@ func TestShellPermissionRedirectOutsideAllowedAsks(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "echo hi > /tmp/outside",
 	}, 12345)
 	if !result {
@@ -180,7 +180,7 @@ func TestShellPermissionFileCommandInsideAllowedSkipsAsk(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "ls -la",
 	}, 12345)
 	if !result {
@@ -226,7 +226,7 @@ func TestShellPermissionReadOnlyWithExternalPathsSkipsAsk(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			askCalled = false
-			result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+			result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 				"command": tt.command,
 			}, 12345)
 			if !result {
@@ -261,7 +261,7 @@ func TestShellPermissionPromptShowsOnlyProblematicFragments(t *testing.T) {
 	e := newAgentToolExecutor(a)
 
 	cmd := "ls /usr/local/go/bin && cp /etc/passwd /tmp/stolen"
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": cmd,
 	}, 12345)
 	if !result {

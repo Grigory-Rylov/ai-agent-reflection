@@ -8,16 +8,16 @@ If native function calling is unavailable, use XML format inline in your respons
 </function>
 </tool_call>
 
-### file_read
+### read
 <tool_call>
-<function=file_read>
+<function=read>
 <parameter=path>/path/to/file.txt</parameter>
 </function>
 </tool_call>
 
-### file_write
+### write
 <tool_call>
-<function=file_write>
+<function=write>
 <parameter=path>/path/to/file.txt</parameter>
 <parameter=content>File content here</parameter>
 </function>
@@ -30,9 +30,9 @@ If native function calling is unavailable, use XML format inline in your respons
 </function>
 </tool_call>
 
-### shell_execute
+### bash
 <tool_call>
-<function=shell_execute>
+<function=bash>
 <parameter=command>ls -la</parameter>
 <parameter=timeout>30</parameter>
 </function>
@@ -61,9 +61,9 @@ If native function calling is unavailable, use XML format inline in your respons
 </function>
 </tool_call>
 
-### search_code
+### grep
 <tool_call>
-<function=search_code>
+<function=grep>
 <parameter=pattern>func main</parameter>
 <parameter=path>.</parameter>
 <parameter=include>*.go</parameter>

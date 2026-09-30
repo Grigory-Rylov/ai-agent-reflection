@@ -6,7 +6,6 @@ import (
 	"strings"
 )
 
-
 type Action string
 
 const (
@@ -15,16 +14,13 @@ const (
 	Ask   Action = "ask"
 )
 
-
 type Rule struct {
 	Permission string
 	Pattern    string
 	Action     Action
 }
 
-
 type Ruleset []Rule
-
 
 func Evaluate(permission, pattern string, rulesets ...Ruleset) Rule {
 	flat := Merge(rulesets...)
@@ -37,7 +33,6 @@ func Evaluate(permission, pattern string, rulesets ...Ruleset) Rule {
 	return Rule{Permission: permission, Pattern: "*", Action: Ask}
 }
 
-
 func Merge(rulesets ...Ruleset) Ruleset {
 	var out Ruleset
 	for _, rs := range rulesets {
@@ -45,7 +40,6 @@ func Merge(rulesets ...Ruleset) Ruleset {
 	}
 	return out
 }
-
 
 func FromConfig(cfg map[string]any) Ruleset {
 	keys := make([]string, 0, len(cfg))
@@ -77,7 +71,6 @@ func FromConfig(cfg map[string]any) Ruleset {
 	return rules
 }
 
-
 func expand(pattern string) string {
 	if pattern == "~" {
 		return os.Getenv("HOME")
@@ -94,7 +87,6 @@ func expand(pattern string) string {
 	return pattern
 }
 
-
 func Disabled(tools []string, ruleset Ruleset) map[string]bool {
 	edits := map[string]bool{"edit": true, "write": true, "apply_patch": true}
 	out := make(map[string]bool)
@@ -109,7 +101,6 @@ func Disabled(tools []string, ruleset Ruleset) map[string]bool {
 	}
 	return out
 }
-
 
 func lastForPermission(permission string, ruleset Ruleset) *Rule {
 	for i := len(ruleset) - 1; i >= 0; i-- {

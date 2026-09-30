@@ -38,7 +38,6 @@ func (l Level) String() string {
 }
 
 type Config struct {
-
 	Level Level
 
 	File string

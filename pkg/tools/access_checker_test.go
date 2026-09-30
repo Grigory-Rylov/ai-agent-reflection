@@ -258,7 +258,7 @@ func TestCheckToolArgs(t *testing.T) {
 
 	t.Run("returns nil when no controller set", func(t *testing.T) {
 		SetAccessController(nil)
-		err := CheckToolArgs("file_read", map[string]string{
+		err := CheckToolArgs("read", map[string]string{
 			"path": "/etc/passwd",
 		})
 		if err != nil {
@@ -306,7 +306,6 @@ func TestGlobWithAccessControl(t *testing.T) {
 		dir, _ := setupAccessTest(t)
 		defer cleanupAccessTest(t, dir)
 
-		
 		if err := os.WriteFile(filepath.Join(dir, "test.go"), []byte("package main"), 0644); err != nil {
 			t.Fatalf("failed to create test file: %v", err)
 		}
@@ -408,7 +407,6 @@ func TestSessionGrantIntegration(t *testing.T) {
 		}
 		defer os.RemoveAll(outsideDir)
 
-		
 		tool := &FileReadTool{}
 		result, err := tool.Execute(context.Background(), map[string]string{
 			"path": filepath.Join(outsideDir, "test.txt"),
@@ -420,17 +418,14 @@ func TestSessionGrantIntegration(t *testing.T) {
 			t.Error("expected failure before grant")
 		}
 
-		
 		ctrl := GetAccessController()
 		ctrl.GrantPath(outsideDir)
 
-		
 		testFile := filepath.Join(outsideDir, "granted.txt")
 		if err := os.WriteFile(testFile, []byte("granted"), 0644); err != nil {
 			t.Fatalf("failed to create test file: %v", err)
 		}
 
-		
 		result, err = tool.Execute(context.Background(), map[string]string{
 			"path": testFile,
 		})
@@ -498,7 +493,6 @@ func TestMultipleAllowedDirs(t *testing.T) {
 		SetAccessController(ctrl)
 		defer SetAccessController(nil)
 
-		
 		tool := &FileWriteTool{}
 		result, err := tool.Execute(context.Background(), map[string]string{
 			"path":    filepath.Join(dir1, "f1.txt"),
@@ -511,7 +505,6 @@ func TestMultipleAllowedDirs(t *testing.T) {
 			t.Errorf("write to dir1 should succeed, got: %s", result.Error)
 		}
 
-		
 		result, err = tool.Execute(context.Background(), map[string]string{
 			"path":    filepath.Join(dir2, "f2.txt"),
 			"content": "file2",
@@ -523,7 +516,6 @@ func TestMultipleAllowedDirs(t *testing.T) {
 			t.Errorf("write to dir2 should succeed, got: %s", result.Error)
 		}
 
-		
 		dir3, err := os.MkdirTemp("", "multi_allowed_3_*")
 		if err != nil {
 			t.Fatalf("failed to create temp dir: %v", err)
@@ -543,23 +535,22 @@ func TestMultipleAllowedDirs(t *testing.T) {
 	})
 }
 
-
 func TestFileToolPaths_NoPathFallsBackToWorkingDir(t *testing.T) {
 	tests := []struct {
 		tool     string
 		args     map[string]string
 		expected []string
 	}{
-		{"file_write", map[string]string{}, []string{"."}},
-		{"file_write", map[string]string{"path": "index.html"}, []string{"index.html"}},
-		{"file_write", map[string]string{"path": ""}, []string{"."}},
-		{"file_read", map[string]string{}, []string{"."}},
-		{"file_read", map[string]string{"path": "/etc/hosts"}, []string{"/etc/hosts"}},
+		{"write", map[string]string{}, []string{"."}},
+		{"write", map[string]string{"path": "index.html"}, []string{"index.html"}},
+		{"write", map[string]string{"path": ""}, []string{"."}},
+		{"read", map[string]string{}, []string{"."}},
+		{"read", map[string]string{"path": "/etc/hosts"}, []string{"/etc/hosts"}},
 		{"edit", map[string]string{}, []string{"."}},
 		{"edit", map[string]string{"path": "main.go"}, []string{"main.go"}},
-		{"file_list", map[string]string{}, []string{"."}},           
-		{"search_code", map[string]string{}, []string{"."}},         
-		{"shell_execute", map[string]string{"command": "ls"}, nil}, 
+		{"file_list", map[string]string{}, []string{"."}},
+		{"grep", map[string]string{}, []string{"."}},
+		{"bash", map[string]string{"command": "ls"}, nil},
 	}
 
 	for _, tt := range tests {

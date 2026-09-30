@@ -8,8 +8,8 @@ import (
 
 func TestQuestionTool_Name(t *testing.T) {
 	tool := &QuestionTool{}
-	if tool.Name() != "question" {
-		t.Errorf("expected 'question', got %s", tool.Name())
+	if tool.Name() != "ask" {
+		t.Errorf("expected 'ask', got %s", tool.Name())
 	}
 }
 

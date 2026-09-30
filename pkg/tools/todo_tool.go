@@ -8,16 +8,16 @@ import (
 )
 
 type TodoItem struct {
-	ID      int
-	Task    string
-	Status  string 
-	Agent   string
+	ID     int
+	Task   string
+	Status string
+	Agent  string
 }
 
 type TodoTool struct {
-	mu      sync.Mutex
-	items   []TodoItem
-	nextID  int
+	mu     sync.Mutex
+	items  []TodoItem
+	nextID int
 }
 
 func (t *TodoTool) Name() string {

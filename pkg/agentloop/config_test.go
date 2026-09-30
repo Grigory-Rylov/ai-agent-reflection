@@ -2,7 +2,6 @@ package agentloop
 
 import (
 	"testing"
-	"time"
 )
 
 func TestDefaultLoopConfig(t *testing.T) {
@@ -26,8 +25,6 @@ func TestDefaultLoopConfig(t *testing.T) {
 	if !config.EnableTools {
 		t.Error("expected EnableTools to be true")
 	}
-	if config.ToolTimeout != 30*time.Second {
-	}
 	if config.ThinkingPeerID != 0 {
 		t.Errorf("expected ThinkingPeerID 0, got %d", config.ThinkingPeerID)
 	}
@@ -40,8 +37,8 @@ func TestDefaultLoopConfig(t *testing.T) {
 	if !config.EnableCompression {
 		t.Error("expected EnableCompression to be true")
 	}
-	if config.TailTurns != 2 {
-		t.Errorf("expected TailTurns 2, got %d", config.TailTurns)
+	if config.CompactionKeepRecentTokens != 20000 {
+		t.Errorf("expected CompactionKeepRecentTokens 20000, got %d", config.CompactionKeepRecentTokens)
 	}
 	if !config.EnablePruning {
 		t.Error("expected EnablePruning to be true")

@@ -5,14 +5,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
 )
-
 
 type LLMCompressor struct {
 	serverURL   string
@@ -21,16 +23,13 @@ type LLMCompressor struct {
 	temperature float64
 }
 
-
 func (c *LLMCompressor) Model() string {
 	return c.model
 }
 
-
 func (c *LLMCompressor) ServerURL() string {
 	return c.serverURL
 }
-
 
 func NewLLMCompressor(serverURL, model string, temperature float64) *LLMCompressor {
 	return &LLMCompressor{
@@ -38,34 +37,28 @@ func NewLLMCompressor(serverURL, model string, temperature float64) *LLMCompress
 		model:       model,
 		temperature: temperature,
 		client: &http.Client{
-			Timeout: 2 * time.Minute,
+			Timeout: 2 * time.Hour,
 		},
 	}
 }
-
 
 func (c *LLMCompressor) Compress(ctx context.Context, req *CompressionRequest) (*CompressionResult, error) {
 	if req.TargetTokens <= 0 {
 		req.TargetTokens = 2000
 	}
 
-	
 	originalTokens := c.simpleCountTokens(req.Messages)
 
-	
 	systemPrompt := c.buildCompressionSystemPrompt(req)
 	userPrompt := c.buildCompressionUserPrompt(req.Messages, req.TargetTokens)
 
-	
 	compressedText, summary, err := c.sendCompressionRequestStreaming(ctx, systemPrompt, userPrompt, req.TargetTokens)
 	if err != nil {
 		return nil, fmt.Errorf("compression request failed: %w", err)
 	}
 
-	
 	compressedTokens, _ := c.countTextTokens(compressedText)
 
-	
 	compressedMessages := []tokenizers.Message{
 		{
 			Role:    "system",
@@ -89,6 +82,54 @@ func (c *LLMCompressor) Compress(ctx context.Context, req *CompressionRequest) (
 	}, nil
 }
 
+const summarizationAttempts = 3
+
+var summarizationRetryDelay = 2 * time.Second
+
+func (c *LLMCompressor) Complete(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error) {
+	if maxTokens <= 0 {
+		maxTokens = 2000
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= summarizationAttempts; attempt++ {
+		text, err := c.completeOnce(ctx, systemPrompt, userPrompt, maxTokens)
+		if err == nil {
+			return text, nil
+		}
+		lastErr = err
+		if !isTransientSummarizationError(ctx, err) {
+			return "", err
+		}
+		if attempt < summarizationAttempts {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(summarizationRetryDelay):
+			}
+		}
+	}
+	return "", fmt.Errorf("completion request failed after %d attempts: %w", summarizationAttempts, lastErr)
+}
+
+func (c *LLMCompressor) completeOnce(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error) {
+	text, _, err := c.sendCompressionRequestStreaming(ctx, systemPrompt, userPrompt, maxTokens)
+	if err != nil {
+		return "", fmt.Errorf("completion request failed: %w", err)
+	}
+	return text, nil
+}
+
+func isTransientSummarizationError(ctx context.Context, err error) bool {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if strings.Contains(err.Error(), "API error: status") {
+		return false
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
 
 func (c *LLMCompressor) buildCompressionSystemPrompt(req *CompressionRequest) string {
 	return fmt.Sprintf(`You are a context compression assistant. Your task is to compress conversation history while preserving essential information.
@@ -101,7 +142,6 @@ Important:
 - Maintain the flow and meaning of the conversation
 - Keep the response concise and focused`)
 }
-
 
 func (c *LLMCompressor) buildCompressionUserPrompt(messages []tokenizers.Message, targetTokens int) string {
 	var sb strings.Builder
@@ -116,9 +156,6 @@ func (c *LLMCompressor) buildCompressionUserPrompt(messages []tokenizers.Message
 
 	return sb.String()
 }
-
-
-
 
 func (c *LLMCompressor) sendCompressionRequestStreaming(ctx context.Context, systemPrompt, userPrompt string, targetTokens int) (string, string, error) {
 	reqBody := map[string]interface{}{
@@ -154,7 +191,6 @@ func (c *LLMCompressor) sendCompressionRequestStreaming(ctx context.Context, sys
 		return "", "", fmt.Errorf("API error: status %d", resp.StatusCode)
 	}
 
-	
 	var (
 		contentBuilder strings.Builder
 		completionN    int
@@ -206,16 +242,14 @@ func (c *LLMCompressor) sendCompressionRequestStreaming(ctx context.Context, sys
 	return compressedText, summary, nil
 }
 
-
 func (c *LLMCompressor) simpleCountTokens(messages []tokenizers.Message) int {
 	total := 0
 	for _, msg := range messages {
 		tokens := len(strings.Fields(msg.Content))
-		total += tokens + 2 
+		total += tokens + 2
 	}
 	return total
 }
-
 
 func (c *LLMCompressor) countTextTokens(text string) (int, error) {
 	tokenizer := tokenizers.NewLlamaServerTokenizer(c.serverURL, c.model, 8192)

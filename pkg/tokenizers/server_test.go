@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-
 func TestNewLlamaServerTokenizer(t *testing.T) {
 	tokenizer := NewLlamaServerTokenizer("http://localhost:8081", "test-model", 8192)
 	if tokenizer == nil {
@@ -27,7 +26,7 @@ func TestLlamaServerTokenizerName(t *testing.T) {
 }
 
 func TestLlamaServerTokenizerCountTokens(t *testing.T) {
-	
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -79,13 +78,12 @@ func TestLlamaServerTokenizerDecodeNotSupported(t *testing.T) {
 	}
 }
 
-
 func TestLlamaServerTokenizerCountMessagesTokens(t *testing.T) {
-	
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		
+
 		tokens := make([]int, 100)
 		for i := 0; i < 100; i++ {
 			tokens[i] = i + 1

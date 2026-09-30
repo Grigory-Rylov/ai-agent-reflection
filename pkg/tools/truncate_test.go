@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-
 func TestTruncateToolResult_PassesThroughSmallOutput(t *testing.T) {
 	dir := t.TempDir()
 	content := `{"success":true,"data":{"output":"short"}}`
@@ -27,7 +26,6 @@ func TestTruncateToolResult_PassesThroughSmallOutput(t *testing.T) {
 		t.Errorf("expected empty output path, got %q", res.OutputPath)
 	}
 }
-
 
 func TestTruncateToolResult_TruncatesLargeOutput(t *testing.T) {
 	dir := t.TempDir()
@@ -50,7 +48,6 @@ func TestTruncateToolResult_TruncatesLargeOutput(t *testing.T) {
 		t.Errorf("expected hint to mention saved file %q, got %q", res.OutputPath, res.Content)
 	}
 }
-
 
 func TestTruncateToolResult_WritesFullOutputToFile(t *testing.T) {
 	dir := t.TempDir()
@@ -75,7 +72,6 @@ func TestTruncateToolResult_WritesFullOutputToFile(t *testing.T) {
 	}
 }
 
-
 func TestTruncateToolResult_RespectsMaxBytes(t *testing.T) {
 	dir := t.TempDir()
 	content := strings.Repeat("x", 10000)
@@ -92,7 +88,6 @@ func TestTruncateToolResult_RespectsMaxBytes(t *testing.T) {
 	}
 }
 
-
 func TestTruncateToolResult_HeadDirection(t *testing.T) {
 	dir := t.TempDir()
 	content := "HEAD-KEEP\n" + strings.Repeat("tail-line\n", 500)
@@ -108,7 +103,6 @@ func TestTruncateToolResult_HeadDirection(t *testing.T) {
 		t.Errorf("expected head preserved, got %q", res.Content)
 	}
 }
-
 
 func TestTruncateToolResult_Defaults(t *testing.T) {
 	dir := t.TempDir()
@@ -130,7 +124,6 @@ func TestTruncateToolResult_Defaults(t *testing.T) {
 	}
 }
 
-
 func TestTruncateToolResult_HasTaskTool(t *testing.T) {
 	dir := t.TempDir()
 	content := strings.Repeat("z", 8192)
@@ -151,7 +144,6 @@ func TestTruncateToolResult_HasTaskTool(t *testing.T) {
 		t.Errorf("did not expect Task tool hint, got %q", withoutTask.Content)
 	}
 }
-
 
 func TestTruncateToolResult_DefaultDir(t *testing.T) {
 	oldWD := WorkingDir
@@ -176,7 +168,6 @@ func TestTruncateToolResult_DefaultDir(t *testing.T) {
 		t.Errorf("expected output in %q, got %q", expectedDir, res.OutputPath)
 	}
 }
-
 
 func TestTruncateToolResult_Cleanup(t *testing.T) {
 	dir := t.TempDir()

@@ -12,7 +12,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
 )
 
-
 func slotAndLLMServer(t *testing.T) (*httptest.Server, func() []string) {
 	t.Helper()
 	var mu sync.Mutex
@@ -150,7 +149,6 @@ func TestProcessPromptSlotSaveRestoreFailureDoesNotFailRequest(t *testing.T) {
 	}
 	al := loop.(*agentLoop)
 
-	
 	if _, err := al.ProcessPrompt(context.Background(), "hi", 780); err != nil {
 		t.Fatalf("ProcessPrompt should not fail on restore error: %v", err)
 	}

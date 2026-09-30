@@ -27,7 +27,6 @@ Two JSON files in the project root. Fallback path for `config.json`: `~/.config/
   "peer_id": 2000000001,
   "thinking_peer_id": 2000000002,
   "temperature": 0.7,
-  "stream_idle_timeout_sec": 300,
   "db_path": "./agent.db",
   "mcp_config_path": "./mcp_config.json",
   "allowed_dirs": ["/your/working/dir"],
@@ -69,17 +68,17 @@ Per model entry:
 
 ### Stream idle watchdog
 
-If the LLM stream sends no SSE data for a while (stalled engine, dead connection), the agent aborts the stream and retries the request automatically.
+By default the watchdog is **disabled**: the agent waits for the LLM as long as needed and relies on the global HTTP timeout (2 hours) as the only bound. This is intentional for shared llama-server instances — a request can sit in the server queue for tens of minutes (another user occupies the slot) and must not be aborted.
 
 Configured in **config.json** via `stream_idle_timeout_sec`:
 
 | Value | Meaning |
 |-------|---------|
-| `0` / absent | default — 300 seconds (5 minutes; long prefills on big contexts are normal silence) |
-| `> 0` | custom timeout in seconds |
-| `< 0` | watchdog disabled — wait forever (only the global 2h HTTP timeout applies) |
+| `0` / absent | **disabled** (default) — wait for the response; only the 2h HTTP timeout applies |
+| `> 0` | abort+retry if no SSE data for N seconds — set only above your worst-case queue wait |
+| `< 0` | disabled (same as default) |
 
-An aborted-by-watchdog stream is treated as a retryable error and goes through the standard retry loop (`retry_delay`, default 5s).
+An aborted-by-watchdog stream is treated as a retryable error and goes through the standard retry loop (`retry_delay`, default 5s). A retry re-enters the server queue, so a timeout lower than the queue wait causes starvation: the request keeps getting aborted and re-queued behind the busy user.
 
 ## Features
 
@@ -89,7 +88,7 @@ An aborted-by-watchdog stream is treated as a retryable error and goes through t
 - **Slot KV-cache persistence** — fast context reuse between conversation turns via llama-server `/slots` API.
 - **Permission system**: per-agent allow/deny/ask rules for tools and shell commands, with runtime "Always allow" learning.
 - **Session memory** with automatic token-limit aware pruning
-- **Stream idle watchdog** — detects stalled LLM streams (no SSE data) and retries automatically; timeout configurable via `stream_idle_timeout_sec`
+- **Stream idle watchdog (opt-in)** — detects stalled LLM streams and retries; disabled by default to tolerate long llama-server queue waits, enable via `stream_idle_timeout_sec`
 
 ## Bot Commands
 

@@ -1,6 +1,3 @@
-
-
-
 package instructions
 
 import (
@@ -9,12 +6,9 @@ import (
 	"strings"
 )
 
-
 var projectFileNames = []string{"AGENTS.md", "CLAUDE.md"}
 
-
 var configDir = ""
-
 
 func Build(dir string) string {
 	abs, err := filepath.Abs(dir)
@@ -45,7 +39,6 @@ func Build(dir string) string {
 	return sb.String()
 }
 
-
 func globalFiles() []string {
 	for _, name := range projectFileNames {
 		p := filepath.Join(globalConfigDir(), name)
@@ -55,7 +48,6 @@ func globalFiles() []string {
 	}
 	return nil
 }
-
 
 func projectFiles(start string) []string {
 	home, _ := os.UserHomeDir()
@@ -84,7 +76,6 @@ func projectFiles(start string) []string {
 	return nil
 }
 
-
 func gitRoot(start string) string {
 	dir := filepath.Clean(start)
 	for {
@@ -98,7 +89,6 @@ func gitRoot(start string) string {
 		dir = parent
 	}
 }
-
 
 func globalConfigDir() string {
 	if configDir != "" {

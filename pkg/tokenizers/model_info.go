@@ -10,40 +10,35 @@ import (
 	"time"
 )
 
-
 type ModelInfo struct {
-	ID           string       `json:"id"`
-	Object       string       `json:"object"`
-	Created      int64        `json:"created"`
-	OwnedBy      string       `json:"owned_by"`
-	Meta         *ModelMeta   `json:"meta"`
-	Status       *ModelStatus `json:"status"`
-	MaxModelLen  int          `json:"max_model_len"` 
+	ID          string       `json:"id"`
+	Object      string       `json:"object"`
+	Created     int64        `json:"created"`
+	OwnedBy     string       `json:"owned_by"`
+	Meta        *ModelMeta   `json:"meta"`
+	Status      *ModelStatus `json:"status"`
+	MaxModelLen int          `json:"max_model_len"`
 }
-
 
 type ModelStatus struct {
 	Value string   `json:"value"`
 	Args  []string `json:"args"`
 }
 
-
 type ModelMeta struct {
 	VocabType any `json:"vocab_type"`
 	NVocab    int `json:"n_vocab"`
-	NCtxTrain int `json:"n_ctx_train"` 
-	NCtx      int `json:"n_ctx"`       
+	NCtxTrain int `json:"n_ctx_train"`
+	NCtx      int `json:"n_ctx"`
 	NEmbd     int `json:"n_embd"`
 	NParams   int `json:"n_params"`
 	Size      int `json:"size"`
 }
 
-
 type ModelsResponse struct {
 	Object string      `json:"object"`
 	Data   []ModelInfo `json:"data"`
 }
-
 
 type PropsResponse struct {
 	DefaultGenerationSettings *GenerationSettings `json:"default_generation_settings"`
@@ -51,18 +46,15 @@ type PropsResponse struct {
 	ModelPath                 string              `json:"model_path"`
 }
 
-
 type GenerationSettings struct {
-	NCtx int `json:"n_ctx"` 
+	NCtx int `json:"n_ctx"`
 }
-
 
 type ServerInfoClient struct {
 	serverURL string
 	client    *http.Client
 	debug     bool
 }
-
 
 func NewServerInfoClient(serverURL string) *ServerInfoClient {
 	return &ServerInfoClient{
@@ -74,26 +66,22 @@ func NewServerInfoClient(serverURL string) *ServerInfoClient {
 	}
 }
 
-
 func (c *ServerInfoClient) SetDebug(debug bool) {
 	c.debug = debug
 }
 
-
 func (c *ServerInfoClient) GetModelContextLength(model string) int {
-	
+
 	if ctxLen := c.getContextFromV1Models(model); ctxLen > 0 {
 		return ctxLen
 	}
 
-	
 	if ctxLen := c.getContextFromProps(); ctxLen > 0 {
 		return ctxLen
 	}
 
 	return -1
 }
-
 
 func (c *ServerInfoClient) getContextFromV1Models(model string) int {
 	reqURL := fmt.Sprintf("%s/v1/models", c.serverURL)
@@ -137,7 +125,6 @@ func (c *ServerInfoClient) getContextFromV1Models(model string) int {
 		return -1
 	}
 
-	
 	var matched *ModelInfo
 	for i := range modelsResp.Data {
 		if modelsResp.Data[i].ID == model {
@@ -161,7 +148,6 @@ func (c *ServerInfoClient) getContextFromV1Models(model string) int {
 		return -1
 	}
 
-	
 	if ctxLen := ctxSizeFromArgs(matched.Status); ctxLen > 0 {
 		if c.debug {
 			fmt.Printf("[server-info] Got --ctx-size=%d for model %q from /v1/models\n", ctxLen, model)
@@ -169,7 +155,6 @@ func (c *ServerInfoClient) getContextFromV1Models(model string) int {
 		return ctxLen
 	}
 
-	
 	if matched.Meta != nil && matched.Meta.NCtx > 0 {
 		if c.debug {
 			fmt.Printf("[server-info] Got n_ctx=%d for model %q from /v1/models\n", matched.Meta.NCtx, model)
@@ -177,7 +162,6 @@ func (c *ServerInfoClient) getContextFromV1Models(model string) int {
 		return matched.Meta.NCtx
 	}
 
-	
 	if matched.MaxModelLen > 0 {
 		if c.debug {
 			fmt.Printf("[server-info] Got max_model_len=%d for model %q from /v1/models\n", matched.MaxModelLen, model)
@@ -187,7 +171,6 @@ func (c *ServerInfoClient) getContextFromV1Models(model string) int {
 
 	return -1
 }
-
 
 func ctxSizeFromArgs(status *ModelStatus) int {
 	if status == nil {
@@ -204,7 +187,6 @@ func ctxSizeFromArgs(status *ModelStatus) int {
 	}
 	return 0
 }
-
 
 func (c *ServerInfoClient) getContextFromProps() int {
 	reqURL := fmt.Sprintf("%s/props", c.serverURL)
@@ -258,7 +240,6 @@ func (c *ServerInfoClient) getContextFromProps() int {
 
 	return -1
 }
-
 
 func (c *ServerInfoClient) GetModelInfo() (*ModelInfo, error) {
 	reqURL := fmt.Sprintf("%s/v1/models", c.serverURL)

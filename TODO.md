@@ -48,8 +48,8 @@
 
 ### 8. Обработка overflow при компактизации
 - **opencode**: если компактизация не вписалась в контекст — `result === "compact"` повторно вызывает компактизацию; если не получается — помечает ошибку `ContextOverflowError`, завершает (compaction.ts:426-435). Также есть `replay` предыдущего user-сообщения при overflow (compaction.ts:320-336).
-- **агент**: `CompactWithOpenCode()` при ошибке суммаризации просто логирует warning и возвращает (agentloop.go:897-902) — без fallback и без повтора.
-- **DONE**: добавлена обработка повторного overflow после компактизации и fallback. В `compactIfNeeded` (agent_impl.go): если CompactWithOpenCode вернул ошибку, выполняем fallback — прораним head агрессивно через SelectMessages + помечаем все head-сообщения как compacted с placeholder-summary. В реактивном блоке `processToolResults` (tool_result_processor.go): при повторном overflow после компактизации запускаем агрессивный pruning через `handleOverflowAfterCompaction` → `applyAggressivePruning`, пересобираем messages, делаем retry. Если и это не помогло — терминальная ошибка.
+- **агент**: `forceCompact` (agent_impl.go) при ошибке `Compact()` логирует warning и возвращает `false` — транскрипт сохраняется, без destructive head-cut и без placeholder-summary в чат. Как в oh-my-pi: сбой компакции — нефатальный исход, контекст не уничтожается.
+- Реактивное переполнение (loop.go `streamWithOverflowRecovery`) подхватывает механический backstop `applyAggressivePruning` (`PruneMessages`, без LLM). Суммаризация (`LLMCompressor.Complete`) имеет ограниченный retry только на сетевые транзиентные ошибки (`isTransientSummarizationError`). Удалены `applyFallbackHeadCut`, `markCompactedHead`, `compactionFallbackSummary`.
 
 ### 9. Единая оценка токенов
 - **opencode**: везде `Token.estimate = len(chars)/4`, включая `select()` и проверку `isOverflow`.

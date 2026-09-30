@@ -1,8 +1,8 @@
 package agent
 
 import (
-		"fmt"
-		"strings"
+	"fmt"
+	"strings"
 
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 	sess "github.com/Grigory-Rylov/ai-agent-reflection/session"
@@ -10,14 +10,12 @@ import (
 
 const loopThreshold = 2
 
-
 type responseLoopState struct {
 	lastContent string
 	lastSigs    []string
 	count       int
 	alertSent   bool
 }
-
 
 func (s *responseLoopState) observe(content string, sigs []string) int {
 	eq := content == s.lastContent
@@ -33,7 +31,6 @@ func (s *responseLoopState) observe(content string, sigs []string) int {
 	return 0
 }
 
-
 func equalStringSlices(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -46,14 +43,12 @@ func equalStringSlices(a, b []string) bool {
 	return true
 }
 
-
 func normalizeLoopText(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.ToLower(s)
 	s = strings.Join(strings.Fields(s), " ")
 	return s
 }
-
 
 func (a *agentImpl) checkResponseLoop(sessionID int64, responseText, reasoningText string, toolCalls []ToolCall) int {
 	if responseText == "" && reasoningText == "" && len(toolCalls) == 0 {
@@ -88,20 +83,17 @@ func (a *agentImpl) checkResponseLoop(sessionID int64, responseText, reasoningTe
 	return repeats
 }
 
-
 func (a *agentImpl) injectLoopCorrection(session *sess.Session, repeats int) {
 	correction := fmt.Sprintf("[SYSTEM] You are repeating yourself: you have sent the same response %d times in a row. You are stuck in a loop. Stop repeating. Analyze why your previous attempts did not progress and take a fundamentally different action, or provide the final answer if the task is already complete.", repeats)
 	session.AddUserMessage(correction)
 	a.sendThinking(session.GetPeerID(), "[LOOP] Injected corrective message into context")
 }
 
-
 func (a *agentImpl) resetResponseLoop(sessionID int64) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	delete(a.responseLoops, sessionID)
 }
-
 
 func (a *agentImpl) loopState(sessionID int64) *responseLoopState {
 	st, ok := a.responseLoops[sessionID]

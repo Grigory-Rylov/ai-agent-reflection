@@ -6,7 +6,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agent"
 )
 
-
 func AssignSessionSlot(mgr *SlotManager, client *SlotClient, holder slotModelProvider, sessionID string, log Logger) int {
 	if mgr == nil || holder == nil || sessionID == "" {
 		return -1
@@ -34,7 +33,7 @@ func AssignSessionSlot(mgr *SlotManager, client *SlotClient, holder slotModelPro
 	}
 
 	if evicted != "" {
-		
+
 		filename := SlotFileName(modelName, slotID)
 		if err := client.saveSlot(context.Background(), host, slotID, modelName, filename); err != nil {
 			if log != nil {
@@ -43,7 +42,7 @@ func AssignSessionSlot(mgr *SlotManager, client *SlotClient, holder slotModelPro
 		} else if log != nil {
 			log.InfoLogf("[SLOT] saved evicted session %s → slot %d (%s)", evicted, slotID, filename)
 		}
-		
+
 		if err := client.eraseSlot(context.Background(), host, slotID, modelName); err != nil {
 			if log != nil {
 				log.DebugLogf("[SLOT] erase slot %d after eviction: %v", slotID, err)
@@ -55,7 +54,6 @@ func AssignSessionSlot(mgr *SlotManager, client *SlotClient, holder slotModelPro
 		return slotID
 	}
 
-	
 	filename := SlotFileName(modelName, slotID)
 	if err := client.restoreSlot(context.Background(), host, slotID, modelName, filename); err != nil {
 		switch {
@@ -78,7 +76,6 @@ func AssignSessionSlot(mgr *SlotManager, client *SlotClient, holder slotModelPro
 	}
 	return slotID
 }
-
 
 func SaveSessionSlot(mgr *SlotManager, client *SlotClient, holder slotModelProvider, sessionID string, log Logger) {
 	if mgr == nil || client == nil || holder == nil || sessionID == "" {
@@ -111,7 +108,6 @@ func SaveSessionSlot(mgr *SlotManager, client *SlotClient, holder slotModelProvi
 	}
 }
 
-
 func ReleaseSessionSlot(mgr *SlotManager, client *SlotClient, holder slotModelProvider, sessionID string, log Logger) {
 	if mgr == nil || client == nil || holder == nil || sessionID == "" {
 		return
@@ -137,12 +133,10 @@ func ReleaseSessionSlot(mgr *SlotManager, client *SlotClient, holder slotModelPr
 	}
 }
 
-
 type slotModelProvider interface {
 	GetCurrent() (alias, modelName, host string)
 	GetCurrentSlotSave() bool
 }
-
 
 type slotSaverImpl struct {
 	mgr       *SlotManager
@@ -151,7 +145,6 @@ type slotSaverImpl struct {
 	sessionID string
 	log       Logger
 }
-
 
 func NewSlotSaver(mgr *SlotManager, client *SlotClient, holder slotModelProvider, sessionID string, log Logger) agent.SlotSaver {
 	if mgr == nil || client == nil || holder == nil || sessionID == "" {

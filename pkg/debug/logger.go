@@ -2,7 +2,6 @@ package debug
 
 import "fmt"
 
-
 type Logger interface {
 	Debug(format string, args ...interface{})
 	Info(format string, args ...interface{})
@@ -10,14 +9,12 @@ type Logger interface {
 	Error(format string, args ...interface{})
 }
 
-
 type silentLogger struct{}
 
 func (l *silentLogger) Debug(format string, args ...interface{}) {}
 func (l *silentLogger) Info(format string, args ...interface{})  {}
 func (l *silentLogger) Warn(format string, args ...interface{})  {}
 func (l *silentLogger) Error(format string, args ...interface{}) {}
-
 
 type consoleLogger struct{}
 
@@ -33,7 +30,6 @@ func (l *consoleLogger) Warn(format string, args ...interface{}) {
 func (l *consoleLogger) Error(format string, args ...interface{}) {
 	fmt.Printf("[ERROR] "+format+"\n", args...)
 }
-
 
 func NewLogger(debug bool) Logger {
 	if debug {

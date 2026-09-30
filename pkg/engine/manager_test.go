@@ -57,12 +57,12 @@ func TestPlanningTable(t *testing.T) {
 			wantDeadlineMS: int64((20 * time.Minute) / time.Millisecond),
 		},
 		{
-			name:        "same_alias_never_transitions_even_with_scripts",
-			fs:          twoModelSource(),
-			target:      "alpha",
-			wantNeeds:   false,
-			wantStop:    "",
-			wantStart:   "/opt/a.sh",
+			name:      "same_alias_never_transitions_even_with_scripts",
+			fs:        twoModelSource(),
+			target:    "alpha",
+			wantNeeds: false,
+			wantStop:  "",
+			wantStart: "/opt/a.sh",
 		},
 		{
 			name: "different_alias_target_without_start_script_does_not_transition",

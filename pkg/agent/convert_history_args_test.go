@@ -9,9 +9,9 @@ import (
 
 func TestConvertHistoryToAPIMessages_ToolCallArgumentsAlwaysString(t *testing.T) {
 	cases := []struct {
-		name           string
-		storedArgs     string
-		wantInnerArgs  string
+		name          string
+		storedArgs    string
+		wantInnerArgs string
 	}{
 		{
 			name:          "native quoted string arguments stay quoted",
@@ -28,6 +28,16 @@ func TestConvertHistoryToAPIMessages_ToolCallArgumentsAlwaysString(t *testing.T)
 			storedArgs:    ``,
 			wantInnerArgs: `{}`,
 		},
+		{
+			name:          "truncated quoted object arguments become an empty object string",
+			storedArgs:    `"{\"`,
+			wantInnerArgs: `{}`,
+		},
+		{
+			name:          "truncated raw object arguments become an empty object string",
+			storedArgs:    `{"path":`,
+			wantInnerArgs: `{}`,
+		},
 	}
 
 	for _, tc := range cases {
@@ -39,11 +49,11 @@ func TestConvertHistoryToAPIMessages_ToolCallArgumentsAlwaysString(t *testing.T)
 				ID:   "call-1",
 				Type: "function",
 				Function: sess.MsgToolCallFunc{
-					Name:      "file_read",
+					Name:      "read",
 					Arguments: tc.storedArgs,
 				},
 			}})
-			s.AddToolMessage("call-1", "file_read", "ok")
+			s.AddToolMessage("call-1", "read", "ok")
 
 			api := (&agentImpl{}).convertHistoryToAPIMessages(s.GetHistory())
 

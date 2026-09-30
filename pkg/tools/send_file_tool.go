@@ -7,17 +7,15 @@ import (
 	"sync"
 )
 
-
 type FileSender interface {
 	UploadAndSendDocument(filePath string, peerID int64, message string) (int64, error)
 }
 
 var (
-	sendFileMu    sync.RWMutex
-	sendFileDep   FileSender
-	sendFilePeer  int64
+	sendFileMu   sync.RWMutex
+	sendFileDep  FileSender
+	sendFilePeer int64
 )
-
 
 func SetSendFileDependencies(sender FileSender, defaultPeerID int64) {
 	sendFileMu.Lock()
@@ -31,7 +29,6 @@ func getSendFileDep() (FileSender, int64) {
 	defer sendFileMu.RUnlock()
 	return sendFileDep, sendFilePeer
 }
-
 
 type SendFileTool struct{}
 

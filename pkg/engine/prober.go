@@ -74,4 +74,3 @@ func decodeServedModels(body []byte) ([]servedModel, error) {
 	}
 	return doc.Data, nil
 }
-

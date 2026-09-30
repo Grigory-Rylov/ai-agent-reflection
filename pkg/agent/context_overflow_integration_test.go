@@ -11,14 +11,12 @@ import (
 	"time"
 )
 
-
 func TestContextOverflowIntegration(t *testing.T) {
 	serverURL := os.Getenv("LLAMA_SERVER_URL")
 	if serverURL == "" {
 		serverURL = "http://localhost:8081"
 	}
 
-	
 	config := Config{
 		LlamaServerURL: serverURL,
 		Model:          "",
@@ -29,7 +27,6 @@ func TestContextOverflowIntegration(t *testing.T) {
 
 	agent := NewAgent(config)
 
-	
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -39,8 +36,7 @@ func TestContextOverflowIntegration(t *testing.T) {
 	}
 
 	t.Run("DetectContextOverflow", func(t *testing.T) {
-		
-		
+
 		largeContent := strings.Repeat("This is a test sentence for context overflow. ", 3000)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -55,7 +51,6 @@ func TestContextOverflowIntegration(t *testing.T) {
 
 		t.Logf("Error returned: %v", err)
 
-		
 		overflow := ParseContextOverflowError(err)
 		if overflow == nil {
 			t.Logf("Error is not context overflow: %v", err)
@@ -72,7 +67,7 @@ func TestContextOverflowIntegration(t *testing.T) {
 	})
 
 	t.Run("IsContextOverflowErrorWorks", func(t *testing.T) {
-		
+
 		testErr := fmt.Errorf(`API error: status 400, body: {"error":{"message":"request exceeds context"}}`)
 
 		if !IsContextOverflowError(testErr) {
@@ -85,9 +80,8 @@ func TestContextOverflowIntegration(t *testing.T) {
 	})
 }
 
-
 func TestContextOverflowStatsFunction(t *testing.T) {
-	
+
 	err := fmt.Errorf(`API error: status 400, body: {"error":{"n_prompt_tokens":100000,"n_ctx":64000,"message":"request exceeds context size"}}`)
 
 	promptTokens, maxContext, isOverflow := ContextOverflowStats(err)
@@ -102,13 +96,11 @@ func TestContextOverflowStatsFunction(t *testing.T) {
 		t.Errorf("Expected maxContext=64000, got %d", maxContext)
 	}
 
-	
 	_, _, isOverflow = ContextOverflowStats(fmt.Errorf("some error"))
 	if isOverflow {
 		t.Error("Expected isOverflow to be false for non-overflow error")
 	}
 }
-
 
 func TestContextOverflowWithRealServer(t *testing.T) {
 	serverURL := os.Getenv("LLAMA_SERVER_URL")
@@ -116,26 +108,23 @@ func TestContextOverflowWithRealServer(t *testing.T) {
 		serverURL = "http://localhost:8081"
 	}
 
-	
 	config := Config{
 		LlamaServerURL: serverURL,
 		Model:          "",
-		MaxTokens:      10, 
+		MaxTokens:      10,
 		Temperature:    0.7,
 		EnableTools:    false,
 	}
 
 	agent := NewAgent(config)
 
-	
 	ctx := context.Background()
 	_, err := agent.ProcessMessage(ctx, "test", 100)
 	if err != nil {
 		t.Skipf("llama-server not available: %v", err)
 	}
 
-	
-	largeMessage := strings.Repeat("x ", 100000) 
+	largeMessage := strings.Repeat("x ", 100000)
 
 	start := time.Now()
 	_, err = agent.ProcessMessage(ctx, largeMessage, 101)
@@ -144,7 +133,6 @@ func TestContextOverflowWithRealServer(t *testing.T) {
 	if err != nil {
 		t.Logf("Error after %v: %v", elapsed, err)
 
-		
 		if IsContextOverflowError(err) {
 			t.Log("SUCCESS: Context overflow error correctly identified")
 

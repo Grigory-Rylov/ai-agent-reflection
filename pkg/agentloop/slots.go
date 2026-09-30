@@ -12,9 +12,7 @@ import (
 	"time"
 )
 
-
 const slotSaveTimeout = 2 * time.Minute
-
 
 type SlotClient struct {
 	httpClient *http.Client
@@ -26,16 +24,13 @@ func newSlotClient() *SlotClient {
 	}
 }
 
-
 func (c *SlotClient) saveSlot(ctx context.Context, serverURL string, slotID int, modelName, filename string) error {
 	return c.slotAction(ctx, serverURL, slotID, modelName, "save", filename)
 }
 
-
 func (c *SlotClient) restoreSlot(ctx context.Context, serverURL string, slotID int, modelName, filename string) error {
 	return c.slotAction(ctx, serverURL, slotID, modelName, "restore", filename)
 }
-
 
 func (c *SlotClient) eraseSlot(ctx context.Context, serverURL string, slotID int, modelName string) error {
 	url := fmt.Sprintf("%s/slots/%d?action=erase", serverURL, slotID)
@@ -59,7 +54,6 @@ func (c *SlotClient) eraseSlot(ctx context.Context, serverURL string, slotID int
 	return nil
 }
 
-
 func (c *SlotClient) ClearAllSlots(ctx context.Context, serverURL, modelName string, totalSlots int, log Logger) {
 	for slotID := 0; slotID < totalSlots; slotID++ {
 		if err := c.eraseSlot(ctx, serverURL, slotID, modelName); err != nil {
@@ -72,13 +66,12 @@ func (c *SlotClient) ClearAllSlots(ctx context.Context, serverURL, modelName str
 	}
 }
 
-
 func IsSlotConfigError(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := err.Error()
-	
+
 	if strings.Contains(msg, "status 5") {
 		return true
 	}
@@ -86,7 +79,6 @@ func IsSlotConfigError(err error) bool {
 		strings.Contains(msg, "save path") ||
 		strings.Contains(msg, "not configured")
 }
-
 
 func IsSlotMissingFileError(err error) bool {
 	if err == nil {
@@ -99,11 +91,9 @@ func IsSlotMissingFileError(err error) bool {
 		strings.Contains(msg, "invalid slot save file")
 }
 
-
 func slotsProbeURL(serverURL, modelName string) string {
 	return fmt.Sprintf("%s/slots?model=%s", serverURL, url.QueryEscape(modelName))
 }
-
 
 func (c *SlotClient) slotAction(ctx context.Context, serverURL string, slotID int, modelName, action, filename string) error {
 	body, _ := json.Marshal(map[string]string{"filename": filename, "model": modelName})
@@ -127,7 +117,6 @@ func (c *SlotClient) slotAction(ctx context.Context, serverURL string, slotID in
 	}
 	return nil
 }
-
 
 func (c *SlotClient) firstSlotID(ctx context.Context, serverURL, modelName string) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, slotsProbeURL(serverURL, modelName), nil)

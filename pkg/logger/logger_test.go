@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-
 func TestNewLogger(t *testing.T) {
 	t.Run("creates logger with default config", func(t *testing.T) {
 		logger, err := New(DefaultConfig())
@@ -67,7 +66,6 @@ func TestLoggerMethods(t *testing.T) {
 		logger, _ := New(DefaultConfig())
 		defer logger.Close()
 
-		
 		logger.InfoLog("test info message")
 	})
 
@@ -135,9 +133,8 @@ func TestRotateLogFile(t *testing.T) {
 
 		logFile := filepath.Join(dir, "app.log")
 
-		
 		f, _ := os.Create(logFile)
-		f.Write(make([]byte, 1100*1024)) 
+		f.Write(make([]byte, 1100*1024))
 		f.Close()
 
 		err := RotateLogFile(logFile, 1, 7)
@@ -145,7 +142,6 @@ func TestRotateLogFile(t *testing.T) {
 			t.Fatalf("expected no error, got %v", err)
 		}
 
-		
 		_, err = os.Stat(logFile)
 		if err == nil {
 			t.Error("expected original file to be renamed")
@@ -158,17 +154,15 @@ func TestRotateLogFile(t *testing.T) {
 
 		logFile := filepath.Join(dir, "app.log")
 
-		
 		f, _ := os.Create(logFile)
 		f.WriteString("small")
 		f.Close()
 
-		err := RotateLogFile(logFile, 10, 7) 
+		err := RotateLogFile(logFile, 10, 7)
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
 
-		
 		_, err = os.Stat(logFile)
 		if err != nil {
 			t.Error("expected original file to remain")
@@ -183,7 +177,7 @@ func TestNewLoggerRotatesInsteadOfTruncating(t *testing.T) {
 
 		logFile := filepath.Join(dir, "debug.log")
 		f, _ := os.Create(logFile)
-		f.Write(make([]byte, 6*1024*1024)) 
+		f.Write(make([]byte, 6*1024*1024))
 		f.Close()
 
 		config := DefaultConfig()
@@ -269,7 +263,6 @@ func TestGetStartTime(t *testing.T) {
 		t.Error("start time should not be zero")
 	}
 }
-
 
 func setupTempDir(t *testing.T) string {
 	dir, err := os.MkdirTemp("", "logger_test_*")

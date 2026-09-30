@@ -58,8 +58,8 @@ func TestSaveAgentCheckpoint(t *testing.T) {
 			id:           "ckpt-a",
 			existing:     true,
 			lastPrompt:   "orig-task",
-			checkpoints:  [][2]string{{"shell_execute", "[1]"}, {"file_read,glob", "[2]"}},
-			wantLTC:      "file_read,glob",
+			checkpoints:  [][2]string{{"bash", "[1]"}, {"read,glob", "[2]"}},
+			wantLTC:      "read,glob",
 			wantMessages: "[2]",
 		},
 		{

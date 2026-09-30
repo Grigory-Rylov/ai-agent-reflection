@@ -6,7 +6,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 )
 
-
 func TestRegisterTools_MergesSchemasAcrossCalls(t *testing.T) {
 	a := NewAgent(Config{EnableTools: false})
 
@@ -15,8 +14,7 @@ func TestRegisterTools_MergesSchemasAcrossCalls(t *testing.T) {
 	mainReg.Register(&tools.FileWriteTool{})
 
 	taskReg := tools.NewRegistry()
-	
-	
+
 	taskReg.Register(&tools.TimeGetTool{})
 
 	a.RegisterTools(mainReg)
@@ -41,7 +39,7 @@ func TestRegisterTools_MergesSchemasAcrossCalls(t *testing.T) {
 }
 
 const (
-	shellExecuteToolName = "shell_execute"
-	fileWriteToolName    = "file_write"
+	shellExecuteToolName = "bash"
+	fileWriteToolName    = "write"
 	timeGetToolName      = "time_get"
 )

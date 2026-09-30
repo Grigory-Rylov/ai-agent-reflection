@@ -24,9 +24,7 @@ func (a *agentImpl) collectStreamResponseWithToolCalls(chunkChan <-chan StreamCh
 			}
 			return "", "", "", nil, 0, 0, err
 		}
-		
-		
-		
+
 		if event.Content != "" {
 			fullResponse.WriteString(event.Content)
 		}
@@ -125,4 +123,73 @@ func (a *agentImpl) stripThinkingTags(text string, peerID int64) string {
 	}
 
 	return strings.TrimSpace(clean.String())
+}
+func hasPartialToolCall(text string) bool {
+	if text == "" {
+		return false
+	}
+	if strings.Contains(text, "</tool_call>") && !strings.Contains(text, "<tool_call>") {
+		return true
+	}
+	if strings.Contains(text, "</function>") && !strings.Contains(text, "<function") {
+		return true
+	}
+	if strings.Contains(text, "<tool_call") && !strings.Contains(text, "<tool_call>") {
+		return true
+	}
+
+	if strings.Contains(text, "<tool_call>") {
+		openCount := strings.Count(text, "<tool_call>")
+		closeCount := strings.Count(text, "</tool_call>")
+		if openCount > closeCount {
+			return true
+		}
+	}
+
+	if (strings.Contains(text, "<parameter=") || strings.Contains(text, "<parameter ")) && !strings.Contains(text, "<tool_call>") {
+		return true
+	}
+
+	if strings.Contains(text, "<function=") && !strings.Contains(text, "<tool_call>") {
+		return true
+	}
+	return false
+}
+
+func stripPartialToolCall(text string) string {
+	result := text
+
+	for _, tag := range []string{"</tool_call>", "</function>", "</parameter>"} {
+		result = strings.ReplaceAll(result, tag, "")
+	}
+
+	for {
+		start := strings.Index(result, "<parameter=")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(result[start:], ">")
+		if end < 0 {
+			result = result[:start]
+			break
+		}
+		result = result[:start] + result[start+end+1:]
+	}
+
+	for {
+		start := strings.Index(result, "<function=")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(result[start:], ">")
+		if end < 0 {
+			result = result[:start]
+			break
+		}
+		result = result[:start] + result[start+end+1:]
+	}
+
+	result = strings.ReplaceAll(result, "\n\n", "\n")
+	result = strings.ReplaceAll(result, "\n\n", "\n")
+	return strings.TrimSpace(result)
 }

@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-
 func TestNewBotClient(t *testing.T) {
 	t.Run("creates client with valid token", func(t *testing.T) {
 		client := NewBotClient("test_token")
@@ -31,14 +30,12 @@ func TestSendTextMessage(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			json.NewDecoder(r.Body).Decode(&receivedRequest)
 
-			
 			if peerID, ok := receivedRequest["peer_id"].(float64); ok {
 				if int64(peerID) != 12345 {
 					t.Errorf("expected peer_id 12345, got %d", int64(peerID))
 				}
 			}
 
-			
 			response := map[string]interface{}{
 				"response": []map[string]interface{}{
 					{"message_id": float64(1)},
@@ -50,7 +47,6 @@ func TestSendTextMessage(t *testing.T) {
 		}))
 		defer server.Close()
 
-		
 		client := NewBotClient("test_token")
 		client.baseURL = server.URL + "/method/"
 
@@ -96,7 +92,7 @@ func TestSendMessageWithSplitting(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestCount++
 			if requestCount >= 2 {
-				
+
 				response := map[string]interface{}{
 					"response": []map[string]interface{}{
 						{"message_id": float64(requestCount)},
@@ -107,7 +103,7 @@ func TestSendMessageWithSplitting(t *testing.T) {
 				json.NewEncoder(w).Encode(response)
 				return
 			}
-			
+
 			w.WriteHeader(http.StatusOK)
 		}))
 		defer server.Close()
@@ -115,7 +111,6 @@ func TestSendMessageWithSplitting(t *testing.T) {
 		client := NewBotClient("test_token")
 		client.baseURL = server.URL + "/method/"
 
-		
 		longText := ""
 		for i := 0; i < 100; i++ {
 			longText += "This is a test line for splitting.\n"
@@ -123,7 +118,6 @@ func TestSendMessageWithSplitting(t *testing.T) {
 
 		_, _ = client.SendMessage(12345, longText)
 
-		
 		if requestCount < 2 {
 			t.Errorf("expected multiple requests for long message, got %d", requestCount)
 		}
@@ -134,7 +128,6 @@ func TestSplitText(t *testing.T) {
 	t.Run("splits text into parts", func(t *testing.T) {
 		client := NewBotClient("test_token")
 
-		
 		longText := ""
 		for i := 0; i < 50; i++ {
 			longText += "Test line " + string(rune('a'+i%26)) + "\n"
@@ -176,13 +169,11 @@ func TestCreateQuestionKeyboard(t *testing.T) {
 			t.Fatal("keyboard should not be nil")
 		}
 
-		
 		inline, ok := keyboard["inline"].(bool)
 		if !ok || inline {
 			t.Error("expected inline to be false")
 		}
 
-		
 		buttons, ok := keyboard["buttons"].([][]map[string]interface{})
 		if !ok {
 			t.Fatal("expected buttons to be [][]map[string]interface{}")
@@ -263,16 +254,14 @@ func TestParseMessageNewUpdate(t *testing.T) {
 	})
 
 	t.Run("falls back to top-level message_id when message.id missing", func(t *testing.T) {
-		
-		
-		
+
 		object := map[string]interface{}{
 			"message_id": float64(987654),
 			"message": map[string]interface{}{
-				"peer_id":   float64(2000000001),
-				"from_id":   float64(123),
-				"out":       float64(0),
-				"text":      "смотри фото",
+				"peer_id": float64(2000000001),
+				"from_id": float64(123),
+				"out":     float64(0),
+				"text":    "смотри фото",
 				"attachments": []interface{}{
 					map[string]interface{}{
 						"type":  "photo",
@@ -312,8 +301,8 @@ func TestParseMessageNewUpdate(t *testing.T) {
 func TestParseMessageEventUpdate(t *testing.T) {
 	t.Run("extracts event fields and payload", func(t *testing.T) {
 		object := map[string]interface{}{
-			"user_id": float64(123),
-			"peer_id": float64(2000000001),
+			"user_id":  float64(123),
+			"peer_id":  float64(2000000001),
 			"event_id": "abc-def-123",
 			"payload":  `{"command":"model_switch","alias":"gemma"}`,
 		}

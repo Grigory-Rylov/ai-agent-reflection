@@ -480,8 +480,6 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 		al.maybeStartSpeculativeCompact(ctx, sess, peerID)
 	}
 
-	messages := al.buildAPIMessages(sess)
-
 	slotSave := al.currentModelSlotSave()
 	sessionID := sess.GetSessionID()
 	assignedSlotID := -1
@@ -513,7 +511,7 @@ func (al *agentLoop) ProcessPrompt(ctx context.Context, prompt string, peerID in
 		}
 	}
 
-	response, err := al.sendToLLM(ctx, messages, sess, peerID, prompt, assignedSlotID)
+	response, err := al.sendToLLM(ctx, sess, peerID, prompt, assignedSlotID)
 	if err != nil {
 		if al.log != nil {
 			al.log.ErrorLogf("LLM request failed: %v", err)
@@ -712,25 +710,32 @@ func similarity(a, b string) float64 {
 	return float64(common) / float64(minLen)
 }
 
-func (al *agentLoop) buildAPIMessages(sess *session.Session) []agent.Message {
-	history := sess.GetContextMessages()
-	messages := make([]agent.Message, len(history))
-
-	for i, msg := range history {
-		content := msg.Content
-		if msg.Role == session.ToolRole {
-			content = compress.TruncateToolOutput(content)
-		}
-		messages[i] = agent.Message{
-			Role:    string(msg.Role),
-			Content: content,
+func seedAgentSession(target, source *session.Session) {
+	for _, msg := range source.GetHistory() {
+		switch {
+		case msg.Role == session.SystemRole:
+			continue
+		case msg.Role == session.UserRole && msg.Content == tokenizers.CompactionUserMessage:
+			continue
+		case msg.Summary:
+			target.MarkCompaction(msg.TailStartID, msg.Content)
+		case msg.Role == session.UserRole:
+			target.AddUserMessage(msg.Content)
+		case msg.Role == session.AssistantRole && len(msg.ToolCalls) > 0:
+			target.AddAssistantMessageWithToolCalls(msg.Content, msg.ToolCalls)
+			target.RecordAssistantUsage(msg.UsageInputTokens, msg.UsageOutputTokens)
+		case msg.Role == session.AssistantRole && (msg.Internal || internalmsg.IsInternal(msg.Content)):
+			target.AddAssistantMessageInternal(msg.Content)
+		case msg.Role == session.AssistantRole:
+			target.AddAssistantMessage(msg.Content)
+			target.RecordAssistantUsage(msg.UsageInputTokens, msg.UsageOutputTokens)
+		case msg.Role == session.ToolRole:
+			target.AddToolMessage(msg.ToolCallID, msg.Name, msg.Content)
 		}
 	}
-
-	return messages
 }
 
-func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, sess *session.Session, peerID int64, prompt string, slotID int) (string, error) {
+func (al *agentLoop) sendToLLM(ctx context.Context, sess *session.Session, peerID int64, prompt string, slotID int) (string, error) {
 	if al.log != nil {
 		al.log.DebugLog("[sendToLLM] creating agent")
 	}
@@ -781,19 +786,7 @@ func (al *agentLoop) sendToLLM(ctx context.Context, messages []agent.Message, se
 		agentSess.UpdateSystemPrompt(sp)
 	}
 	if len(agentSess.GetHistory()) <= 1 {
-
-		for _, msg := range messages {
-			switch msg.Role {
-			case "system":
-				continue
-			case "assistant":
-				agentSess.AddAssistantMessage(msg.Content)
-			case "tool":
-				agentSess.AddUserMessage(msg.Content)
-			case "user":
-				agentSess.AddUserMessage(msg.Content)
-			}
-		}
+		seedAgentSession(agentSess, sess)
 	} else if al.log != nil {
 		al.log.DebugLog("[sendToLLM] agent session already has %d messages, skipping pre-seed", len(agentSess.GetHistory()))
 	}
@@ -863,9 +856,8 @@ func (al *agentLoop) buildAgentConfig() agent.Config {
 		EnableTools:                    al.config.EnableTools,
 		EnableCompression:              al.config.EnableCompression,
 		SummarizeReasoning:             al.config.SummarizeReasoning,
-		TailTurns:                      al.config.TailTurns,
-		PreserveRecentTokens:           al.config.PreserveRecentTokens,
-		CompactionReserved:             al.config.CompactionReserved,
+		CompactionReserveTokens:        al.config.CompactionReserveTokens,
+		CompactionKeepRecentTokens:     al.config.CompactionKeepRecentTokens,
 		ModelLimitInput:                al.config.ModelLimitInput,
 		EnablePruning:                  al.config.EnablePruning,
 		ToolOutputMaxLines:             al.config.ToolOutputMaxLines,
@@ -873,6 +865,7 @@ func (al *agentLoop) buildAgentConfig() agent.Config {
 		Debug:                          al.config.Debug,
 		SkipShellPermissionForPathless: al.config.SkipShellPermissionForPathless,
 		MaxToolCallDepth:               al.config.MaxToolCallDepth,
+		SubagentWatch:                  jobWatcher{},
 	}
 
 	if al.registry != nil {
@@ -1028,20 +1021,34 @@ func getStringField(m map[string]interface{}, key string) string {
 	return ""
 }
 
+func (al *agentLoop) compactionLimits() compress.WindowLimits {
+	return compress.WindowLimits{Context: al.config.MaxTokens, InputLimit: al.config.ModelLimitInput}
+}
+
+func (al *agentLoop) compactionSettings() compress.Settings {
+	return compress.Settings{
+		ReserveTokens:    al.config.CompactionReserveTokens,
+		KeepRecentTokens: al.config.CompactionKeepRecentTokens,
+	}
+}
+
 func (al *agentLoop) checkAndCompressOpenCode(ctx context.Context, sess *session.Session, peerID int64) {
 	history := sess.GetHistory()
 
 	visible := al.convertHistoryToMessages(history)
-	tokensBefore := compress.EstimateMessagesTokensSimple(visible)
+	estimate := compress.EstimateMessagesTokensSimple(visible)
+	tokensBefore := compress.CompactionTokens(sess.LastUsageInputTokens(), estimate)
+	limits := al.compactionLimits()
+	settings := al.compactionSettings()
 
 	if al.log != nil {
-		al.log.DebugLogf("[OPENCODE-COMPACT] Peer %d: %d messages, ~%d tokens",
-			peerID, len(visible), tokensBefore)
+		al.log.DebugLogf("[OMP-COMPACT] Peer %d: %d messages, ~%d tokens (threshold %d)",
+			peerID, len(visible), tokensBefore, compress.ThresholdTokens(limits, settings))
 	}
 
-	if !compress.IsOverflowWithLimits(tokensBefore, al.config.MaxTokens, al.config.ModelLimitInput, al.config.CompactionReserved) {
+	if !compress.ShouldCompact(tokensBefore, limits.Context, limits, settings) {
 		if al.log != nil {
-			al.log.DebugLogf("[OPENCODE-COMPACT] Peer %d: No overflow, skipping", peerID)
+			al.log.DebugLogf("[OMP-COMPACT] Peer %d: below threshold, skipping", peerID)
 		}
 		return
 	}
@@ -1051,30 +1058,25 @@ func (al *agentLoop) checkAndCompressOpenCode(ctx context.Context, sess *session
 	}
 
 	if al.log != nil {
-		al.log.InfoLogf("[OPENCODE-COMPACT] Peer %d: Overflow detected (%d/%d), compacting",
-			peerID, tokensBefore, al.config.MaxTokens)
+		al.log.InfoLogf("[OMP-COMPACT] Peer %d: over threshold (%d/%d), compacting",
+			peerID, tokensBefore, limits.Context)
 	}
 
-	tailTurns := al.config.TailTurns
-	if tailTurns <= 0 {
-		tailTurns = 2
-	}
-
-	result, err := al.compactor.CompactWithOpenCode(ctx, al.convertHistoryToRawMessages(history), al.config.MaxTokens, tailTurns, al.config.PreserveRecentTokens)
+	result, err := al.compactor.Compact(ctx, al.convertHistoryToRawMessages(history), limits, settings)
 	if err != nil {
 		if al.log != nil {
-			al.log.WarnLogf("[OPENCODE-COMPACT] Peer %d: Compaction failed: %v", peerID, err)
+			al.log.WarnLogf("[OMP-COMPACT] Peer %d: Compaction failed: %v", peerID, err)
 		}
 		return
 	}
 
-	if al.log != nil {
-		al.log.InfoLogf("[OPENCODE-COMPACT] Peer %d: %d -> %d tokens (%.1f%% reduction)",
+	if al.log != nil && result.TokensBefore > 0 {
+		al.log.InfoLogf("[OMP-COMPACT] Peer %d: %d -> %d tokens (%.1f%% reduction)",
 			peerID, result.TokensBefore, result.TokensAfter,
 			(float64(result.TokensBefore-result.TokensAfter)/float64(result.TokensBefore))*100)
 	}
 
-	al.applyOpenCodeCompactResult(sess, result)
+	al.applyCompactResult(sess, result)
 
 	if result.Summary != "" {
 		sess.AddUserMessage(tokenizers.CompactionAutoContinueText)
@@ -1110,12 +1112,11 @@ func (al *agentLoop) invalidateSessionSlot(ctx context.Context, sessionID string
 	}
 }
 
-func (al *agentLoop) applyOpenCodeCompactResult(sess *session.Session, result *compress.OpenCodeCompactResult) {
-
+func (al *agentLoop) applyCompactResult(sess *session.Session, result *compress.CompactResult) {
 	if result.Summary == "" {
 		return
 	}
-	sess.MarkCompaction(result.TailStartID, result.Summary)
+	sess.MarkCompaction(result.FirstKept, result.Summary)
 }
 
 func (al *agentLoop) runPruning(sess *session.Session) {

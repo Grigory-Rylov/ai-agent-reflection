@@ -16,7 +16,7 @@ func TestLoadFromConfig(t *testing.T) {
 			Description: "Code reviewer",
 			Leaf:        true,
 			Review:      true,
-			Permission:  NewPermissionFromConfig(map[string]string{"file_write": "deny", "edit": "deny", "apply_patch": "deny"}),
+			Permission:  NewPermissionFromConfig(map[string]string{"write": "deny", "edit": "deny", "apply_patch": "deny"}),
 		},
 		"qa": {
 			Mode:        "subagent",
@@ -33,13 +33,13 @@ func TestLoadFromConfig(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Permission.Check("file_write") != true {
+		if info.Permission.Check("write") != true {
 			t.Error("developer should be able to write files")
 		}
 		if info.Permission.Check("edit") != true {
 			t.Error("developer should be able to edit files")
 		}
-		if info.Permission.Check("shell_execute") != true {
+		if info.Permission.Check("bash") != true {
 			t.Error("developer should be able to run shell")
 		}
 	})
@@ -49,7 +49,7 @@ func TestLoadFromConfig(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Permission.Check("file_write") != false {
+		if info.Permission.Check("write") != false {
 			t.Error("reviewer should NOT be able to write files")
 		}
 		if info.Permission.Check("edit") != false {
@@ -58,10 +58,10 @@ func TestLoadFromConfig(t *testing.T) {
 		if info.Permission.Check("apply_patch") != false {
 			t.Error("reviewer should NOT be able to apply patches")
 		}
-		if info.Permission.Check("file_read") != true {
+		if info.Permission.Check("read") != true {
 			t.Error("reviewer should be able to read files")
 		}
-		if info.Permission.Check("shell_execute") != true {
+		if info.Permission.Check("bash") != true {
 			t.Error("reviewer should be able to run shell")
 		}
 	})
@@ -71,13 +71,13 @@ func TestLoadFromConfig(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Permission.Check("file_write") != true {
+		if info.Permission.Check("write") != true {
 			t.Error("qa should be able to write files")
 		}
 		if info.Permission.Check("edit") != true {
 			t.Error("qa should be able to edit files")
 		}
-		if info.Permission.Check("shell_execute") != true {
+		if info.Permission.Check("bash") != true {
 			t.Error("qa should be able to run shell")
 		}
 	})
@@ -87,7 +87,7 @@ func TestCanAccess(t *testing.T) {
 	cfg := map[string]AgentCfg{
 		"reviewer": {
 			Mode:       "subagent",
-			Permission: NewPermissionFromConfig(map[string]string{"file_write": "deny", "edit": "deny"}),
+			Permission: NewPermissionFromConfig(map[string]string{"write": "deny", "edit": "deny"}),
 		},
 		"developer": {
 			Mode: "subagent",
@@ -98,37 +98,37 @@ func TestCanAccess(t *testing.T) {
 	am.LoadFromConfig(cfg)
 
 	t.Run("reviewer cannot write", func(t *testing.T) {
-		ok, err := am.CanAccess("reviewer", "file_write")
+		ok, err := am.CanAccess("reviewer", "write")
 		if err != nil {
 			t.Fatal(err)
 		}
 		if ok {
-			t.Error("reviewer should not have file_write access")
+			t.Error("reviewer should not have write access")
 		}
 	})
 
 	t.Run("reviewer can read", func(t *testing.T) {
-		ok, err := am.CanAccess("reviewer", "file_read")
+		ok, err := am.CanAccess("reviewer", "read")
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !ok {
-			t.Error("reviewer should have file_read access")
+			t.Error("reviewer should have read access")
 		}
 	})
 
 	t.Run("developer can do anything", func(t *testing.T) {
-		ok, err := am.CanAccess("developer", "file_write")
+		ok, err := am.CanAccess("developer", "write")
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !ok {
-			t.Error("developer should have file_write access")
+			t.Error("developer should have write access")
 		}
 	})
 
 	t.Run("unknown agent returns error", func(t *testing.T) {
-		_, err := am.CanAccess("nonexistent", "file_read")
+		_, err := am.CanAccess("nonexistent", "read")
 		if err == nil {
 			t.Error("expected error for unknown agent")
 		}
@@ -146,25 +146,25 @@ func TestDeriveSubagentPermission(t *testing.T) {
 	am := NewAgentManager()
 	am.LoadFromConfig(cfg)
 
-	parentPerm := Permission{"file_write": "deny", "*": "allow"}
+	parentPerm := Permission{"write": "deny", "*": "allow"}
 
 	t.Run("child inherits parent deny and adds its own", func(t *testing.T) {
 		merged := am.DeriveSubagentPermission(parentPerm, "child")
 
-		if merged.GetAction("file_write") != "deny" {
-			t.Errorf("file_write should be denied (from parent): got %q", merged.GetAction("file_write"))
+		if merged.GetAction("write") != "deny" {
+			t.Errorf("write should be denied (from parent): got %q", merged.GetAction("write"))
 		}
 		if merged.GetAction("edit") != "deny" {
 			t.Errorf("edit should be denied (from child): got %q", merged.GetAction("edit"))
 		}
-		if merged.GetAction("file_read") != "allow" {
-			t.Errorf("file_read should be allowed: got %q", merged.GetAction("file_read"))
+		if merged.GetAction("read") != "allow" {
+			t.Errorf("read should be allowed: got %q", merged.GetAction("read"))
 		}
 	})
 
 	t.Run("unknown agent falls back to parent", func(t *testing.T) {
 		merged := am.DeriveSubagentPermission(parentPerm, "nonexistent")
-		if merged.GetAction("file_write") != "deny" {
+		if merged.GetAction("write") != "deny" {
 			t.Error("should use parent permission for unknown agent")
 		}
 	})
@@ -207,7 +207,7 @@ func TestLoadFromConfigRealJSON(t *testing.T) {
 			"review": true,
 			"prompt": "agents/reviewer.md",
 			"permission": {
-				"file_write": "deny",
+				"write": "deny",
 				"edit": "deny",
 				"apply_patch": "deny"
 			}
@@ -239,14 +239,14 @@ func TestLoadFromConfigRealJSON(t *testing.T) {
 		if !info.Review {
 			t.Error("reviewer should be review")
 		}
-		if info.Permission.GetAction("file_write") != "deny" {
-			t.Errorf("file_write: got %q, want deny", info.Permission.GetAction("file_write"))
+		if info.Permission.GetAction("write") != "deny" {
+			t.Errorf("write: got %q, want deny", info.Permission.GetAction("write"))
 		}
 		if info.Permission.GetAction("edit") != "deny" {
 			t.Errorf("edit: got %q, want deny", info.Permission.GetAction("edit"))
 		}
-		if info.Permission.GetAction("file_read") != "allow" {
-			t.Errorf("file_read: got %q, want allow", info.Permission.GetAction("file_read"))
+		if info.Permission.GetAction("read") != "allow" {
+			t.Errorf("read: got %q, want allow", info.Permission.GetAction("read"))
 		}
 	})
 
@@ -261,8 +261,8 @@ func TestLoadFromConfigRealJSON(t *testing.T) {
 		if info.Review {
 			t.Error("developer should not be review")
 		}
-		if info.Permission.GetAction("file_write") != "allow" {
-			t.Errorf("file_write should be allow by default, got %q", info.Permission.GetAction("file_write"))
+		if info.Permission.GetAction("write") != "allow" {
+			t.Errorf("write should be allow by default, got %q", info.Permission.GetAction("write"))
 		}
 	})
 
@@ -277,8 +277,8 @@ func TestLoadFromConfigRealJSON(t *testing.T) {
 		if info.Review {
 			t.Error("qa should not be review")
 		}
-		if info.Permission.GetAction("file_write") != "allow" {
-			t.Errorf("qa should be able to write, got %q", info.Permission.GetAction("file_write"))
+		if info.Permission.GetAction("write") != "allow" {
+			t.Errorf("qa should be able to write, got %q", info.Permission.GetAction("write"))
 		}
 	})
 

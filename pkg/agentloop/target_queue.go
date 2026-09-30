@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/util/stringutil"
@@ -26,18 +27,29 @@ type targetLane struct {
 }
 
 type TargetQueue struct {
-	mu    sync.Mutex
-	lanes map[string]*targetLane
-	run   TargetRunner
-	deliv TargetDeliver
+	mu           sync.Mutex
+	lanes        map[string]*targetLane
+	run          TargetRunner
+	deliv        TargetDeliver
+	busyCheck    func(agentName string) bool
+	waitInterval time.Duration
+	maxBusyWait  time.Duration
 }
 
 func NewTargetQueue(run TargetRunner, deliv TargetDeliver) *TargetQueue {
 	return &TargetQueue{
-		lanes: make(map[string]*targetLane),
-		run:   run,
-		deliv: deliv,
+		lanes:        make(map[string]*targetLane),
+		run:          run,
+		deliv:        deliv,
+		waitInterval: 100 * time.Millisecond,
+		maxBusyWait:  2 * time.Minute,
 	}
+}
+
+func (q *TargetQueue) SetBusyCheck(check func(agentName string) bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.busyCheck = check
 }
 
 func (q *TargetQueue) Submit(agentName, prompt string, peerID int64) int {
@@ -46,6 +58,9 @@ func (q *TargetQueue) Submit(agentName, prompt string, peerID int64) int {
 
 	lane := q.laneForLocked(agentName)
 	pos := len(lane.jobs) + lane.active
+	if q.busyCheck != nil && q.busyCheck(agentName) {
+		pos++
+	}
 	lane.jobs = append(lane.jobs, &targetJob{agentName: agentName, prompt: prompt, peerID: peerID})
 	if !lane.busy {
 		lane.busy = true
@@ -69,6 +84,7 @@ func (q *TargetQueue) pumpLane(name string) {
 		if job == nil {
 			return
 		}
+		q.waitForIdleOutside(name)
 		logger.DebugToFile("[TARGET] lane #%s: starting job for peer %d: %s", name, job.peerID, logLine(job.prompt))
 		resp, err := q.runAgentSafely(job)
 		if err != nil {
@@ -77,6 +93,21 @@ func (q *TargetQueue) pumpLane(name string) {
 			logger.DebugToFile("[TARGET] lane #%s: job DONE for peer %d, delivering answer (%d chars)", name, job.peerID, len(resp))
 		}
 		q.finishJob(name, job, resp, err)
+	}
+}
+
+func (q *TargetQueue) waitForIdleOutside(name string) {
+	q.mu.Lock()
+	check, wait, max := q.busyCheck, q.waitInterval, q.maxBusyWait
+	q.mu.Unlock()
+
+	if check == nil || !check(name) {
+		return
+	}
+	logger.DebugToFile("[TARGET] lane #%s: waiting for active out-of-queue instance", name)
+	deadline := time.Now().Add(max)
+	for check(name) && time.Now().Before(deadline) {
+		time.Sleep(wait)
 	}
 }
 

@@ -20,7 +20,7 @@ func makeLoopTestAgent(t *testing.T) (*agentImpl, *[]string) {
 func loopToolCalls(t *testing.T) []ToolCall {
 	t.Helper()
 	raw := []byte(`{"command":"ls"}`)
-	return []ToolCall{{ID: "1", Type: "function", Function: ToolCallFunction{Name: "shell_execute", Arguments: raw}}}
+	return []ToolCall{{ID: "1", Type: "function", Function: ToolCallFunction{Name: "bash", Arguments: raw}}}
 }
 
 func TestCheckResponseLoop(t *testing.T) {
@@ -71,7 +71,7 @@ func TestCheckResponseLoop(t *testing.T) {
 	t.Run("no alert when tool call arguments differ", func(t *testing.T) {
 		a, sent := makeLoopTestAgent(t)
 		callsA := loopToolCalls(t)
-		callsB := []ToolCall{{ID: "2", Type: "function", Function: ToolCallFunction{Name: "shell_execute", Arguments: json.RawMessage(`{"command":"pwd"}`)}}}
+		callsB := []ToolCall{{ID: "2", Type: "function", Function: ToolCallFunction{Name: "bash", Arguments: json.RawMessage(`{"command":"pwd"}`)}}}
 		for i := 0; i < loopThreshold; i++ {
 			if i%2 == 0 {
 				a.checkResponseLoop(1, "", "", callsA)

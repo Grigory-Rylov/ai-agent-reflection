@@ -48,11 +48,40 @@ func (e *agentToolExecutor) ExecuteAll(ctx context.Context, toolCalls []ToolCall
 			continue
 		}
 		result.ToolCalls = append(result.ToolCalls, toolResult)
+		if e.batchEndsAfterReview(tc) {
+			for _, skipped := range toolCalls[i+1:] {
+				result.ToolCalls = append(result.ToolCalls, ToolCallResult{
+					ToolCallID: skipped.ID,
+					ToolName:   ToolCallName(skipped),
+					Content:    "[SKIPPED] Review subagent verdict ends this turn; the remaining tool calls were not executed.",
+					IsError:    true,
+				})
+			}
+			break
+		}
 	}
-
 	return result
 }
 
+type reviewEndOfTurnTool interface {
+	TargetsReviewAgent(args map[string]string) bool
+}
+
+func (e *agentToolExecutor) batchEndsAfterReview(toolCall ToolCall) bool {
+	tool, ok := e.agent.toolsRegistry.Get(resolveToolAlias(ToolCallName(toolCall)))
+	if !ok {
+		return false
+	}
+	gate, ok := tool.(reviewEndOfTurnTool)
+	if !ok {
+		return false
+	}
+	args, err := parseToolArguments(toolCall)
+	if err != nil {
+		return false
+	}
+	return gate.TargetsReviewAgent(args)
+}
 func (e *agentToolExecutor) sendContextSize(peerID int64) {
 	tokens := e.agent.estimateContextTokens(peerID)
 	if tokens <= 0 {
@@ -180,22 +209,22 @@ func (e *agentToolExecutor) truncateToolOutput(peerID int64, content string) str
 func (e *agentToolExecutor) checkShellPermission(ctx context.Context, checker permissionChecker, command string, peerID int64) bool {
 	scan := permission.ScanCommand(command)
 	if len(scan.Patterns) == 0 {
-		logger.DebugToFile("[checkPermissionAsk] shell_execute: no patterns (cd-only), allow")
+		logger.DebugToFile("[checkPermissionAsk] bash: no patterns (cd-only), allow")
 		return true
 	}
 
 	if critical, reasons := permission.CheckCritical(command); critical {
-		logger.DebugToFile("[checkPermissionAsk] shell_execute: CRITICAL patterns matched: %v", reasons)
+		logger.DebugToFile("[checkPermissionAsk] bash: CRITICAL patterns matched: %v", reasons)
 		return e.askCriticalShellPermission(ctx, command, reasons, peerID)
 	}
 
 	needsAsk := false
 	for _, pattern := range scan.Patterns {
 		action := checker.Evaluate("bash", pattern)
-		logger.DebugToFile("[checkPermissionAsk] shell_execute: evaluate bash %q -> %s", pattern, action)
+		logger.DebugToFile("[checkPermissionAsk] bash: evaluate bash %q -> %s", pattern, action)
 		switch action {
 		case "deny":
-			logger.DebugToFile("[checkPermissionAsk] shell_execute: denied pattern %q", pattern)
+			logger.DebugToFile("[checkPermissionAsk] bash: denied pattern %q", pattern)
 			e.agent.debugLog.Info("Permission denied for bash command '%s'", pattern)
 			e.agent.sendThinking(peerID, fmt.Sprintf("[TOOL] Denied: bash %s (permission)", pattern))
 			return false
@@ -207,12 +236,12 @@ func (e *agentToolExecutor) checkShellPermission(ctx context.Context, checker pe
 	}
 
 	if !needsAsk {
-		logger.DebugToFile("[checkPermissionAsk] shell_execute: all patterns allowed, skip ask")
+		logger.DebugToFile("[checkPermissionAsk] bash: all patterns allowed, skip ask")
 		return true
 	}
 
 	if tools.ShellCommandFilesystemSafe(command) {
-		logger.DebugToFile("[checkPermissionAsk] shell_execute: filesystem-safe command, skip ask")
+		logger.DebugToFile("[checkPermissionAsk] bash: filesystem-safe command, skip ask")
 		return true
 	}
 
@@ -227,6 +256,7 @@ func (e *agentToolExecutor) checkShellPermission(ctx context.Context, checker pe
 
 func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName string, args map[string]string, peerID int64) bool {
 	logger.DebugToFile("[checkPermissionAsk] enter: tool=%s, peer=%d, args=%v", toolName, peerID, args)
+	toolName = resolveToolAlias(toolName)
 
 	if toolPath := extractToolPath(toolName, args); toolPath != "" {
 		if tools.IsPathGranted(peerID, toolPath) {
@@ -235,7 +265,7 @@ func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName str
 		}
 	}
 
-	if readOnlyTools[resolveToolAlias(toolName)] {
+	if readOnlyTools[toolName] {
 		logger.DebugToFile("[checkPermissionAsk] read-only tool=%s, allow without asking", toolName)
 		return true
 	}
@@ -244,6 +274,12 @@ func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName str
 	if checker == nil {
 		logger.DebugToFile("[checkPermissionAsk] no checker, allow")
 		return true
+	}
+
+	if toolName == "bash" {
+		if cmd, ok := args["command"]; ok {
+			return e.checkShellPermission(ctx, checker, cmd, peerID)
+		}
 	}
 
 	decision := checker.Check(toolName)
@@ -262,12 +298,6 @@ func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName str
 			}
 		}
 
-		if toolName == "shell_execute" || toolName == "shell" {
-			if cmd, ok := args["command"]; ok {
-				return e.checkShellPermission(ctx, checker, cmd, peerID)
-			}
-		}
-
 	default:
 		return true
 	}
@@ -280,22 +310,18 @@ func (e *agentToolExecutor) checkPermissionAsk(ctx context.Context, toolName str
 }
 
 var readOnlyTools = map[string]bool{
-	"file_read":   true,
-	"read_file":   true,
-	"file_list":   true,
-	"list_dir":    true,
-	"dir_list":    true,
-	"glob":        true,
-	"find_files":  true,
-	"search_code": true,
-	"grep":        true,
-	"grep_search": true,
-	"image2text":  true,
-	"video2text":  true,
+	"read":       true,
+	"file_list":  true,
+	"glob":       true,
+	"grep":       true,
+	"ast_grep":   true,
+	"image2text": true,
+	"video2text": true,
 }
 
 func (e *agentToolExecutor) checkPathAccess(ctx context.Context, toolName string, args map[string]string, peerID int64) bool {
-	if readOnlyTools[resolveToolAlias(toolName)] {
+	toolName = resolveToolAlias(toolName)
+	if readOnlyTools[toolName] {
 		return true
 	}
 
@@ -613,17 +639,17 @@ func extractToolPath(toolName string, args map[string]string) string {
 
 func buildToolPermissionDetail(toolName string, args map[string]string) string {
 	switch toolName {
-	case "shell_execute":
+	case "bash":
 		if cmd, ok := args["command"]; ok && cmd != "" {
 			return fmt.Sprintf("run shell command: %s", stringutil.Truncate(cmd, 200, "..."))
 		}
-	case "file_write":
+	case "write":
 		detail := "write file"
 		if path, ok := args["path"]; ok && path != "" {
 			detail += " " + path
 		}
 		return detail
-	case "file_read":
+	case "read":
 		if path, ok := args["path"]; ok && path != "" {
 			return "read file " + path
 		}
@@ -631,7 +657,7 @@ func buildToolPermissionDetail(toolName string, args map[string]string) string {
 		if path, ok := args["path"]; ok && path != "" {
 			return "edit file " + path
 		}
-	case "dir_list":
+	case "file_list":
 		if path, ok := args["path"]; ok && path != "" {
 			return "list directory " + path
 		}
@@ -639,7 +665,7 @@ func buildToolPermissionDetail(toolName string, args map[string]string) string {
 		if pattern, ok := args["pattern"]; ok && pattern != "" {
 			return "find files by pattern: " + pattern
 		}
-	case "search_code":
+	case "grep":
 		if pattern, ok := args["pattern"]; ok && pattern != "" {
 			return "search code for: " + stringutil.Truncate(pattern, 100, "...")
 		}
@@ -656,36 +682,36 @@ func buildToolPermissionDetail(toolName string, args map[string]string) string {
 }
 
 var toolAliases = map[string]string{
-
+	"Read":      "read",
+	"Write":     "write",
+	"Bash":      "bash",
+	"Grep":      "grep",
 	"WebFetch":  "web_fetch",
 	"WebSearch": "web_search",
 	"Glob":      "glob",
-	"Grep":      "search_code",
-	"Read":      "file_read",
 	"Edit":      "edit",
-	"Write":     "file_write",
-	"Bash":      "shell_execute",
 	"Task":      "task",
 	"TodoWrite": "todowrite",
 	"TodoRead":  "todoread",
 
-	"grep":        "search_code",
-	"grep_search": "search_code",
-	"read":        "file_read",
-	"read_file":   "file_read",
-	"write":       "file_write",
-	"write_file":  "file_write",
-	"list_dir":    "file_list",
-	"dir_list":    "file_list",
-	"shell":       "shell_execute",
-	"bash":        "shell_execute",
-	"fetch":       "web_fetch",
-	"search":      "web_search",
-	"find_files":  "glob",
-	"calculate":   "calc",
-	"edit_file":   "edit",
-	"patch_apply": "apply_patch",
-	"subagent":    "task",
+	"file_read":     "read",
+	"read_file":     "read",
+	"file_write":    "write",
+	"write_file":    "write",
+	"shell_execute": "bash",
+	"shell":         "bash",
+	"search_code":   "grep",
+	"grep_search":   "grep",
+	"question":      "ask",
+	"list_dir":      "file_list",
+	"dir_list":      "file_list",
+	"fetch":         "web_fetch",
+	"search":        "web_search",
+	"find_files":    "glob",
+	"calculate":     "calc",
+	"edit_file":     "edit",
+	"patch_apply":   "apply_patch",
+	"subagent":      "task",
 }
 
 func resolveToolAlias(name string) string {
@@ -697,43 +723,43 @@ func resolveToolAlias(name string) string {
 
 func briefToolCall(toolName string, args map[string]string) string {
 	switch toolName {
-	case "file_read", "read_file":
+	case "read":
 		path := args["path"]
 		offset := args["offset"]
 		limit := args["limit"]
 		if offset != "" || limit != "" {
-			return fmt.Sprintf("read_file(%q, offset=%s, limit=%s)", stringutil.Truncate(path, 60, "..."), offset, limit)
+			return fmt.Sprintf("read(%q, offset=%s, limit=%s)", stringutil.Truncate(path, 60, "..."), offset, limit)
 		}
-		return fmt.Sprintf("read_file(%q)", stringutil.Truncate(path, 60, "..."))
-	case "file_write", "write_file":
+		return fmt.Sprintf("read(%q)", stringutil.Truncate(path, 60, "..."))
+	case "write":
 		if path, ok := args["path"]; ok {
-			return fmt.Sprintf("write_file(%q)", stringutil.Truncate(path, 80, "..."))
+			return fmt.Sprintf("write(%q)", stringutil.Truncate(path, 80, "..."))
 		}
-	case "file_list", "list_dir", "dir_list":
+	case "file_list":
 		if path, ok := args["path"]; ok {
-			return fmt.Sprintf("list_dir(%q)", stringutil.Truncate(path, 80, "..."))
+			return fmt.Sprintf("file_list(%q)", stringutil.Truncate(path, 80, "..."))
 		}
-	case "shell_execute", "shell":
+	case "bash":
 		if cmd, ok := args["command"]; ok {
-			return fmt.Sprintf("shell(%q)", stringutil.Truncate(cmd, 60, "..."))
+			return fmt.Sprintf("bash(%q)", stringutil.Truncate(cmd, 60, "..."))
 		}
-	case "web_fetch", "fetch":
+	case "web_fetch":
 		if url, ok := args["url"]; ok {
 			return fmt.Sprintf("web_fetch(%q)", stringutil.Truncate(url, 80, "..."))
 		}
-	case "web_search", "search":
+	case "web_search":
 		if q, ok := args["query"]; ok {
 			return fmt.Sprintf("web_search(%q)", stringutil.Truncate(q, 60, "..."))
 		}
-	case "search_code", "grep", "grep_search":
+	case "grep":
 		if p, ok := args["pattern"]; ok {
-			return fmt.Sprintf("search_code(%q)", stringutil.Truncate(p, 60, "..."))
+			return fmt.Sprintf("grep(%q)", stringutil.Truncate(p, 60, "..."))
 		}
-	case "glob", "find_files":
+	case "glob":
 		if p, ok := args["pattern"]; ok {
 			return fmt.Sprintf("glob(%q)", stringutil.Truncate(p, 60, "..."))
 		}
-	case "calc", "calculate":
+	case "calc":
 		if e, ok := args["expression"]; ok {
 			return fmt.Sprintf("calc(%q)", stringutil.Truncate(e, 60, "..."))
 		}
@@ -756,7 +782,7 @@ func briefToolCall(toolName string, args map[string]string) string {
 		}
 	case "todowrite", "todoread":
 		return toolName
-	case "task", "subagent":
+	case "task":
 		ag := args["subagent_type"]
 		if ag == "" {
 			ag = args["name"]
@@ -775,7 +801,7 @@ func briefToolCall(toolName string, args map[string]string) string {
 			return fmt.Sprintf("subagent(%q)", ag)
 		}
 		return "subagent(...)"
-	case "edit", "edit_file":
+	case "edit":
 		if path, ok := args["path"]; ok {
 			oldStr := args["old_string"]
 			if oldStr != "" {

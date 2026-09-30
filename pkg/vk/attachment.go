@@ -16,7 +16,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/logger"
 )
 
-
 func GetAttachmentDownloadURL(attachment map[string]interface{}, vkClient *BotClient) (string, string, bool) {
 	attType, _ := attachment["type"].(string)
 	if attType == "" {
@@ -46,7 +45,6 @@ func GetAttachmentDownloadURL(attachment map[string]interface{}, vkClient *BotCl
 	}
 }
 
-
 func extractPhotoURL(attData map[string]interface{}) (string, string, bool) {
 	sizes, _ := attData["sizes"].([]interface{})
 	if len(sizes) == 0 {
@@ -66,7 +64,6 @@ func extractPhotoURL(attData map[string]interface{}) (string, string, bool) {
 	return url, filename, url != ""
 }
 
-
 func sortPhotoSizes(sizes []interface{}) []interface{} {
 	priority := map[string]int{"s": 1, "m": 2, "x": 3, "y": 4, "z": 5, "w": 6}
 
@@ -80,7 +77,6 @@ func sortPhotoSizes(sizes []interface{}) []interface{} {
 
 	return sizes
 }
-
 
 func extractVideoURL(attData map[string]interface{}, vkClient *BotClient) (string, string, bool) {
 	rawDump, _ := json.Marshal(attData)
@@ -103,7 +99,6 @@ func extractVideoURL(attData map[string]interface{}, vkClient *BotClient) (strin
 	logger.DebugToFile("[extractVideoURL] no video URL found")
 	return "", "", false
 }
-
 
 var videoExtHostOverride string
 
@@ -159,7 +154,6 @@ func extractInlineVideoURL(attData map[string]interface{}) (string, string, bool
 	return "", "", false
 }
 
-
 func extractAPIVideoURL(attData map[string]interface{}, vkClient *BotClient) (string, string, bool) {
 	ownerID := toInt64(attData["owner_id"])
 	videoID := toInt64(attData["id"])
@@ -180,7 +174,6 @@ func extractAPIVideoURL(attData map[string]interface{}, vkClient *BotClient) (st
 	return url, buildVideoFilename(attData), true
 }
 
-
 func videoFileURL(v interface{}) string {
 	switch fv := v.(type) {
 	case map[string]interface{}:
@@ -192,7 +185,6 @@ func videoFileURL(v interface{}) string {
 	return ""
 }
 
-
 func buildVideoFilename(attData map[string]interface{}) string {
 	id, _ := attData["id"].(float64)
 	title, _ := attData["title"].(string)
@@ -201,7 +193,6 @@ func buildVideoFilename(attData map[string]interface{}) string {
 	}
 	return fmt.Sprintf("video_%.0f.mp4", id)
 }
-
 
 func findBestMp4(files map[string]interface{}) string {
 	preferred := []string{"mp4_854", "mp4_640", "mp4_480", "mp4_360"}
@@ -260,7 +251,6 @@ func extractDocURL(attData map[string]interface{}) (string, string, bool) {
 	return url, filename, url != ""
 }
 
-
 func extractAudioMessageURL(attData map[string]interface{}) (string, string, bool) {
 	url, _ := attData["link_mp3"].(string)
 	ext := "mp3"
@@ -274,7 +264,6 @@ func extractAudioMessageURL(attData map[string]interface{}) (string, string, boo
 
 	return url, filename, url != ""
 }
-
 
 func extractAudioURL(attData map[string]interface{}) (string, string, bool) {
 	url, _ := attData["url"].(string)
@@ -294,7 +283,6 @@ func extractAudioURL(attData map[string]interface{}) (string, string, bool) {
 	return url, filename, true
 }
 
-
 func extractStickerURL(attData map[string]interface{}) (string, string, bool) {
 	images, _ := attData["images"].([]interface{})
 	if len(images) == 0 {
@@ -312,7 +300,6 @@ func extractStickerURL(attData map[string]interface{}) (string, string, bool) {
 
 	return url, filename, url != ""
 }
-
 
 func DownloadAttachments(attachments []map[string]interface{}, saveDir string, vkClient *BotClient) ([]DownloadedAttachment, error) {
 	absDir, err := filepath.Abs(saveDir)
@@ -351,7 +338,6 @@ func DownloadAttachments(attachments []map[string]interface{}, saveDir string, v
 
 	return results, firstErr
 }
-
 
 func downloadSingle(urlStr, destPath string) (DownloadedAttachment, error) {
 	isVideo := strings.HasSuffix(destPath, ".mp4") || strings.HasSuffix(destPath, ".webm")
@@ -396,7 +382,6 @@ func downloadSingle(urlStr, destPath string) (DownloadedAttachment, error) {
 	}, nil
 }
 
-
 func splitFileName(filename string) (string, string) {
 	idx := strings.LastIndex(filename, ".")
 	if idx <= 0 {
@@ -405,12 +390,10 @@ func splitFileName(filename string) (string, string) {
 	return filename[:idx], filename[idx:]
 }
 
-
 func sanitizeFilename(name string) string {
 	re := regexp.MustCompile(`[^a-zA-Z0-9._\-]`)
 	return re.ReplaceAllString(name, "_")
 }
-
 
 func FormatAttachmentInfo(downloaded []DownloadedAttachment) string {
 	if len(downloaded) == 0 {

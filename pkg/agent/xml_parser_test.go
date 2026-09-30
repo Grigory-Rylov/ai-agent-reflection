@@ -60,7 +60,7 @@ func TestParseXMLToolCalls_TimeGet(t *testing.T) {
 
 func TestParseXMLToolCalls_FileWrite(t *testing.T) {
 	input := `<tool_call>
-<function=file_write>
+<function=write>
 <parameter=content>Hello world</parameter>
 <parameter=path>/tmp/test.txt</parameter>
 </function>
@@ -68,7 +68,7 @@ func TestParseXMLToolCalls_FileWrite(t *testing.T) {
 	expected := XMLParseResult{
 		ToolCalls: []XMLToolCall{
 			{
-				Name: "file_write",
+				Name: "write",
 				Args: map[string]string{
 					"content": "Hello world",
 					"path":    "/tmp/test.txt",
@@ -162,7 +162,7 @@ Here is the result.`
 
 func TestParseXMLToolCalls_MultilineParamValue(t *testing.T) {
 	input := `<tool_call>
-<function=file_write>
+<function=write>
 <parameter=content>
 Hello world
 This is a multiline file.
@@ -177,8 +177,8 @@ This is a multiline file.
 		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
 	}
 	tc := result.ToolCalls[0]
-	if tc.Name != "file_write" {
-		t.Errorf("expected name file_write, got %q", tc.Name)
+	if tc.Name != "write" {
+		t.Errorf("expected name write, got %q", tc.Name)
 	}
 	if tc.Args["content"] != "Hello world\nThis is a multiline file." {
 		t.Errorf("expected multiline content, got %q", tc.Args["content"])
@@ -215,7 +215,7 @@ content
 func TestParseXMLToolCalls_PartialToolCall(t *testing.T) {
 	input := `<tool_call>
 <function=time_get`
-	
+
 	result := ParseXMLToolCalls(input)
 	if len(result.ToolCalls) != 0 {
 		t.Errorf("expected 0 tool calls, got %d", len(result.ToolCalls))
@@ -228,8 +228,7 @@ func TestParseXMLToolCalls_PartialToolCall(t *testing.T) {
 func TestParseXMLToolCalls_MissingCloseToolCall(t *testing.T) {
 	input := `<tool_call<function=time_get>
 </function>`
-	
-	
+
 	result := ParseXMLToolCalls(input)
 	if len(result.ToolCalls) != 1 {
 		t.Errorf("expected 1 tool call, got %d", len(result.ToolCalls))
@@ -240,9 +239,9 @@ func TestParseXMLToolCalls_MissingCloseToolCall(t *testing.T) {
 }
 
 func TestParseXMLToolCalls_TextBetweenParams(t *testing.T) {
-	
+
 	input := `<tool_call>
-<function=file_write>
+<function=write>
 <parameter=content>Hello <world> text</parameter>
 <parameter=path>/tmp/test.txt</parameter>
 </function>
@@ -259,7 +258,7 @@ func TestParseXMLToolCalls_TextBetweenParams(t *testing.T) {
 
 func TestParseXMLToolCalls_EmptyParamValue(t *testing.T) {
 	input := `<tool_call>
-<function=file_write>
+<function=write>
 <parameter=content></parameter>
 <parameter=path>/tmp/test.txt</parameter>
 </function>
@@ -310,7 +309,7 @@ func TestParseXMLToolCalls_WebFetch(t *testing.T) {
 
 func TestParseXMLToolCalls_ShellExecute(t *testing.T) {
 	input := `<tool_call>
-<function=shell_execute>
+<function=bash>
 <parameter=command>ls -la</parameter>
 <parameter=timeout>10</parameter>
 </function>
@@ -318,7 +317,7 @@ func TestParseXMLToolCalls_ShellExecute(t *testing.T) {
 	expected := XMLParseResult{
 		ToolCalls: []XMLToolCall{
 			{
-				Name: "shell_execute",
+				Name: "bash",
 				Args: map[string]string{
 					"command": "ls -la",
 					"timeout": "10",
@@ -382,7 +381,7 @@ func TestParseXMLToolCalls_GlobTool(t *testing.T) {
 
 func TestParseXMLToolCalls_GrepTool(t *testing.T) {
 	input := `<tool_call>
-<function=search_code>
+<function=grep>
 <parameter=pattern>func main</parameter>
 <parameter=include>*.go</parameter>
 </function>
@@ -390,7 +389,7 @@ func TestParseXMLToolCalls_GrepTool(t *testing.T) {
 	expected := XMLParseResult{
 		ToolCalls: []XMLToolCall{
 			{
-				Name: "search_code",
+				Name: "grep",
 				Args: map[string]string{
 					"pattern": "func main",
 					"include": "*.go",
@@ -443,14 +442,14 @@ func TestParseXMLToolCalls_FileList(t *testing.T) {
 
 func TestParseXMLToolCalls_FileRead(t *testing.T) {
 	input := `<tool_call>
-<function=file_read>
+<function=read>
 <parameter=path>/tmp/test.txt</parameter>
 </function>
 </tool_call>`
 	expected := XMLParseResult{
 		ToolCalls: []XMLToolCall{
 			{
-				Name: "file_read",
+				Name: "read",
 				Args: map[string]string{"path": "/tmp/test.txt"},
 			},
 		},
@@ -469,7 +468,7 @@ func TestParseXMLToolCalls_ThreeToolCalls(t *testing.T) {
 </function>
 </tool_call>
 <tool_call>
-<function=file_write>
+<function=write>
 <parameter=content>test</parameter>
 <parameter=path>/tmp/t.txt</parameter>
 </function>
@@ -484,8 +483,8 @@ func TestParseXMLToolCalls_ThreeToolCalls(t *testing.T) {
 	if result.ToolCalls[1].Name != "calc" {
 		t.Errorf("expected calc, got %q", result.ToolCalls[1].Name)
 	}
-	if result.ToolCalls[2].Name != "file_write" {
-		t.Errorf("expected file_write, got %q", result.ToolCalls[2].Name)
+	if result.ToolCalls[2].Name != "write" {
+		t.Errorf("expected write, got %q", result.ToolCalls[2].Name)
 	}
 }
 
@@ -507,7 +506,7 @@ func TestParseXMLToolCalls_ParamValueWithSpecialChars(t *testing.T) {
 
 func TestParseXMLToolCalls_NestedAngleBracketsInContent(t *testing.T) {
 	input := `<tool_call>
-<function=file_write>
+<function=write>
 <parameter=content>if x < 10 && y > 20 { return }</parameter>
 <parameter=path>/tmp/code.go</parameter>
 </function>
@@ -525,7 +524,7 @@ func TestParseXMLToolCalls_NestedAngleBracketsInContent(t *testing.T) {
 
 func TestParseXMLToolCalls_XmlInParamValue(t *testing.T) {
 	input := `<tool_call>
-<function=file_write>
+<function=write>
 <parameter=content><note><to>Tove</to></note></parameter>
 <parameter=path>/tmp/note.xml</parameter>
 </function>
@@ -554,9 +553,8 @@ func TestParseXMLToolCalls_ExtraSpacesInTags(t *testing.T) {
 	assertParse(t, input, expected)
 }
 
-
 func TestParseXMLToolCalls_NoWrapper_FileRead(t *testing.T) {
-	input := `<function=read_file>
+	input := `<function=read>
 <parameter=path>
 /Users/g.rylov/Documents/projects/go/confluence_exporter/out/VK Android • Automation.html
 </parameter>
@@ -566,8 +564,8 @@ func TestParseXMLToolCalls_NoWrapper_FileRead(t *testing.T) {
 		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
 	}
 	tc := result.ToolCalls[0]
-	if tc.Name != "read_file" {
-		t.Errorf("expected read_file, got %q", tc.Name)
+	if tc.Name != "read" {
+		t.Errorf("expected read, got %q", tc.Name)
 	}
 	expectedPath := "/Users/g.rylov/Documents/projects/go/confluence_exporter/out/VK Android • Automation.html"
 	if tc.Args["path"] != expectedPath {
@@ -588,7 +586,7 @@ func TestParseXMLToolCalls_NoWrapper_Simple(t *testing.T) {
 }
 
 func TestParseXMLToolCalls_NoWrapper_WithParams(t *testing.T) {
-	input := `<function=file_write>
+	input := `<function=write>
 <parameter=path>/tmp/test.txt</parameter>
 <parameter=content>Hello world</parameter>
 </function>`
@@ -597,8 +595,8 @@ func TestParseXMLToolCalls_NoWrapper_WithParams(t *testing.T) {
 		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
 	}
 	tc := result.ToolCalls[0]
-	if tc.Name != "file_write" {
-		t.Errorf("expected file_write, got %q", tc.Name)
+	if tc.Name != "write" {
+		t.Errorf("expected write, got %q", tc.Name)
 	}
 	if tc.Args["path"] != "/tmp/test.txt" {
 		t.Errorf("expected path /tmp/test.txt, got %q", tc.Args["path"])
@@ -629,7 +627,7 @@ func TestParseXMLToolCalls_NoWrapper_MultipleTools(t *testing.T) {
 func TestParseXMLToolCalls_NoWrapper_WithText(t *testing.T) {
 	input := `Let me read the file.
 
-<function=read_file>
+<function=read>
 <parameter=path>/tmp/test.txt</parameter>
 </function>
 
@@ -638,17 +636,17 @@ Here is the result.`
 	if len(result.ToolCalls) != 1 {
 		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
 	}
-	if result.ToolCalls[0].Name != "read_file" {
-		t.Errorf("expected read_file, got %q", result.ToolCalls[0].Name)
+	if result.ToolCalls[0].Name != "read" {
+		t.Errorf("expected read, got %q", result.ToolCalls[0].Name)
 	}
-	
+
 	if !strings.Contains(result.Content, "Let me read the file") {
 		t.Errorf("content should contain 'Let me read the file', got %q", result.Content)
 	}
 }
 
 func TestParseXMLToolCalls_NoWrapper_MultilineParam(t *testing.T) {
-	input := `<function=file_write>
+	input := `<function=write>
 <parameter=content>
 Line 1
 Line 2
@@ -667,7 +665,7 @@ Line 3
 }
 
 func TestParseXMLToolCalls_NoWrapper_NestedTags(t *testing.T) {
-	input := `<function=file_write>
+	input := `<function=write>
 <parameter=content><div><p>Hello</p></div></parameter>
 <parameter=path>/tmp/test.html</parameter>
 </function>`
@@ -681,7 +679,6 @@ func TestParseXMLToolCalls_NoWrapper_NestedTags(t *testing.T) {
 		t.Errorf("expected %q, got %q", expected, tc.Args["content"])
 	}
 }
-
 
 func TestParseXMLToolCalls_CodeBlockIgnored(t *testing.T) {
 	input := "Here is an example:\n```xml\n<function=time_get>\n</function>\n```\nNo tool calls here."
@@ -714,16 +711,15 @@ func TestParseXMLToolCalls_CodeBlockWithRealToolBefore(t *testing.T) {
 }
 
 func TestParseXMLToolCalls_MultipleCodeBlocks(t *testing.T) {
-	input := "```xml\n<function=time_get>\n</function>\n```\nSome text\n```xml\n<function=calc>\n</function>\n```\n<function=file_read>\n<parameter=path>/tmp/test.txt</parameter>\n</function>"
+	input := "```xml\n<function=time_get>\n</function>\n```\nSome text\n```xml\n<function=calc>\n</function>\n```\n<function=read>\n<parameter=path>/tmp/test.txt</parameter>\n</function>"
 	result := ParseXMLToolCalls(input)
 	if len(result.ToolCalls) != 1 {
 		t.Fatalf("expected 1 tool call outside code blocks, got %d", len(result.ToolCalls))
 	}
-	if result.ToolCalls[0].Name != "file_read" {
-		t.Errorf("expected file_read, got %q", result.ToolCalls[0].Name)
+	if result.ToolCalls[0].Name != "read" {
+		t.Errorf("expected read, got %q", result.ToolCalls[0].Name)
 	}
 }
-
 
 func TestParseXMLToolCalls_CodeBlockInParamValue(t *testing.T) {
 	bt := "\x60\x60\x60"
@@ -750,7 +746,6 @@ func TestParseXMLToolCalls_CodeBlockInParamValue(t *testing.T) {
 	}
 }
 
-
 func TestParseXMLToolCalls_CodeBlockInParamValue_EvenCount(t *testing.T) {
 	bt := "\x60\x60\x60"
 	input := "<tool_call>\n<function=subagent>\n<parameter=name>\nqa\n</parameter>\n<parameter=task>\n" + bt + "go\npackage main\nimport \"fmt\"\n" + bt + "\n</parameter>\n</function>\n</tool_call>"
@@ -770,10 +765,9 @@ func TestParseXMLToolCalls_CodeBlockInParamValue_EvenCount(t *testing.T) {
 	}
 }
 
-
 func TestParseXMLToolCalls_NoWrapper_WithContentStartPrefix(t *testing.T) {
 	input := `_CONTENT_START__
-<function=read_file>
+<function=read>
 <parameter=path>
 /Users/g.rylov/Documents/projects/go/confluence_exporter/out/Разработка_ Документация/Android.html
 </parameter>
@@ -784,14 +778,13 @@ ___`
 		t.Fatalf("expected 1 tool call, got %d (content: %q)", len(result.ToolCalls), result.Content)
 	}
 	tc := result.ToolCalls[0]
-	if tc.Name != "read_file" {
-		t.Errorf("expected read_file, got %q", tc.Name)
+	if tc.Name != "read" {
+		t.Errorf("expected read, got %q", tc.Name)
 	}
 }
 
-
 func TestParseXMLToolCalls_SimplifiedParams_SingleParam(t *testing.T) {
-	input := `<function=read_file>
+	input := `<function=read>
 <path>/tmp/test.txt</path>
 </function>`
 	result := ParseXMLToolCalls(input)
@@ -799,8 +792,8 @@ func TestParseXMLToolCalls_SimplifiedParams_SingleParam(t *testing.T) {
 		t.Fatalf("expected 1 tool call, got %d (content: %q)", len(result.ToolCalls), result.Content)
 	}
 	tc := result.ToolCalls[0]
-	if tc.Name != "read_file" {
-		t.Errorf("expected read_file, got %q", tc.Name)
+	if tc.Name != "read" {
+		t.Errorf("expected read, got %q", tc.Name)
 	}
 	if tc.Args["path"] != "/tmp/test.txt" {
 		t.Errorf("expected path /tmp/test.txt, got %q", tc.Args["path"])
@@ -808,7 +801,7 @@ func TestParseXMLToolCalls_SimplifiedParams_SingleParam(t *testing.T) {
 }
 
 func TestParseXMLToolCalls_SimplifiedParams_MultipleParams(t *testing.T) {
-	input := `<function=file_write>
+	input := `<function=write>
 <path>/tmp/test.txt</path>
 <content>Hello world</content>
 </function>`
@@ -817,8 +810,8 @@ func TestParseXMLToolCalls_SimplifiedParams_MultipleParams(t *testing.T) {
 		t.Fatalf("expected 1 tool call, got %d (content: %q)", len(result.ToolCalls), result.Content)
 	}
 	tc := result.ToolCalls[0]
-	if tc.Name != "file_write" {
-		t.Errorf("expected file_write, got %q", tc.Name)
+	if tc.Name != "write" {
+		t.Errorf("expected write, got %q", tc.Name)
 	}
 	if tc.Args["path"] != "/tmp/test.txt" {
 		t.Errorf("expected path /tmp/test.txt, got %q", tc.Args["path"])
@@ -829,10 +822,8 @@ func TestParseXMLToolCalls_SimplifiedParams_MultipleParams(t *testing.T) {
 }
 
 func TestParseXMLToolCalls_SimplifiedParams_MultipleValuesForSameParam(t *testing.T) {
-	
-	
-	
-	input := `<function=read_file>
+
+	input := `<function=read>
 <path>/tmp/file1.txt</path>
 <path>/tmp/file2.txt</path>
 <path>/tmp/file3.txt</path>
@@ -842,17 +833,17 @@ func TestParseXMLToolCalls_SimplifiedParams_MultipleValuesForSameParam(t *testin
 		t.Fatalf("expected 1 tool call, got %d (content: %q)", len(result.ToolCalls), result.Content)
 	}
 	tc := result.ToolCalls[0]
-	if tc.Name != "read_file" {
-		t.Errorf("expected read_file, got %q", tc.Name)
+	if tc.Name != "read" {
+		t.Errorf("expected read, got %q", tc.Name)
 	}
-	
+
 	if tc.Args["path"] == "" {
 		t.Errorf("expected non-empty path, got empty")
 	}
 }
 
 func TestParseXMLToolCalls_SimplifiedParams_MultilineValue(t *testing.T) {
-	input := `<function=file_write>
+	input := `<function=write>
 <path>/tmp/test.txt</path>
 <content>Line 1
 Line 2
@@ -869,8 +860,8 @@ Line 3</content>
 }
 
 func TestParseXMLToolCalls_SimplifiedParams_RealWorldExample(t *testing.T) {
-	
-	input := `<function=read_file>
+
+	input := `<function=read>
 <path>/Users/g.rylov/Documents/projects/go/confluence_exporter/out/Разработка_ Документация.html</path>
 <path>/Users/g.rylov/Documents/projects/go/confluence_exporter/out/Сервис TestData.html</path>
 <path>/Users/g.rylov/Documents/projects/go/confluence_exporter/out/VK Android • Automation.html</path>
@@ -880,22 +871,21 @@ func TestParseXMLToolCalls_SimplifiedParams_RealWorldExample(t *testing.T) {
 		t.Fatalf("expected 1 tool call, got %d (content: %q)", len(result.ToolCalls), result.Content)
 	}
 	tc := result.ToolCalls[0]
-	if tc.Name != "read_file" {
-		t.Errorf("expected read_file, got %q", tc.Name)
+	if tc.Name != "read" {
+		t.Errorf("expected read, got %q", tc.Name)
 	}
 }
 
-
 func TestParseXMLToolCalls_FunctionTagContentFormat(t *testing.T) {
 	input := `<tool_call>
-<function>read_file_text<parameter=path>
+<function>read_text<parameter=path>
 /home/orangepi/projects/go/agent/README.md
 </parameter></function>
 </tool_call>`
 	expected := XMLParseResult{
 		ToolCalls: []XMLToolCall{
 			{
-				Name: "read_file_text",
+				Name: "read_text",
 				Args: map[string]string{
 					"path": "/home/orangepi/projects/go/agent/README.md",
 				},
@@ -905,10 +895,9 @@ func TestParseXMLToolCalls_FunctionTagContentFormat(t *testing.T) {
 	assertParse(t, input, expected)
 }
 
-
 func TestParseXMLToolCalls_FunctionTagContentFormat_Malformed(t *testing.T) {
 	input := `<tool_call>
-<function>read_file_text>
+<function>read_text>
 <parameter=path>
 /home/orangepi/projects/go/agent/README.md
 </parameter>
@@ -919,14 +908,13 @@ func TestParseXMLToolCalls_FunctionTagContentFormat_Malformed(t *testing.T) {
 		t.Fatalf("expected 1 tool call, got %d (content: %q)", len(result.ToolCalls), result.Content)
 	}
 	tc := result.ToolCalls[0]
-	if tc.Name != "read_file_text" {
-		t.Errorf("expected read_file_text, got %q", tc.Name)
+	if tc.Name != "read_text" {
+		t.Errorf("expected read_text, got %q", tc.Name)
 	}
 	if tc.Args["path"] != "/home/orangepi/projects/go/agent/README.md" {
 		t.Errorf("expected path, got %q", tc.Args["path"])
 	}
 }
-
 
 func TestParseXMLToolCalls_FunctionTagContentFormat_NoWrapper(t *testing.T) {
 	input := `<function>time_get</function>`
@@ -939,7 +927,6 @@ func TestParseXMLToolCalls_FunctionTagContentFormat_NoWrapper(t *testing.T) {
 	}
 }
 
-
 func TestParseXMLToolCalls_MalformedCloseTagInFunction(t *testing.T) {
 	input := "<tool_call>\n<function=review_approve>\n</parameter>\n</task>\n</tool_call>"
 	result := ParseXMLToolCalls(input)
@@ -950,7 +937,6 @@ func TestParseXMLToolCalls_MalformedCloseTagInFunction(t *testing.T) {
 		t.Errorf("expected tool name 'review_approve', got %q", result.ToolCalls[0].Name)
 	}
 }
-
 
 func TestParseXMLToolCalls_SubagentAttrParam(t *testing.T) {
 	input := `<tool_call><function=subagent><parameter name="subagent_type">worker</parameter><parameter name="prompt">Create a simple HTTP server in Go</parameter></function></tool_call>`
@@ -968,7 +954,6 @@ func TestParseXMLToolCalls_SubagentAttrParam(t *testing.T) {
 	assertParse(t, input, expected)
 }
 
-
 func TestParseXMLToolCalls_SubagentAttrParamNoWrapper(t *testing.T) {
 	input := `<function=subagent><parameter name="subagent_type">worker</parameter><parameter name="prompt">Create a simple HTTP server in Go</parameter></function>`
 	expected := XMLParseResult{
@@ -985,7 +970,6 @@ func TestParseXMLToolCalls_SubagentAttrParamNoWrapper(t *testing.T) {
 	assertParse(t, input, expected)
 }
 
-
 func TestParseXMLToolCalls_SubagentSimpleTags(t *testing.T) {
 	input := `<function=subagent><subagent_type>worker</subagent_type><prompt>Create HTTP server</prompt></function>`
 	expected := XMLParseResult{
@@ -1001,7 +985,6 @@ func TestParseXMLToolCalls_SubagentSimpleTags(t *testing.T) {
 	}
 	assertParse(t, input, expected)
 }
-
 
 func TestParseXMLToolCalls_SubagentMixedFormats(t *testing.T) {
 	input := `<function=subagent><parameter=type>worker</parameter><parameter name="prompt">Create HTTP server</parameter></function>`
@@ -1021,7 +1004,6 @@ func TestParseXMLToolCalls_SubagentMixedFormats(t *testing.T) {
 		t.Errorf("ParseXMLToolCalls(%q) =\n  %+v\n  want %+v", input, result, expected)
 	}
 }
-
 
 func TestParseXMLToolCalls_SubagentStandardFormat(t *testing.T) {
 	input := `<tool_call>
@@ -1046,11 +1028,10 @@ func TestParseXMLToolCalls_SubagentStandardFormat(t *testing.T) {
 	assertParse(t, input, expected)
 }
 
-
 func TestParseXMLToolCalls_AttrParamInReasoning(t *testing.T) {
 	input := "I'll create the HTTP server for you.\n\n<function=subagent>\n<parameter name=\"subagent_type\">worker</parameter>\n<parameter name=\"prompt\">Create a simple HTTP server in Go that serves GET /hello returning {\"message\":\"hello\"}. Use only stdlib. Listen on :8080.</parameter>\n</function>"
 	result := ParseXMLToolCalls(input)
-	
+
 	if len(result.ToolCalls) != 1 {
 		t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
 	}
@@ -1068,7 +1049,6 @@ func TestParseXMLToolCalls_AttrParamInReasoning(t *testing.T) {
 	}
 }
 
-
 func TestParseXMLToolCalls_EmptyAttrParam(t *testing.T) {
 	input := `<function=subagent><parameter name="name"></parameter><parameter name="prompt">task</parameter></function>`
 	result := ParseXMLToolCalls(input)
@@ -1080,12 +1060,11 @@ func TestParseXMLToolCalls_EmptyAttrParam(t *testing.T) {
 	}
 }
 
-
 func TestParseXMLToolCalls_SubagentAllAliases(t *testing.T) {
 	tests := []struct {
 		name     string
 		xml      string
-		expected string 
+		expected string
 	}{
 		{
 			"parameter=subagent_type",
@@ -1130,7 +1109,7 @@ func TestParseXMLToolCalls_SubagentAllAliases(t *testing.T) {
 			if len(result.ToolCalls) != 1 {
 				t.Fatalf("expected 1 tool call, got %d", len(result.ToolCalls))
 			}
-			
+
 			args := result.ToolCalls[0].Args
 			found := args["subagent_type"] == tt.expected ||
 				args["name"] == tt.expected ||
@@ -1139,7 +1118,7 @@ func TestParseXMLToolCalls_SubagentAllAliases(t *testing.T) {
 			if !found {
 				t.Errorf("no name alias found with value %q in args: %v", tt.expected, args)
 			}
-			
+
 			if args["prompt"] == "" && args["task"] == "" {
 				t.Errorf("no task/prompt found in args: %v", args)
 			}

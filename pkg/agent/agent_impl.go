@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -68,8 +67,8 @@ type PermissionChecker interface {
 
 func NewAgent(config Config) *agentImpl {
 	agent := &agentImpl{
-		config:       config,
-		sessions:     make(map[int64]*session.Session),
+		config:        config,
+		sessions:      make(map[int64]*session.Session),
 		toolsRegistry: tools.NewRegistry(),
 		client: &http.Client{
 			Timeout: 2 * time.Hour,
@@ -228,43 +227,24 @@ func (a *agentImpl) ProcessMessage(ctx context.Context, message string, peerID i
 	if len(history) == 0 || history[len(history)-1].Role != session.UserRole || history[len(history)-1].Content != message {
 		s.AddUserMessage(message)
 		a.resetResponseLoop(peerID)
-		history = s.GetHistory()
-	}
-
-	a.promoteSteers(ctx, s)
-
-	if a.compactor != nil {
-		a.compactIfNeeded(ctx, s, true)
-		history = s.GetHistory()
-	}
-
-	apiMessages := a.convertHistoryToAPIMessages(s.GetContextMessages())
-
-	workingDir := s.GetWorkingDir()
-	if workingDir == "" {
-		workingDir = tools.WorkingDir
-	}
-	tools.SetWorkingDir(workingDir)
-	apiMessages = a.injectInstructions(apiMessages, workingDir)
-
-	if err := ctx.Err(); err != nil {
-		return "", err
 	}
 
 	if a.config.EnableTools {
-
-		result, err := a.processWithTools(ctx, apiMessages, s)
-		if err != nil {
-			return "", fmt.Errorf("process with tools: %w", err)
-		}
-		return result.Response, nil
+		return a.runTurn(ctx, s)
 	}
 
-	responseText, err := a.processStreaming(ctx, apiMessages, s)
+	return a.processSingleShot(ctx, s)
+}
+
+func (a *agentImpl) processSingleShot(ctx context.Context, s *session.Session) (string, error) {
+	apiMessages, err := a.prepareContext(ctx, s)
 	if err != nil {
 		return "", err
 	}
-	return responseText, nil
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return a.processStreaming(ctx, apiMessages, s)
 }
 
 func (a *agentImpl) bgOwnerContext(ctx context.Context) context.Context {
@@ -277,56 +257,44 @@ func (a *agentImpl) bgOwnerContext(ctx context.Context) context.Context {
 	return ctx
 }
 
-func (a *agentImpl) promoteSteers(ctx context.Context, s *session.Session) bool {
-	if ctx.Err() != nil || s == nil {
-		return false
+func (a *agentImpl) compactionLimits() compress.WindowLimits {
+	return compress.WindowLimits{Context: a.config.MaxTokens, InputLimit: a.config.ModelLimitInput}
+}
+
+func (a *agentImpl) compactionSettings() compress.Settings {
+	return compress.Settings{
+		ReserveTokens:    a.config.CompactionReserveTokens,
+		KeepRecentTokens: a.config.CompactionKeepRecentTokens,
 	}
-	in := s.GetPeerInput()
-	if in == nil {
-		return false
-	}
-	msgs := in.Drain()
-	if len(msgs) == 0 {
-		return false
-	}
-	for _, m := range msgs {
-		s.AddUserMessage(m)
-		a.debugLog.Debug("promoted mid-turn user message into session: %q", m)
-	}
-	return true
+}
+
+func (a *agentImpl) compactionTriggerMet(s *session.Session) bool {
+	visible := a.convertSessionHistory(s.GetHistory())
+	estimate := compress.EstimateMessagesTokensSimple(visible)
+	tokens := compress.CompactionTokens(s.LastUsageInputTokens(), estimate)
+	limits := a.compactionLimits()
+	return compress.ShouldCompact(tokens, limits.Context, limits, a.compactionSettings())
 }
 
 func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session, addAutoContinue bool) bool {
-	history := s.GetHistory()
-
-	visible := a.convertSessionHistory(history)
-	tokensBefore := compress.EstimateMessagesTokensSimple(visible)
-	if !compress.IsOverflowWithLimits(tokensBefore, a.config.MaxTokens, a.config.ModelLimitInput, a.config.CompactionReserved) {
+	if !a.compactionTriggerMet(s) {
 		return false
 	}
+	return a.forceCompact(ctx, s, addAutoContinue)
+}
 
-	tailTurns := a.config.TailTurns
-	if tailTurns <= 0 {
-		tailTurns = 2
-	}
-
-	result, err := a.compactor.CompactWithOpenCode(ctx, a.convertSessionHistoryRaw(history), a.config.MaxTokens, tailTurns, a.config.PreserveRecentTokens)
+func (a *agentImpl) forceCompact(ctx context.Context, s *session.Session, addAutoContinue bool) bool {
+	raw := a.convertSessionHistoryRaw(s.GetHistory())
+	result, err := a.compactor.Compact(ctx, raw, a.compactionLimits(), a.compactionSettings())
 	if err != nil {
-		a.debugLog.Warn("LLM compaction failed: %v, falling back to aggressive head pruning", err)
-
-		fbResult := a.compactionFallback(history, tailTurns, a.config.MaxTokens)
-		if fbResult != nil {
-			a.markCompactedHead(s, fbResult.TailStartID)
-			s.MarkCompaction(fbResult.TailStartID, compactionFallbackSummary)
-		}
+		a.debugLog.Warn("LLM compaction failed: %v; leaving transcript intact", err)
 		return false
 	}
-
 	if result.Summary == "" {
 		return false
 	}
 
-	s.MarkCompaction(result.TailStartID, result.Summary)
+	s.MarkCompaction(result.FirstKept, result.Summary)
 
 	if addAutoContinue && shouldAddAutoContinue(s) {
 		s.AddUserMessage(tokenizers.CompactionAutoContinueText)
@@ -334,18 +302,6 @@ func (a *agentImpl) compactIfNeeded(ctx context.Context, s *session.Session, add
 
 	return true
 }
-
-func (a *agentImpl) markCompactedHead(s *session.Session, tailStartID int) {
-	for i := 0; i < tailStartID && i < len(s.GetHistory()); i++ {
-		msg := s.GetHistory()[i]
-		if msg.Role != session.SystemRole {
-			s.MarkMessageCompacted(i, compress.PRUNED_OUTPUT_PLACEHOLDER)
-		}
-	}
-	a.debugLog.Info("Compaction fallback: marked %d head messages as compacted", tailStartID)
-}
-
-const compactionFallbackSummary = "## Goal\n- [context compacted — summary unavailable]\n\n## Constraints & Preferences\n- (none)\n\n## Progress\n### Done\n- (compact failed)\n\n### In Progress\n- (truncated)\n\n### Blocked\n- context overflow during summarization\n\n## Key Decisions\n- (lost during compaction fallback)\n\n## Next Steps\n- continue current task\n\n## Critical Context\n- [compaction summary could not be generated]\n\n## Relevant Files\n- (none)"
 
 func (a *agentImpl) convertSessionHistory(history []session.Message) []tokenizers.Message {
 	return compress.FilterCompacted(a.convertSessionHistoryRaw(history))
@@ -373,22 +329,6 @@ func (a *agentImpl) convertSessionHistoryRaw(history []session.Message) []tokeni
 func (a *agentImpl) ResetSession(peerID int64) {
 	s := a.getSession(peerID)
 	s.Reset()
-}
-
-func (a *agentImpl) compactionFallback(history []session.Message, tailTurns int, maxTokens int) *compress.SelectResult {
-	if len(history) == 0 {
-		return nil
-	}
-
-	raw := a.convertSessionHistoryRaw(history)
-	budget := compress.PreserveRecentBudget(maxTokens, a.config.PreserveRecentTokens)
-	selected := compress.SelectMessages(raw, tailTurns, budget)
-
-	if selected.TailStartID <= 0 || len(selected.Head) == 0 {
-		return nil
-	}
-
-	return &selected
 }
 
 func (a *agentImpl) GetSession(peerID int64) *session.Session {
@@ -456,11 +396,6 @@ func (a *agentImpl) getSession(peerID int64) *session.Session {
 }
 
 func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, session *session.Session) (string, error) {
-
-	if a.promoteSteers(ctx, session) {
-		messages = a.convertHistoryToAPIMessages(session.GetContextMessages())
-	}
-
 	streamConfig := StreamingConfig{
 		Model:       a.config.Model,
 		MaxTokens:   a.config.MaxTokens,
@@ -478,38 +413,17 @@ func (a *agentImpl) processStreaming(ctx context.Context, messages []Message, se
 		a.injectLoopCorrection(session, loopRepeats)
 	}
 
-	if reasoningText != "" {
-		parsed := ParseXMLToolCalls(reasoningText)
-		if len(parsed.ToolCalls) > 0 {
-
-			result, err := a.processWithTools(ctx, messages, session)
-			if err != nil {
-				return "", err
-			}
-			return result.Response, nil
-		}
-	}
-
-	if reasoningText != "" && a.thinkingCallback != nil {
-		cleanedReasoning := reasoningText
-		parsed := ParseXMLToolCalls(reasoningText)
-		if len(parsed.ToolCalls) > 0 {
-			cleanedReasoning = parsed.Content
-		}
-		if cleanedReasoning != "" {
-			if err := a.thinkingCallback(session.GetPeerID(), cleanedReasoning); err != nil {
-				a.debugLog.Warn("Failed to send thinking message: %v", err)
-			}
-		}
-	}
-
+	a.sendThinkingIfNeeded(session, reasoningText)
 	a.sendThinkingTokens(session.GetPeerID(), promptTokens, completionTokens)
 
-	if responseText == "" && reasoningText != "" {
+	if responseText == "" {
 		return "", nil
 	}
 
 	responseText = a.stripThinkingTags(responseText, session.GetPeerID())
+	if responseText == "" {
+		return "", nil
+	}
 
 	session.AddAssistantMessage(responseText)
 	return responseText, nil
@@ -534,8 +448,19 @@ func (a *agentImpl) injectInstructions(messages []Message, workingDir string) []
 }
 
 func (a *agentImpl) convertHistoryToAPIMessages(history []session.Message) []Message {
-	apiMessages := make([]Message, len(history))
-	for i, msg := range history {
+	apiMessages := make([]Message, 0, len(history))
+	for _, msg := range history {
+		if msg.Role == session.UserRole && msg.Content == tokenizers.CompactionUserMessage {
+			continue
+		}
+		if msg.Summary {
+			apiMessages = append(apiMessages, Message{
+				Role:    "user",
+				Content: compress.RenderSummaryForContext(msg.Content),
+			})
+			continue
+		}
+
 		content := msg.Content
 		if msg.Role == session.ToolRole {
 			content = compress.TruncateToolOutput(content)
@@ -553,14 +478,14 @@ func (a *agentImpl) convertHistoryToAPIMessages(history []session.Message) []Mes
 				apiMsg.ToolCalls[j] = normalizeStoredToolCall(tc)
 			}
 		}
-		apiMessages[i] = apiMsg
+		apiMessages = append(apiMessages, apiMsg)
 	}
 	return apiMessages
 }
 
 func normalizeStoredToolCall(tc session.MsgToolCall) ToolCall {
 	args := tc.Function.Arguments
-	if args == "" {
+	if args == "" || !validStoredToolArgs(args) {
 		args = "{}"
 	}
 	return buildToolCallForRequest(ToolCall{
@@ -571,4 +496,20 @@ func normalizeStoredToolCall(tc session.MsgToolCall) ToolCall {
 			Arguments: json.RawMessage(args),
 		},
 	})
+}
+
+func validStoredToolArgs(stored string) bool {
+	if stored == "" {
+		return true
+	}
+	inner := stored
+	if stored[0] == '"' {
+		var s string
+		if err := json.Unmarshal([]byte(stored), &s); err == nil {
+			inner = s
+		} else if len(stored) >= 2 && stored[len(stored)-1] == '"' {
+			inner = stored[1 : len(stored)-1]
+		}
+	}
+	return json.Valid([]byte(inner))
 }

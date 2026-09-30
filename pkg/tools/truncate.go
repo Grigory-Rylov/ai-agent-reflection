@@ -8,13 +8,11 @@ import (
 	"time"
 )
 
-
 const (
 	DefaultToolOutputMaxLines = 2000
 	DefaultToolOutputMaxBytes = 50 * 1024
 	truncationRetention       = 7 * 24 * time.Hour
 )
-
 
 type TruncateOptions struct {
 	MaxLines    int
@@ -23,13 +21,11 @@ type TruncateOptions struct {
 	HasTaskTool bool
 }
 
-
 type TruncateResult struct {
 	Content    string
 	Truncated  bool
 	OutputPath string
 }
-
 
 func TruncateToolResult(content string, opts TruncateOptions) (TruncateResult, error) {
 	if opts.MaxLines <= 0 {
@@ -67,7 +63,6 @@ func TruncateToolResult(content string, opts TruncateOptions) (TruncateResult, e
 	}, nil
 }
 
-
 func headPreview(lines []string, maxLines, maxBytes, totalBytes int) (preview string, removed int, unit string) {
 	out := make([]string, 0, maxLines)
 	bytes := 0
@@ -92,7 +87,6 @@ func headPreview(lines []string, maxLines, maxBytes, totalBytes int) (preview st
 	return strings.Join(out, "\n"), len(lines) - len(out), "lines"
 }
 
-
 func truncationHint(outputPath string, hasTaskTool bool) string {
 	if hasTaskTool {
 		return fmt.Sprintf(
@@ -107,11 +101,9 @@ func truncationHint(outputPath string, hasTaskTool bool) string {
 		outputPath)
 }
 
-
 func truncationFilename() string {
 	return fmt.Sprintf("tool_%d", time.Now().UnixNano())
 }
-
 
 func cleanupTruncationDir(dir string) {
 	entries, err := os.ReadDir(dir)

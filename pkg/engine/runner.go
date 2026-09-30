@@ -97,4 +97,3 @@ func tailOf(b []byte, max int) (string, error) {
 	}
 	return out, nil
 }
-

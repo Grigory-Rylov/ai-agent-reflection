@@ -10,7 +10,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tools"
 )
 
-
 type rulesetChecker struct {
 	P *permission.Ruleset
 }
@@ -51,7 +50,7 @@ func TestCheckShellPermissionAllowsMatching(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "ls -la",
 	}, 12345)
 	if !result {
@@ -66,7 +65,7 @@ func TestCheckShellPermissionDeniesMatching(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "rm -rf /tmp/x",
 	}, 12345)
 	if result {
@@ -97,7 +96,7 @@ func TestCheckShellPermissionAsksForUnmatched(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "cp /etc/passwd /tmp/x",
 	}, 12345)
 	if !result {
@@ -129,7 +128,7 @@ func TestCheckShellPermissionDeniesWhenUserRejects(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "cp /etc/passwd /tmp/x",
 	}, 12345)
 	if result {
@@ -150,21 +149,21 @@ func TestCheckShellPermissionAlwaysAllowPersistsPrefix(t *testing.T) {
 	a := newShellTestAgent(rules)
 	e := newAgentToolExecutor(a)
 
-	first := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	first := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "git log --oneline",
 	}, 12345)
 	if !first {
 		t.Fatal("expected first call allowed after always-allow")
 	}
 
-	second := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	second := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "git log --stat",
 	}, 12345)
 	if !second {
 		t.Error("expected 'git log *' always rule to cover similar git log commands")
 	}
 
-	third := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	third := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "git status",
 	}, 12345)
 	if !third {
@@ -178,7 +177,7 @@ func TestCheckShellPermissionCdOnly(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "cd /tmp",
 	}, 12345)
 	if !result {
@@ -210,7 +209,7 @@ func TestCheckShellPermissionAlwaysUsesPrefixOnly(t *testing.T) {
 	a.SetPermissionChecker(checker)
 	e := newAgentToolExecutor(a)
 
-	_ = e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	_ = e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "cp /etc/passwd /tmp/x",
 	}, 12345)
 
@@ -232,7 +231,7 @@ func TestCheckShellPermissionNestedCommand(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": `echo $(cat /etc/passwd)`,
 	}, 12345)
 	if result {
@@ -252,7 +251,7 @@ func TestCheckShellPermissionNoQuestionWhenAllAllowed(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "echo hi",
 	}, 12345)
 	if !result {
@@ -269,7 +268,7 @@ func TestCheckShellPermissionDeniedSubcommand(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "rm foo.txt && echo done",
 	}, 12345)
 	if result {
@@ -292,7 +291,7 @@ func TestCheckShellPermissionSkipsAskForPathlessWhenEnabled(t *testing.T) {
 	}})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "adb -s emulator-5554 devices -l",
 	}, 12345)
 	if !result {
@@ -322,7 +321,7 @@ func TestCheckShellPermissionStillAsksForFileCommandWhenEnabled(t *testing.T) {
 	}})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "echo hi > /etc/file",
 	}, 12345)
 	if !result {
@@ -342,7 +341,7 @@ func TestCheckShellPermissionDenyStillBlocksWhenFlagEnabled(t *testing.T) {
 	}})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "adb devices",
 	}, 12345)
 	if result {
@@ -362,7 +361,7 @@ func TestCheckShellPermissionPathlessSkipsAsk(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "adb devices",
 	}, 12345)
 	if !result {
@@ -389,7 +388,7 @@ func TestCheckShellPermissionSkipsAskForADBDeviceCommandWhenEnabled(t *testing.T
 	e := newAgentToolExecutor(a)
 
 	cmd := "adb -s emulator-5554 shell uiautomator dump /data/local/tmp/ui.xml 2>&1 && cat /data/local/tmp/ui.xml && head -30"
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": cmd,
 	}, 12345)
 	if !result {
@@ -419,7 +418,7 @@ func TestCheckShellPermissionStillAsksForADBHostPushOutsideWhenEnabled(t *testin
 	}})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "adb push /etc/passwd /sdcard/",
 	}, 12345)
 	if !result {
@@ -455,7 +454,7 @@ func TestCheckShellPermissionSkipsAskForADBPullChainWhenEnabled(t *testing.T) {
 	e := newAgentToolExecutor(a)
 
 	cmd := "adb -s emulator-5554 shell uiautomator dump /data/local/tmp/ui.xml && sleep 1 && adb -s emulator-5554 pull /data/local/tmp/ui.xml ./ui_test.xml 2>&1 && head -30 ui_test.xml"
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": cmd,
 	}, 12345)
 	if !result {
@@ -491,7 +490,7 @@ func TestAskShellPermissionQuestionTruncatesLongCommand(t *testing.T) {
 	e := newAgentToolExecutor(a)
 
 	longCmd := "cat > /outside/file.py << 'PYEOF'\n" + strings.Repeat("code line\n", 500) + "PYEOF"
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": longCmd,
 	}, 12345)
 	if !result {
@@ -518,7 +517,7 @@ func TestCheckShellPermissionCriticalForcesAskDespiteAllowRule(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "rm -rf /",
 	}, 12345)
 	if !result {
@@ -539,7 +538,7 @@ func TestCheckShellPermissionCriticalDenyRejects(t *testing.T) {
 	})
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "mkfs.ext4 /dev/sda1",
 	}, 12345)
 	if result {
@@ -558,7 +557,7 @@ func TestCheckShellPermissionCriticalNotLearned(t *testing.T) {
 	a := newShellTestAgent(rules)
 	e := newAgentToolExecutor(a)
 
-	result := e.checkPermissionAsk(context.Background(), "shell_execute", map[string]string{
+	result := e.checkPermissionAsk(context.Background(), "bash", map[string]string{
 		"command": "rm -rf /",
 	}, 12345)
 	if !result {

@@ -106,23 +106,23 @@ func TestSelectTemplates(t *testing.T) {
 		expected []TemplateType
 	}{
 		{
-			name: "default openai",
-			cfg:  Config{Provider: "openai"},
+			name:     "default openai",
+			cfg:      Config{Provider: "openai"},
 			expected: []TemplateType{Default, OpenAI},
 		},
 		{
-			name: "anthropic",
-			cfg:  Config{Provider: "anthropic"},
+			name:     "anthropic",
+			cfg:      Config{Provider: "anthropic"},
 			expected: []TemplateType{Default, Anthropic},
 		},
 		{
-			name: "gemini",
-			cfg:  Config{Provider: "google"},
+			name:     "gemini",
+			cfg:      Config{Provider: "google"},
 			expected: []TemplateType{Default, Gemini},
 		},
 		{
-			name: "plan mode",
-			cfg:  Config{Provider: "openai", Mode: "plan"},
+			name:     "plan mode",
+			cfg:      Config{Provider: "openai", Mode: "plan"},
 			expected: []TemplateType{Default, OpenAI, Plan},
 		},
 	}

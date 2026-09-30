@@ -11,12 +11,10 @@ import (
 	"testing"
 )
 
-
 type llmCall struct {
-	agent string 
-	body  string 
+	agent string
+	body  string
 }
-
 
 func scriptedLLM(t *testing.T) (*httptest.Server, func() []llmCall, func() bool, func() int) {
 	t.Helper()

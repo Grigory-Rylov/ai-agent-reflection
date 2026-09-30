@@ -379,4 +379,3 @@ func deadlineForType(engineType string) time.Duration {
 	}
 	return DefaultReadyDeadline
 }
-

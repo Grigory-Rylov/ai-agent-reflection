@@ -11,29 +11,26 @@ import (
 	"time"
 )
 
-
 type slotEntry struct {
 	SessionID string
 	LastUsed  time.Time
 }
 
-
 type hostAvailability struct {
-	known         bool
-	avail         bool
-	
+	known bool
+	avail bool
+
 	unavailLogged bool
 }
 
-
 type SlotManager struct {
-	mu                sync.Mutex
-	totalSlots        int                       
-	slots             map[int]*slotEntry        
-	availability      map[string]*hostAvailability 
-	probeLogged       map[string]bool           
-	slotClient        *SlotClient
-	log               Logger
+	mu           sync.Mutex
+	totalSlots   int
+	slots        map[int]*slotEntry
+	availability map[string]*hostAvailability
+	probeLogged  map[string]bool
+	slotClient   *SlotClient
+	log          Logger
 }
 
 func NewSlotManager(client *SlotClient) *SlotManager {
@@ -45,13 +42,11 @@ func NewSlotManager(client *SlotClient) *SlotManager {
 	}
 }
 
-
 func (m *SlotManager) SetLogger(l Logger) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.log = l
 }
-
 
 func (m *SlotManager) CheckAvailability(ctx context.Context, serverURL, modelName string) bool {
 	m.mu.Lock()
@@ -62,7 +57,6 @@ func (m *SlotManager) CheckAvailability(ctx context.Context, serverURL, modelNam
 	}
 	m.mu.Unlock()
 
-	
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, slotsProbeURL(serverURL, modelName), nil)
 	if err != nil {
 		m.setUnavailableLocked(serverURL)
@@ -104,7 +98,6 @@ func (m *SlotManager) CheckAvailability(ctx context.Context, serverURL, modelNam
 	return len(slotList) >= 1
 }
 
-
 func (m *SlotManager) logProbeFailure(serverURL string, err error) {
 	m.mu.Lock()
 	shouldLog := m.log != nil && !m.probeLogged[serverURL]
@@ -118,7 +111,6 @@ func (m *SlotManager) logProbeFailure(serverURL string, err error) {
 func (m *SlotManager) setUnavailableLocked(serverURL string) {
 	m.availability[serverURL] = &hostAvailability{known: true, avail: false}
 }
-
 
 func (m *SlotManager) MarkUnavailable(serverURL string) bool {
 	m.mu.Lock()
@@ -134,13 +126,11 @@ func (m *SlotManager) MarkUnavailable(serverURL string) bool {
 	return !alreadyDown
 }
 
-
 func (m *SlotManager) TotalSlots() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.totalSlots
 }
-
 
 func (m *SlotManager) ShouldLogUnavailable(serverURL string) bool {
 	m.mu.Lock()
@@ -157,7 +147,6 @@ func (m *SlotManager) ShouldLogUnavailable(serverURL string) bool {
 	return true
 }
 
-
 func (m *SlotManager) IsAvailable(serverURL string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -167,7 +156,6 @@ func (m *SlotManager) IsAvailable(serverURL string) bool {
 	return false
 }
 
-
 func (m *SlotManager) GetOrAssign(sessionID string, totalSlots int) (int, string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -176,7 +164,6 @@ func (m *SlotManager) GetOrAssign(sessionID string, totalSlots int) (int, string
 		return -1, ""
 	}
 
-	
 	for slotID, entry := range m.slots {
 		if entry.SessionID == sessionID {
 			entry.LastUsed = time.Now()
@@ -184,7 +171,6 @@ func (m *SlotManager) GetOrAssign(sessionID string, totalSlots int) (int, string
 		}
 	}
 
-	
 	for slotID := 0; slotID < totalSlots; slotID++ {
 		if m.slots[slotID] == nil {
 			m.slots[slotID] = &slotEntry{
@@ -195,7 +181,6 @@ func (m *SlotManager) GetOrAssign(sessionID string, totalSlots int) (int, string
 		}
 	}
 
-	
 	evictSlot := m.findLRUSlotLocked(totalSlots)
 	evictedSessionID := evictSlot.Entry.SessionID
 	evictSlot.Entry.SessionID = sessionID
@@ -204,8 +189,8 @@ func (m *SlotManager) GetOrAssign(sessionID string, totalSlots int) (int, string
 }
 
 type slotWithID struct {
-	ID     int
-	Entry  *slotEntry
+	ID    int
+	Entry *slotEntry
 }
 
 func (m *SlotManager) findLRUSlotLocked(totalSlots int) slotWithID {
@@ -221,7 +206,6 @@ func (m *SlotManager) findLRUSlotLocked(totalSlots int) slotWithID {
 	return oldest
 }
 
-
 func (m *SlotManager) Release(sessionID string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -234,7 +218,6 @@ func (m *SlotManager) Release(sessionID string) int {
 	}
 	return -1
 }
-
 
 func (m *SlotManager) GetSlotID(sessionID string) int {
 	m.mu.Lock()
@@ -249,7 +232,6 @@ func (m *SlotManager) GetSlotID(sessionID string) int {
 	return -1
 }
 
-
 func (m *SlotManager) Touch(sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -262,7 +244,6 @@ func (m *SlotManager) Touch(sessionID string) {
 	}
 }
 
-
 func (m *SlotManager) GetAssignedSessions() map[string]int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -273,7 +254,6 @@ func (m *SlotManager) GetAssignedSessions() map[string]int {
 	}
 	return result
 }
-
 
 func SlotFileName(modelName string, slotID int) string {
 	safe := sanitizeSlotName(modelName)

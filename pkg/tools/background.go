@@ -43,10 +43,10 @@ func (t *BackgroundTask) info() (string, int) {
 }
 
 type BackgroundHub struct {
-	mu      sync.Mutex
-	tasks   map[string]*BackgroundTask
-	max     int
-	logDir  string
+	mu          sync.Mutex
+	tasks       map[string]*BackgroundTask
+	max         int
+	logDir      string
 	defaultPeer int64
 
 	notifyMu sync.RWMutex
@@ -61,10 +61,10 @@ func NewBackgroundHub(max int) *BackgroundHub {
 		max = 4
 	}
 	return &BackgroundHub{
-		tasks:       map[string]*BackgroundTask{},
-		max:         max,
-		logDir:      filepath.Join(os.TempDir(), "ai-agent-background"),
-		deliveries:  map[string]func(peerID int64, text string){},
+		tasks:      map[string]*BackgroundTask{},
+		max:        max,
+		logDir:     filepath.Join(os.TempDir(), "ai-agent-background"),
+		deliveries: map[string]func(peerID int64, text string){},
 	}
 }
 

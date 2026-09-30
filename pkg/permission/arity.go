@@ -2,7 +2,6 @@ package permission
 
 import "strings"
 
-
 var arityMap = map[string]int{
 	"cat": 1, "cd": 1, "chmod": 1, "chown": 1, "cp": 1, "echo": 1,
 	"env": 1, "export": 1, "grep": 1, "kill": 1, "killall": 1, "ln": 1,
@@ -35,7 +34,6 @@ var arityMap = map[string]int{
 	"vault": 2, "vault auth": 3, "vault kv": 3, "vercel": 2,
 	"volta": 2, "wp": 2, "yarn": 2, "yarn dlx": 3, "yarn run": 3,
 }
-
 
 func Prefix(tokens []string) []string {
 	for length := len(tokens); length > 0; length-- {

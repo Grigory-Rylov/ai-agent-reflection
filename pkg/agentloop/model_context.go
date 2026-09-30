@@ -9,7 +9,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/tokenizers"
 )
 
-
 type ModelContextResolver struct {
 	mu     sync.Mutex
 	holder *modelsconfig.Holder
@@ -24,7 +23,6 @@ func NewModelContextResolver(holder *modelsconfig.Holder, log Logger) *ModelCont
 		cache:  make(map[string]int),
 	}
 }
-
 
 func (r *ModelContextResolver) Resolve() (int, error) {
 	if r.holder == nil {
@@ -46,7 +44,6 @@ func (r *ModelContextResolver) Resolve() (int, error) {
 	r.cache[alias] = ctx
 	return ctx, nil
 }
-
 
 func (r *ModelContextResolver) resolveOnce(alias string) (int, error) {
 	if ctx := r.holder.GetModelContext(alias); ctx > 0 {

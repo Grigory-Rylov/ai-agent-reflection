@@ -4,38 +4,27 @@ import (
 	"time"
 )
 
-
 type EventType string
 
 const (
-	
 	EventPromptReceived EventType = "prompt_received"
 
-	
 	EventRequestSent EventType = "request_sent"
 
-	
 	EventResponseChunk EventType = "response_chunk"
 
-	
 	EventResponseDone EventType = "response_done"
 
-	
 	EventToolCall EventType = "tool_call"
 
-	
 	EventToolResult EventType = "tool_result"
 
-	
 	EventLoopDetected EventType = "loop_detected"
 
-	
 	EventThinking EventType = "thinking"
 
-	
 	EventError EventType = "error"
 )
-
 
 type Event struct {
 	Type      EventType
@@ -44,14 +33,11 @@ type Event struct {
 	Data      map[string]interface{}
 }
 
-
 type EventHandler func(event Event)
-
 
 type EventDispatcher struct {
 	handlers map[EventType][]EventHandler
 }
-
 
 func NewEventDispatcher() *EventDispatcher {
 	return &EventDispatcher{
@@ -59,11 +45,9 @@ func NewEventDispatcher() *EventDispatcher {
 	}
 }
 
-
 func (d *EventDispatcher) Register(eventType EventType, handler EventHandler) {
 	d.handlers[eventType] = append(d.handlers[eventType], handler)
 }
-
 
 func (d *EventDispatcher) Emit(event Event) {
 	if handlers, ok := d.handlers[event.Type]; ok {
@@ -73,7 +57,6 @@ func (d *EventDispatcher) Emit(event Event) {
 	}
 }
 
-
 func NewEvent(eventType EventType, peerID int64) Event {
 	return Event{
 		Type:      eventType,
@@ -82,7 +65,6 @@ func NewEvent(eventType EventType, peerID int64) Event {
 		Data:      make(map[string]interface{}),
 	}
 }
-
 
 func SetEventStringData(event Event, key, value string) Event {
 	if event.Data == nil {

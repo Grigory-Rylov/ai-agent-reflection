@@ -12,10 +12,8 @@ import (
 	"time"
 )
 
-
 func TestStreamingCancellationInterruptsRead(t *testing.T) {
-	
-	
+
 	started := make(chan struct{})
 	release := make(chan struct{})
 
@@ -26,11 +24,11 @@ func TestStreamingCancellationInterruptsRead(t *testing.T) {
 			t.Error("expected http.Flusher")
 			return
 		}
-		
+
 		io.WriteString(w, `data: {"choices":[{"delta":{"content":"partial`)
 		flusher.Flush()
 		close(started)
-		<-release 
+		<-release
 	}))
 	defer func() {
 		close(release)
@@ -57,13 +55,12 @@ func TestStreamingCancellationInterruptsRead(t *testing.T) {
 		done <- err
 	}()
 
-	
 	select {
 	case <-started:
 	case <-time.After(2 * time.Second):
 		t.Fatal("server did not receive the streaming request")
 	}
-	
+
 	time.Sleep(50 * time.Millisecond)
 
 	cancel()
@@ -78,7 +75,6 @@ func TestStreamingCancellationInterruptsRead(t *testing.T) {
 	}
 }
 
-
 func TestStreamAndCollectCancelNotRetryableNoMislabel(t *testing.T) {
 	var calls int32
 	started := make(chan struct{})
@@ -87,7 +83,7 @@ func TestStreamAndCollectCancelNotRetryableNoMislabel(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&calls, 1)
 		close(started)
-		<-release 
+		<-release
 	}))
 	defer func() {
 		close(release)
@@ -112,7 +108,7 @@ func TestStreamAndCollectCancelNotRetryableNoMislabel(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("server did not receive the request")
 	}
-	cancel() 
+	cancel()
 
 	var err error
 	select {
@@ -133,7 +129,6 @@ func TestStreamAndCollectCancelNotRetryableNoMislabel(t *testing.T) {
 		t.Errorf("expected exactly 1 request (no retry on cancel), got %d", got)
 	}
 }
-
 
 func TestStreamAndCollectCancelDuringRetryDelayReturnsCanceled(t *testing.T) {
 	var calls int32
@@ -156,7 +151,6 @@ func TestStreamAndCollectCancelDuringRetryDelayReturnsCanceled(t *testing.T) {
 		done <- err
 	}()
 
-	
 	deadline := time.Now().Add(2 * time.Second)
 	for atomic.LoadInt32(&calls) < 1 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
@@ -177,7 +171,6 @@ func TestStreamAndCollectCancelDuringRetryDelayReturnsCanceled(t *testing.T) {
 	}
 }
 
-
 func TestStreamAndCollectCancelMidStreamPartialContent(t *testing.T) {
 	var calls int32
 	started := make(chan struct{})
@@ -194,7 +187,7 @@ func TestStreamAndCollectCancelMidStreamPartialContent(t *testing.T) {
 		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"part\"}}]}\n\n")
 		flusher.Flush()
 		close(started)
-		<-release 
+		<-release
 	}))
 	defer func() {
 		close(release)
@@ -227,7 +220,7 @@ func TestStreamAndCollectCancelMidStreamPartialContent(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("server did not start streaming")
 	}
-	time.Sleep(50 * time.Millisecond) 
+	time.Sleep(50 * time.Millisecond)
 	cancel()
 
 	var got struct {

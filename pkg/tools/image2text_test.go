@@ -14,7 +14,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/modelsconfig"
 )
 
-
 func mockChatCompletionServer(t *testing.T, content string) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -112,7 +111,6 @@ func TestImage2TextToolRecognizesImage(t *testing.T) {
 		t.Errorf("expected recognized text to contain 'cat', got: %q", content)
 	}
 
-	
 	if lastBody == nil {
 		t.Fatal("request body was not captured")
 	}

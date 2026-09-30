@@ -159,7 +159,7 @@ func getQuestionState() (func(peerID int64, question map[string]interface{}) (ma
 type QuestionTool struct{}
 
 func (t *QuestionTool) Name() string {
-	return "question"
+	return "ask"
 }
 
 func (t *QuestionTool) Description() string {

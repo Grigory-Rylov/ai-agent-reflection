@@ -11,9 +11,7 @@ const (
 	PRUNED_OUTPUT_PLACEHOLDER = "[Old tool result content cleared]"
 )
 
-
 var PRUNE_PROTECTED_TOOLS = []string{"skill"}
-
 
 func PruneMessages(messages []tokenizers.Message, protectedTools ...string) []tokenizers.Message {
 	var total int
@@ -37,7 +35,7 @@ func PruneMessages(messages []tokenizers.Message, protectedTools ...string) []to
 		if msg.Role != "tool" {
 			continue
 		}
-		
+
 		protected := false
 		for _, name := range protectedTools {
 			if msg.Name == name {

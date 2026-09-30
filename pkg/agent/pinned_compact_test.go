@@ -13,7 +13,6 @@ import (
 	"github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-
 type mockPinnedCompressor struct {
 	compressFunc func(ctx context.Context, req *compress.CompressionRequest) (*compress.CompressionResult, error)
 }
@@ -34,19 +33,21 @@ func (m *mockPinnedCompressor) Compress(ctx context.Context, req *compress.Compr
 	}, nil
 }
 
+func (m *mockPinnedCompressor) Complete(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error) {
+	return "[SUMMARY] old conversation", nil
+}
 
 func newPinnedTestAgent(t *testing.T) *agentImpl {
 	t.Helper()
 	config := DefaultConfig()
 	config.LlamaServerURL = "127.0.0.1:8080"
 	config.Model = "test-model"
-	config.MaxTokens = 1000 
-
+	config.MaxTokens = 1000
+	config.CompactionKeepRecentTokens = 130
 	agent := NewAgent(config)
 	agent.compactor = compress.NewCompactor(&mockPinnedCompressor{})
 	return agent
 }
-
 
 func TestPinnedPromptsSurviveCompaction(t *testing.T) {
 	agent := newPinnedTestAgent(t)
@@ -75,7 +76,6 @@ func TestPinnedPromptsSurviveCompaction(t *testing.T) {
 		t.Errorf("expected pinned prompt at start of context, got role=%s content=%q", msgs[1].Role, msgs[1].Content)
 	}
 }
-
 
 func TestSystemPromptAndInstructionsSurviveCompaction(t *testing.T) {
 	agent := newPinnedTestAgent(t)
@@ -117,7 +117,6 @@ func TestSystemPromptAndInstructionsSurviveCompaction(t *testing.T) {
 		t.Error("expected AGENTS.md instructions to be injected after compaction")
 	}
 }
-
 
 func TestPinnedPromptsInContextAfterCompaction(t *testing.T) {
 	agent := newPinnedTestAgent(t)

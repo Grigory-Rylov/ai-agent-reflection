@@ -21,27 +21,26 @@ import (
 )
 
 type OrchestratorConfig struct {
-	ModelHolder     *modelsconfig.Holder
-	ContextResolver *ModelContextResolver
-	MaxTokens       int
-	ModelLimitInput int
-	Temperature     float64
-	MaxToolCallDepth int
-	ToolRegistry    *tools.Registry
-	Debug           bool
-	Logger          Logger
-	ThinkingPeerID  int64
-	VKClient        VKClient
-	SystemPromptDir      string
-	MaxReviewIterations  int
-	ToolOutputMaxLines   int
-	ToolOutputMaxBytes   int
-	AgentManager         *agentpolicy.AgentManager
-	Store                store.Store
-	SlotManager          *SlotManager
-	Slots                *SlotClient
+	ModelHolder         *modelsconfig.Holder
+	ContextResolver     *ModelContextResolver
+	MaxTokens           int
+	ModelLimitInput     int
+	Temperature         float64
+	MaxToolCallDepth    int
+	ToolRegistry        *tools.Registry
+	Debug               bool
+	Logger              Logger
+	ThinkingPeerID      int64
+	VKClient            VKClient
+	SystemPromptDir     string
+	MaxReviewIterations int
+	ToolOutputMaxLines  int
+	ToolOutputMaxBytes  int
+	AgentManager        *agentpolicy.AgentManager
+	Store               store.Store
+	SlotManager         *SlotManager
+	Slots               *SlotClient
 }
-
 
 type agentCtxEntry struct {
 	cancel    context.CancelFunc
@@ -54,19 +53,18 @@ type Orchestrator struct {
 	thoughtPeer int64
 	activeAgent string
 	activeMu    sync.RWMutex
-	
-	activeAgents   map[string]*agentCtxEntry 
+
+	activeAgents   map[string]*agentCtxEntry
 	activeAgentsMu sync.Mutex
 }
 
 func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 	return &Orchestrator{
-		config:         cfg,
-		thoughtPeer:    cfg.ThinkingPeerID,
-		activeAgents:   make(map[string]*agentCtxEntry),
+		config:       cfg,
+		thoughtPeer:  cfg.ThinkingPeerID,
+		activeAgents: make(map[string]*agentCtxEntry),
 	}
 }
-
 
 func (o *Orchestrator) registerAgentContext(sessionID string, peerID int64, cancel context.CancelFunc) {
 	o.activeAgentsMu.Lock()
@@ -77,13 +75,11 @@ func (o *Orchestrator) registerAgentContext(sessionID string, peerID int64, canc
 	}
 }
 
-
 func (o *Orchestrator) unregisterAgentContext(sessionID string) {
 	o.activeAgentsMu.Lock()
 	defer o.activeAgentsMu.Unlock()
 	delete(o.activeAgents, sessionID)
 }
-
 
 func (o *Orchestrator) unregisterAndReleaseOnCancel(sessionID string) {
 	o.unregisterAgentContext(sessionID)
@@ -129,7 +125,6 @@ func (o *Orchestrator) ExecuteTask(ctx context.Context, task string, peerID int6
 	return qaResult, nil
 }
 
-
 func (o *Orchestrator) prepareAgentPrompt(agentName string) (string, error) {
 	prompt, err := o.loadSystemPrompt(agentName)
 	if err != nil {
@@ -140,7 +135,6 @@ func (o *Orchestrator) prepareAgentPrompt(agentName string) (string, error) {
 	}
 	return prompt, nil
 }
-
 
 func (o *Orchestrator) cleanupAgentBG(sessionID string) {
 	if sessionID == "" {
@@ -160,7 +154,6 @@ func (o *Orchestrator) handleAgentFailure(cancel context.CancelFunc, a agent.Age
 	}
 	o.releaseAgentSlot(sessionID)
 }
-
 
 func (o *Orchestrator) finishAgentSession(cancel context.CancelFunc, rootID, sessionID string, peerID int64) {
 	cancel()
@@ -213,7 +206,6 @@ func (o *Orchestrator) RunAgent(ctx context.Context, agentName, task string, pee
 	return response, nil
 }
 
-
 func (o *Orchestrator) beginRootSession(agentName, systemPrompt, task string, peerID int64, sessionID string) string {
 	if o.config.Store == nil || sessionID == "" {
 		return ""
@@ -230,7 +222,6 @@ func (o *Orchestrator) beginRootSession(agentName, systemPrompt, task string, pe
 	return sessionID
 }
 
-
 func (o *Orchestrator) saveAgentHistory(a agent.Agent, sessionID string, peerID int64, lastPrompt string) {
 	if o.config.Store == nil || sessionID == "" || a == nil {
 		return
@@ -245,11 +236,9 @@ func (o *Orchestrator) saveAgentHistory(a agent.Agent, sessionID string, peerID 
 	}
 }
 
-
 func (o *Orchestrator) releaseAgentSlot(sessionID string) {
 	ReleaseSessionSlot(o.config.SlotManager, o.config.Slots, o.config.ModelHolder, sessionID, o.config.Logger)
 }
-
 
 func (o *Orchestrator) endRootSession(peerID int64, rootID string) {
 	o.releaseAgentSlot(rootID)
@@ -259,7 +248,6 @@ func (o *Orchestrator) endRootSession(peerID int64, rootID string) {
 	o.config.Store.DeleteAgentSession(rootID)
 	o.config.Store.SaveAgentChain(peerID, nil)
 }
-
 
 func (o *Orchestrator) setupAgentTools(name string, a agent.Agent, peerID int64, sessionID string, chain []string) error {
 	switch {
@@ -331,11 +319,9 @@ func (o *Orchestrator) GetActiveAgentSessions(peerID int64) (string, error) {
 }
 
 func (o *Orchestrator) ClearActiveSessions(peerID int64) {
-	
-	
+
 	cancelled := o.ClearRegisteredAgents(peerID)
 
-	
 	for _, id := range cancelled {
 		o.releaseAgentSlot(id)
 		if o.config.Logger != nil {
@@ -348,7 +334,6 @@ func (o *Orchestrator) ClearActiveSessions(peerID int64) {
 	}
 	o.config.Store.ClearAgentChain(peerID)
 }
-
 
 func (o *Orchestrator) ClearRegisteredAgents(peerID int64) []string {
 	var cancelled []string
@@ -363,7 +348,6 @@ func (o *Orchestrator) ClearRegisteredAgents(peerID int64) []string {
 	o.activeAgentsMu.Unlock()
 	return cancelled
 }
-
 
 func (o *Orchestrator) ResumeActiveChains(ctx context.Context) error {
 	if o.config.Store == nil {
@@ -417,7 +401,6 @@ func (o *Orchestrator) ResumeActiveChainsForPeer(ctx context.Context, peerID int
 	return nil
 }
 
-
 func (o *Orchestrator) resumeChain(ctx context.Context, chain store.AgentChainData) error {
 	if len(chain.Chain) == 0 {
 		return nil
@@ -449,14 +432,12 @@ func (o *Orchestrator) resumeChain(ctx context.Context, chain store.AgentChainDa
 	return nil
 }
 
-
 func (o *Orchestrator) runResumedAgent(ctx context.Context, sd *store.AgentSessionData, childResult string, chain []string) (string, error) {
 	a, sessionID, err := o.makeSubAgent(sd.AgentName, sd.SystemPrompt, sd.PeerID)
 	if err != nil {
 		return "", err
 	}
-	
-	
+
 	if err := o.setupAgentTools(sd.AgentName, a, sd.PeerID, sd.ID, chain); err != nil {
 		o.cleanupAgentBG(sessionID)
 		o.releaseAgentSlot(sessionID)
@@ -475,7 +456,6 @@ func (o *Orchestrator) runResumedAgent(ctx context.Context, sd *store.AgentSessi
 	return result, nil
 }
 
-
 func lastRestoredRole(s *session.Session) session.Role {
 	history := s.GetHistory()
 	if len(history) == 0 {
@@ -483,7 +463,6 @@ func lastRestoredRole(s *session.Session) session.Role {
 	}
 	return history[len(history)-1].Role
 }
-
 
 func pickResumeContinuationPrompt(childResult string, lastRole session.Role, lastToolCall, lastPrompt string) string {
 	const defaultText = "The process was restarted. Continue your task from where you left off."
@@ -505,7 +484,6 @@ func pickResumeContinuationPrompt(childResult string, lastRole session.Role, las
 	}
 }
 
-
 func (o *Orchestrator) restoreSessionMessages(s *session.Session, messagesJSON string) {
 	if s == nil || messagesJSON == "" {
 		return
@@ -515,11 +493,9 @@ func (o *Orchestrator) restoreSessionMessages(s *session.Session, messagesJSON s
 		o.debugLog("Resume: failed to parse saved messages: %v", err)
 		return
 	}
-	
-	
+
 	s.RestoreMessages(sanitizeRestoredMessages(msgs))
 }
-
 
 func sanitizeRestoredMessages(msgs []session.Message) []session.Message {
 	out := make([]session.Message, len(msgs))
@@ -570,7 +546,6 @@ func (o *Orchestrator) isCoordinator(name string) bool {
 	return false
 }
 
-
 func (o *Orchestrator) IsPrimary(name string) bool {
 	if o.config.AgentManager != nil {
 		info, err := o.config.AgentManager.GetAgent(name)
@@ -582,7 +557,6 @@ func (o *Orchestrator) IsPrimary(name string) bool {
 	}
 	return false
 }
-
 
 func (o *Orchestrator) GetSystemPrompt(name string) (string, error) {
 	return o.loadSystemPrompt(name)
@@ -598,7 +572,7 @@ func (o *Orchestrator) runWorker(ctx context.Context, task string, peerID int64)
 		return "", err
 	}
 	o.addMainTools(a)
-	
+
 	if err := o.registerSubAgentTool("worker", a, peerID, sessionID, []string{sessionID}); err != nil {
 		o.cleanupAgentBG(sessionID)
 		o.releaseAgentSlot(sessionID)
@@ -612,7 +586,7 @@ func (o *Orchestrator) runWorker(ctx context.Context, task string, peerID int64)
 		o.releaseAgentSlot(sessionID)
 		return "", err
 	}
-	
+
 	o.endLeafSession(peerID, sessionID)
 	o.releaseAgentSlot(sessionID)
 	return result, err
@@ -641,12 +615,11 @@ func (o *Orchestrator) runQA(ctx context.Context, task string, peerID int64) (st
 		o.releaseAgentSlot(sessionID)
 		return "", err
 	}
-	
+
 	o.endLeafSession(peerID, sessionID)
 	o.releaseAgentSlot(sessionID)
 	return result, err
 }
-
 
 func (o *Orchestrator) beginLeafSession(agentName, systemPrompt, task string, peerID int64, sessionID string) {
 	if o.config.Store == nil || sessionID == "" {
@@ -662,7 +635,6 @@ func (o *Orchestrator) beginLeafSession(agentName, systemPrompt, task string, pe
 	})
 	o.config.Store.SaveAgentChain(peerID, []string{sessionID})
 }
-
 
 func (o *Orchestrator) endLeafSession(peerID int64, sessionID string) {
 	if o.config.Store == nil || sessionID == "" {
@@ -690,7 +662,6 @@ func (o *Orchestrator) makeSubAgent(name, systemPrompt string, peerID int64) (ag
 	o.registerAgentBGDelivery(name, a, peerID, sessionID)
 	return a, sessionID, nil
 }
-
 
 func (o *Orchestrator) attachCheckpointSaving(a agent.Agent, sessionID string, peerID int64) {
 	if o.config.Store == nil || sessionID == "" {
@@ -727,7 +698,6 @@ func (o *Orchestrator) makeAgentBGDelivery(name string, a agent.Agent, peerID in
 	}
 }
 
-
 func (o *Orchestrator) persistCheckpoint(a agent.Agent, sessionID string, peerID int64, lastToolCall string) {
 	data, err := json.Marshal(a.GetSession(peerID).GetHistory())
 	if err != nil {
@@ -739,11 +709,9 @@ func (o *Orchestrator) persistCheckpoint(a agent.Agent, sessionID string, peerID
 	}
 }
 
-
 func (o *Orchestrator) configureAgentBase(cfg *agent.Config, name string, sessionID string) {
 	cfg.SystemPromptFile = ""
-	
-	
+
 	cfg.SessionConfig = session.Config{
 		SessionFile: "",
 		SessionID:   sessionID,
@@ -756,17 +724,12 @@ func (o *Orchestrator) configureAgentBase(cfg *agent.Config, name string, sessio
 	cfg.BGOwner = sessionID
 }
 
-
 func (o *Orchestrator) assignAgentSlot(cfg *agent.Config, name string, sessionID string) {
 	if o.config.ModelHolder == nil || !o.config.ModelHolder.GetCurrentSlotSave() {
 		return
 	}
 	cfg.SlotSave = true
-	
-	
-	
-	
-	
+
 	slotID := AssignSessionSlot(o.config.SlotManager, o.config.Slots, o.config.ModelHolder, sessionID, o.config.Logger)
 	if slotID >= 0 {
 		cfg.SlotID = slotID
@@ -776,7 +739,6 @@ func (o *Orchestrator) assignAgentSlot(cfg *agent.Config, name string, sessionID
 		}
 	}
 }
-
 
 func (o *Orchestrator) setupAgentPermissions(a agent.Agent, name string) {
 	if o.config.AgentManager == nil {
@@ -824,24 +786,25 @@ func (o *Orchestrator) makeAgentConfig() (agent.Config, error) {
 		}
 		maxTokens = ctx
 	} else if ctx := o.config.ModelHolder.GetModelContext(alias); ctx > 0 {
-		
+
 		maxTokens = ctx
 	}
 	return agent.Config{
-		LlamaServerURL:      llamaURL,
-		EngineType:          o.config.ModelHolder.GetCurrentEngineType(),
-		Model:               modelName,
-		MaxTokens:           maxTokens,
-		ModelLimitInput:     o.config.ModelLimitInput,
-		Temperature:         o.config.Temperature,
-		MaxToolCallDepth:    o.config.MaxToolCallDepth,
-		SystemPromptFile:    o.systemPromptDir() + "/coordinator.txt",
-		EnableTools:         true,
-		EnableLoopAlert:     false,
-		ToolOutputMaxLines:  o.config.ToolOutputMaxLines,
-		ToolOutputMaxBytes:  o.config.ToolOutputMaxBytes,
-		Debug:               o.config.Debug,
-		AgentName:           "coordinator",
+		SubagentWatch:      jobWatcher{},
+		LlamaServerURL:     llamaURL,
+		EngineType:         o.config.ModelHolder.GetCurrentEngineType(),
+		Model:              modelName,
+		MaxTokens:          maxTokens,
+		ModelLimitInput:    o.config.ModelLimitInput,
+		Temperature:        o.config.Temperature,
+		MaxToolCallDepth:   o.config.MaxToolCallDepth,
+		SystemPromptFile:   o.systemPromptDir() + "/coordinator.txt",
+		EnableTools:        true,
+		EnableLoopAlert:    false,
+		ToolOutputMaxLines: o.config.ToolOutputMaxLines,
+		ToolOutputMaxBytes: o.config.ToolOutputMaxBytes,
+		Debug:              o.config.Debug,
+		AgentName:          "coordinator",
 		SessionConfig: session.Config{
 			SessionFile: "",
 		},
@@ -892,36 +855,37 @@ type toolInserter interface {
 	ReplaceTools(registry *tools.Registry)
 }
 
-
 func (o *Orchestrator) makeSubAgentTool(name string, a agent.Agent, peerID int64, sessionID string, chain []string) (*SubAgentTool, error) {
 	cfg, err := o.makeAgentConfig()
 	if err != nil {
 		return nil, err
 	}
 	return &SubAgentTool{
-		AgentConfig:     cfg,
-		ContextResolver: o.config.ContextResolver,
-		MainTools:       o.config.ToolRegistry,
-		SystemPromptDir: o.systemPromptDir(),
-		AgentManager:    o.config.AgentManager,
-		CurrentDepth:    0,
-		MaxDepth:        4,
-		PeerID:          peerID,
-		ThinkingPeerID:  o.thoughtPeer,
-		VKClient:        o.config.VKClient,
-		Log:             o.config.Logger,
-		Debug:           o.config.Debug,
-		ModelHolder:     o.config.ModelHolder,
-		SetActiveAgent:  func(n string) { o.setActiveAgent(n) },
-		Store:           o.config.Store,
-		ParentSessionID: sessionID,
-		AgentSessionID:  sessionID, 
-		ParentAgent:     a,
-		Chain:           chain,
-		ParentAgentName: name,
+		AgentConfig:      cfg,
+		ContextResolver:  o.config.ContextResolver,
+		MainTools:        o.config.ToolRegistry,
+		SystemPromptDir:  o.systemPromptDir(),
+		AgentManager:     o.config.AgentManager,
+		CurrentDepth:     0,
+		MaxDepth:         4,
+		PeerID:           peerID,
+		ThinkingPeerID:   o.thoughtPeer,
+		VKClient:         o.config.VKClient,
+		Log:              o.config.Logger,
+		Debug:            o.config.Debug,
+		ModelHolder:      o.config.ModelHolder,
+		SetActiveAgent:   func(n string) { o.setActiveAgent(n) },
+		Store:            o.config.Store,
+		ParentSessionID:  sessionID,
+		AgentSessionID:   sessionID,
+		BGOwner:          sessionID,
+		Blocking:         true,
+		ParentAgent:      a,
+		Chain:            chain,
+		ParentAgentName:  name,
 		AllowedSubagents: o.config.AgentManager.SubagentTypesFor(name),
-		SlotManager:     o.config.SlotManager,
-		Slots:           o.config.Slots,
+		SlotManager:      o.config.SlotManager,
+		Slots:            o.config.Slots,
 	}, nil
 }
 

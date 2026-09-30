@@ -71,7 +71,7 @@ The `SubAgentTool` (in `pkg/agentloop/subagent_tool.go`) implements the `tools.T
 2. Check `CurrentDepth < MaxDepth`
 3. Load system prompt from `system_prompt/{name}.txt`
 4. Create agent with fresh session (no auto-save, no file persistence)
-5. Register main tools (file_read, file_write, etc.)
+5. Register main tools (read, write, etc.)
 6. If name != "worker": register `subagent` tool with `CurrentDepth + 1`
 7. If name == "qa": register `review_approve` tool
 8. Set thinking callback with `[{name}]` prefix
@@ -109,7 +109,7 @@ Stored in `system_prompt/` directory:
 
 | Tool | Coordinator | Worker | QA |
 |---|---|---|---|
-| file_read, file_write, shell_execute, ... | ✅ | ✅ | ✅ |
+| read, write, bash, ... | ✅ | ✅ | ✅ |
 | subagent (depth=N) | ✅ (0) | ❌ | ✅ (N+1) |
 | review_approve | ❌ | ❌ | ✅ |
 

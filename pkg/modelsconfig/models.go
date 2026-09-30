@@ -145,13 +145,11 @@ func (h *Holder) GetDefaultAlias() string {
 	return h.config.Default
 }
 
-
 func (h *Holder) GetCurrentContext() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.config.Models[h.config.Default].Context
 }
-
 
 func (h *Holder) GetModelContext(alias string) int {
 	h.mu.RLock()
@@ -159,13 +157,11 @@ func (h *Holder) GetModelContext(alias string) int {
 	return h.config.Models[alias].Context
 }
 
-
 func (h *Holder) GetCurrentVision() bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.config.Models[h.config.Default].Vision
 }
-
 
 func (h *Holder) GetModelVision(alias string) bool {
 	h.mu.RLock()
@@ -173,13 +169,11 @@ func (h *Holder) GetModelVision(alias string) bool {
 	return h.config.Models[alias].Vision
 }
 
-
 func (h *Holder) GetCurrentSlotSave() bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.config.Models[h.config.Default].SlotSave
 }
-
 
 func (h *Holder) GetModelSlotSave(alias string) bool {
 	h.mu.RLock()

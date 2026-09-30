@@ -13,11 +13,13 @@ func (s *sqliteDB) AddMessage(peerID int64, msg MessageData) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO messages (peer_id, role, content, tool_call_id,
 		                      tool_name, tool_calls, timestamp,
-		                      summary, internal, compacted, tail_start_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                      summary, internal, compacted, tail_start_id,
+		                      usage_input, usage_output)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		peerID, msg.Role, msg.Content, msg.ToolCallID,
 		msg.ToolName, msg.ToolCalls, msg.Timestamp,
-		boolToInt(msg.Summary), boolToInt(msg.Internal), boolToInt(msg.Compacted), msg.TailStartID)
+		boolToInt(msg.Summary), boolToInt(msg.Internal), boolToInt(msg.Compacted), msg.TailStartID,
+		msg.UsageInput, msg.UsageOutput)
 	return err
 }
 
@@ -56,11 +58,13 @@ func (s *sqliteDB) insertPeerMessagesTx(ctx context.Context, tx *sql.Tx, peerID 
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO messages (peer_id, role, content, tool_call_id,
 			                      tool_name, tool_calls, timestamp,
-			                      summary, internal, compacted, tail_start_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			                      summary, internal, compacted, tail_start_id,
+			                      usage_input, usage_output)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			peerID, msg.Role, msg.Content, msg.ToolCallID,
 			msg.ToolName, msg.ToolCalls, msg.Timestamp,
-			boolToInt(msg.Summary), boolToInt(msg.Internal), boolToInt(msg.Compacted), msg.TailStartID); err != nil {
+			boolToInt(msg.Summary), boolToInt(msg.Internal), boolToInt(msg.Compacted), msg.TailStartID,
+			msg.UsageInput, msg.UsageOutput); err != nil {
 			return fmt.Errorf("insert message: %w", err)
 		}
 	}
@@ -74,7 +78,8 @@ func (s *sqliteDB) GetMessages(peerID int64) ([]MessageData, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, peer_id, role, content, tool_call_id,
 		       tool_name, tool_calls, timestamp,
-		       summary, internal, compacted, tail_start_id
+		       summary, internal, compacted, tail_start_id,
+		       usage_input, usage_output
 		FROM messages WHERE peer_id = ? ORDER BY id`, peerID)
 	if err != nil {
 		return nil, err
@@ -87,7 +92,8 @@ func (s *sqliteDB) GetMessages(peerID int64) ([]MessageData, error) {
 		var summary, internal, compacted int
 		if err := rows.Scan(&m.ID, &m.PeerID, &m.Role, &m.Content,
 			&m.ToolCallID, &m.ToolName, &m.ToolCalls, &m.Timestamp,
-			&summary, &internal, &compacted, &m.TailStartID); err != nil {
+			&summary, &internal, &compacted, &m.TailStartID,
+			&m.UsageInput, &m.UsageOutput); err != nil {
 			return nil, err
 		}
 		m.Summary = summary != 0

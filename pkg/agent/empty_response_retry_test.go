@@ -3,102 +3,166 @@ package agent
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	sess "github.com/Grigory-Rylov/ai-agent-reflection/session"
 )
 
-func TestProcessToolResults_EmptyResponseRetries(t *testing.T) {
-	var callCount atomic.Int32
+type requestCapture struct {
+	mu     sync.Mutex
+	bodies []string
+	count  atomic.Int32
+}
+
+func (c *requestCapture) record(body string) int32 {
+	n := c.count.Add(1)
+	c.mu.Lock()
+	c.bodies = append(c.bodies, body)
+	c.mu.Unlock()
+	return n
+}
+
+func (c *requestCapture) snapshot() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, len(c.bodies))
+	copy(out, c.bodies)
+	return out
+}
+
+func newEmptyRetryAgent(t *testing.T, respond func(n int32) string) (*agentImpl, *sess.Session, *requestCapture) {
+	t.Helper()
+	capture := &requestCapture{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n := callCount.Add(1)
+		body, _ := io.ReadAll(r.Body)
+		n := capture.record(string(body))
+
 		w.Header().Set("Content-Type", "text/event-stream")
-		if n <= 2 {
-			fmt.Fprint(w, `data: {"choices":[{"delta":{"content":""},"finish_reason":"stop"}]}`+"\n\n")
-			fmt.Fprint(w, "data: [DONE]\n\n")
-		} else {
-			fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"File read complete. The build.sh script rebuilds the agent binary."},"finish_reason":"stop"}]}`+"\n\n")
-			fmt.Fprint(w, "data: [DONE]\n\n")
-		}
+		fmt.Fprint(w, "data: "+respond(n)+"\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	config := DefaultConfig()
 	config.LlamaServerURL = server.URL
 	config.Model = "test-model"
 	config.MaxTokens = 4096
+	config.RetryDelay = 5 * time.Millisecond
 
 	a := NewAgent(config)
 
 	s := sess.NewSession(sess.DefaultConfig())
 	s.UpdateSystemPrompt("You are a helpful assistant")
 	s.AddUserMessage("read the file")
+	s.AddAssistantMessageWithToolCalls("", []sess.MsgToolCall{
+		{ID: "call_1", Type: "function", Function: sess.MsgToolCallFunc{Name: "read", Arguments: `{"path":"build.sh"}`}},
+	})
+	s.AddToolMessage("call_1", "read", "#!/bin/bash\necho hello")
 
-	toolCalls := []ToolCall{
-		{ID: "call_1", Type: "function", Function: ToolCallFunction{Name: "file_read", Arguments: []byte(`{"path":"build.sh"}`)}},
-	}
-	toolResults := []ToolCallResult{
-		{ToolCallID: "call_1", ToolName: "file_read", Content: "#!/bin/bash\necho hello"},
-	}
+	return a, s, capture
+}
 
-	result, err := a.processToolResults(context.Background(), []Message{{Role: "user", Content: "read the file"}}, "", toolCalls, toolResults, s, make(map[string]bool))
+func countSessionMessagesWithContent(history []sess.Message, content string) int {
+	count := 0
+	for _, m := range history {
+		if m.Content == content {
+			count++
+		}
+	}
+	return count
+}
+
+func lastAssistantSessionMessage(history []sess.Message) (sess.Message, bool) {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == sess.AssistantRole {
+			return history[i], true
+		}
+	}
+	return sess.Message{}, false
+}
+
+func TestRunTurn_EmptyResponseRetriesWithReminder(t *testing.T) {
+	finalText := "File read complete. The build.sh script rebuilds the agent binary."
+	a, s, capture := newEmptyRetryAgent(t, func(n int32) string {
+		if n <= 2 {
+			return `{"choices":[{"delta":{"content":""},"finish_reason":"stop"}]}`
+		}
+		return fmt.Sprintf(`{"choices":[{"delta":{"content":%q},"finish_reason":"stop"}]}`, finalText)
+	})
+
+	result, err := a.runTurn(context.Background(), s)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("runTurn: %v", err)
 	}
-	if result == "" {
-		t.Fatal("expected non-empty response after retries, got empty")
+	if result != finalText {
+		t.Errorf("expected final text %q, got %q", finalText, result)
 	}
 
-	total := callCount.Load()
-	if total < 3 {
-		t.Errorf("expected at least 3 LLM calls (2 empty + 1 content), got %d", total)
+	if got := capture.count.Load(); got != 3 {
+		t.Fatalf("expected 3 LLM calls (empty + 2 retries), got %d", got)
+	}
+
+	bodies := capture.snapshot()
+	if len(bodies) != 3 {
+		t.Fatalf("expected 3 captured request bodies, got %d", len(bodies))
+	}
+	if count := strings.Count(bodies[0], emptyResponseReminder); count != 0 {
+		t.Errorf("first request must not contain emptyResponseReminder, found %d", count)
+	}
+	for i := 1; i < len(bodies); i++ {
+		if count := strings.Count(bodies[i], emptyResponseReminder); count != 1 {
+			t.Errorf("retry request #%d must contain exactly 1 emptyResponseReminder in payload, found %d", i+1, count)
+		}
+	}
+
+	if n := countSessionMessagesWithContent(s.GetHistory(), emptyResponseReminder); n != 0 {
+		t.Errorf("emptyResponseReminder must stay out of session, found %d messages", n)
+	}
+
+	last, ok := lastAssistantSessionMessage(s.GetHistory())
+	if !ok || last.Content != finalText {
+		t.Errorf("expected final assistant message %q in session, got %+v", finalText, last)
 	}
 }
 
-func TestProcessToolResults_EmptyResponseExhaustsRetries(t *testing.T) {
-	var callCount atomic.Int32
+func TestRunTurn_EmptyResponseExhaustsRetries(t *testing.T) {
+	a, s, capture := newEmptyRetryAgent(t, func(n int32) string {
+		return `{"choices":[{"delta":{"content":""},"finish_reason":"stop"}]}`
+	})
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, `data: {"choices":[{"delta":{"content":""},"finish_reason":"stop"}]}`+"\n\n")
-		fmt.Fprint(w, "data: [DONE]\n\n")
-	}))
-	defer server.Close()
-
-	config := DefaultConfig()
-	config.LlamaServerURL = server.URL
-	config.Model = "test-model"
-	config.MaxTokens = 4096
-
-	a := NewAgent(config)
-
-	s := sess.NewSession(sess.DefaultConfig())
-	s.UpdateSystemPrompt("You are a helpful assistant")
-	s.AddUserMessage("read the file")
-
-	toolCalls := []ToolCall{
-		{ID: "call_1", Type: "function", Function: ToolCallFunction{Name: "file_read", Arguments: []byte(`{"path":"test"}`)}},
-	}
-	toolResults := []ToolCallResult{
-		{ToolCallID: "call_1", ToolName: "file_read", Content: "content"},
-	}
-
-	result, err := a.processToolResults(context.Background(), []Message{{Role: "user", Content: "read the file"}}, "", toolCalls, toolResults, s, make(map[string]bool))
+	before := len(s.GetHistory())
+	result, err := a.runTurn(context.Background(), s)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("runTurn: %v", err)
 	}
 	if result != "" {
 		t.Errorf("expected empty response after exhausting retries, got: %s", result)
 	}
 
-	total := callCount.Load()
-	if total < 3 {
-		t.Errorf("expected at least 3 LLM calls for retries, got %d", total)
+	if got := capture.count.Load(); got != int32(1+maxEmptyRetries) {
+		t.Errorf("expected %d LLM calls (initial + %d retries), got %d", 1+maxEmptyRetries, maxEmptyRetries, got)
+	}
+
+	bodies := capture.snapshot()
+	for i := 1; i < len(bodies); i++ {
+		if count := strings.Count(bodies[i], emptyResponseReminder); count != 1 {
+			t.Errorf("retry request #%d must contain exactly 1 emptyResponseReminder, found %d", i+1, count)
+		}
+	}
+
+	if n := countSessionMessagesWithContent(s.GetHistory(), emptyResponseReminder); n != 0 {
+		t.Errorf("emptyResponseReminder must stay out of session, found %d messages", n)
+	}
+	if n := len(s.GetHistory()); n != before {
+		t.Errorf("exhausted retries must not append messages to session, history grew from %d to %d", before, n)
 	}
 }
 

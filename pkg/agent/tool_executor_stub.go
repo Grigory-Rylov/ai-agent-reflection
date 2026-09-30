@@ -8,18 +8,15 @@ import (
 	"sync"
 )
 
-
 type StubToolExecutor struct {
 	LogPath string
 	mu      sync.Mutex
 }
 
-
 func NewStubToolExecutor(logPath string) *StubToolExecutor {
 	os.Remove(logPath)
 	return &StubToolExecutor{LogPath: logPath}
 }
-
 
 func (e *StubToolExecutor) ExecuteAll(ctx context.Context, toolCalls []ToolCall, peerID int64) FunctionCallResult {
 	results := make([]ToolCallResult, len(toolCalls))
@@ -56,7 +53,6 @@ func (e *StubToolExecutor) writeLog(format string, args ...interface{}) {
 	fmt.Fprintln(f, line)
 }
 
-
 func (e *StubToolExecutor) ReadLog() []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -72,7 +68,6 @@ func (e *StubToolExecutor) ReadLog() []string {
 	return strings.Split(content, "\n")
 }
 
-
 func (e *StubToolExecutor) Contains(substr string) bool {
 	for _, line := range e.ReadLog() {
 		if strings.Contains(line, substr) {
@@ -81,7 +76,6 @@ func (e *StubToolExecutor) Contains(substr string) bool {
 	}
 	return false
 }
-
 
 func (e *StubToolExecutor) Count(substr string) int {
 	count := 0

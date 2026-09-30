@@ -24,7 +24,6 @@ type LoopConfig struct {
 	EnableLoopDetection            bool
 	LoopThreshold                  float64
 	EnableTools                    bool
-	ToolTimeout                    time.Duration
 	ThinkingPeerID                 int64
 	EnableThinking                 bool
 	EnableLogging                  bool
@@ -32,10 +31,9 @@ type LoopConfig struct {
 	Debug                          bool
 	EnableCompression              bool
 	SummarizeReasoning             bool
-	TailTurns                      int
+	CompactionReserveTokens        int
+	CompactionKeepRecentTokens     int
 	SpeculativeCompactRatio        float64
-	PreserveRecentTokens           *int
-	CompactionReserved             *int
 	ModelLimitInput                int
 	MaxToolCallDepth               int
 	EnablePruning                  bool
@@ -53,15 +51,12 @@ func DefaultLoopConfig() LoopConfig {
 		EnableLoopDetection:            true,
 		LoopThreshold:                  0.85,
 		EnableTools:                    true,
-		ToolTimeout:                    30 * time.Second,
 		ThinkingPeerID:                 0,
 		EnableThinking:                 false,
 		EnableLogging:                  true,
 		EnableCompression:              true,
-		TailTurns:                      2,
+		CompactionKeepRecentTokens:     20000,
 		SpeculativeCompactRatio:        0.75,
-		PreserveRecentTokens:           nil,
-		CompactionReserved:             nil,
 		EnablePruning:                  true,
 		ToolOutputMaxLines:             tools.DefaultToolOutputMaxLines,
 		ToolOutputMaxBytes:             tools.DefaultToolOutputMaxBytes,

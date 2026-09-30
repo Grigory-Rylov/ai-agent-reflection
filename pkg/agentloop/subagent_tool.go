@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agent"
 	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/agentpolicy"
@@ -20,30 +22,34 @@ import (
 )
 
 type SubAgentTool struct {
-	AgentConfig     agent.Config
-	ContextResolver *ModelContextResolver
-	MainTools       *tools.Registry
-	SystemPromptDir string
-	AgentManager    *agentpolicy.AgentManager
-	CurrentDepth    int
-	MaxDepth        int
-	PeerID          int64
-	ThinkingPeerID  int64
-	VKClient        VKClient
-	Log             Logger
-	Debug           bool
-	ModelHolder     *modelsconfig.Holder
-	SetActiveAgent  func(name string)
-	Store           store.Store 
-	ParentSessionID  string      
-	ParentAgent      agent.Agent 
-	AgentSessionID   string      
-	Chain            []string    
-	ParentAgentName  string      
-	AllowedSubagents []string    
+	AgentConfig      agent.Config
+	ContextResolver  *ModelContextResolver
+	MainTools        *tools.Registry
+	SystemPromptDir  string
+	AgentManager     *agentpolicy.AgentManager
+	CurrentDepth     int
+	MaxDepth         int
+	PeerID           int64
+	ThinkingPeerID   int64
+	VKClient         VKClient
+	Log              Logger
+	Debug            bool
+	ModelHolder      *modelsconfig.Holder
+	SetActiveAgent   func(name string)
+	Store            store.Store
+	ParentSessionID  string
+	ParentAgent      agent.Agent
+	AgentSessionID   string
+	Chain            []string
+	ParentAgentName  string
+	AllowedSubagents []string
 	SlotManager      *SlotManager
 	Slots            *SlotClient
 	BGOwner          string
+	MaxParallel      int
+	NoSlotSave       bool
+	spawnNonce       string
+	Blocking         bool
 }
 
 func (t *SubAgentTool) Name() string {
@@ -114,46 +120,44 @@ func (t *SubAgentTool) Schema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"subagent_type": tools.CreateStringParameter("subagent_type", nameDesc, true),
-			"name": tools.CreateStringParameter("name",
-				"The type of specialized agent to use (same as subagent_type).", false),
-			"prompt": tools.CreateStringParameter("prompt",
-				"The task for the agent to perform. Include full context.", true),
-			"task": tools.CreateStringParameter("task",
-				"The task description (same as prompt).", false),
-			"description": tools.CreateStringParameter("description",
-				"A short (3-5 words) description of the task.", false),
+			"subagent_type": tools.CreateStringParameter("subagent_type", nameDesc, false),
+			"name":          tools.CreateStringParameter("name", "Alias for subagent_type.", false),
+			"prompt":        tools.CreateStringParameter("prompt", "Task for a single agent. Include full context.", false),
+			"task":          tools.CreateStringParameter("task", "Alias for prompt.", false),
+			"description":   tools.CreateStringParameter("description", "Short (3-5 words) description of the task.", false),
+			"context":       tools.CreateStringParameter("context", "Shared context prepended to every task in a batch call.", false),
+			"tasks": map[string]interface{}{
+				"type":        "array",
+				"description": "Run multiple subagents in parallel; results are aggregated. Each item: {subagent_type, prompt}.",
+				"items": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"subagent_type": tools.CreateStringParameter("subagent_type", nameDesc, false),
+						"prompt":        tools.CreateStringParameter("prompt", "Task for this agent.", true),
+					},
+					"required": []string{"subagent_type", "prompt"},
+				},
+			},
 		},
-		"required": []string{"subagent_type", "prompt"},
 	}
 }
 
 func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (tools.ToolResult, error) {
-	name := inputs["subagent_type"]
-	if name == "" {
-		name = inputs["name"]
+	asyncMode := !t.Blocking
+	if v, ok := inputs["async"]; ok && strings.TrimSpace(v) != "" {
+		asyncMode = truthy(v)
 	}
-	if name == "" {
-		name = inputs["agent"]
+	if v, ok := inputs["blocking"]; ok && strings.TrimSpace(v) != "" {
+		asyncMode = !truthy(v)
 	}
-	if name == "" {
-		name = inputs["type"]
+	if raw := strings.TrimSpace(inputs["tasks"]); raw != "" {
+		if !asyncMode {
+			return t.runBatch(ctx, inputs["context"], raw), nil
+		}
+		return t.startAsyncBatch(ctx, inputs["context"], raw), nil
 	}
-
-	task := inputs["prompt"]
-	if task == "" {
-		task = inputs["task"]
-	}
-	if task == "" {
-		task = inputs["description"]
-	}
-	if task == "" {
-		task = inputs["instruction"]
-	}
-	if task == "" {
-		task = inputs["title"]
-	}
-
+	name := firstNonEmpty(inputs["subagent_type"], inputs["name"], inputs["agent"], inputs["type"])
+	task := firstNonEmpty(inputs["prompt"], inputs["task"], inputs["description"], inputs["instruction"], inputs["title"])
 	if name == "" {
 		return tools.ToolResult{Success: false,
 			Error: fmt.Sprintf("name parameter is required. Available params: subagent_type=%q, name=%q, agent=%q",
@@ -164,75 +168,131 @@ func (t *SubAgentTool) Execute(ctx context.Context, inputs map[string]string) (t
 			Error: fmt.Sprintf("task parameter is required. Available params: prompt=%q, task=%q, description=%q",
 				inputs["prompt"], inputs["task"], inputs["description"])}, nil
 	}
+	if looksLikePlaceholderTask(task) {
+		return tools.ToolResult{Success: false,
+			Error: "task parameter looks like a placeholder, not a real instruction for the subagent"}, nil
+	}
+	if !asyncMode {
+		return t.runSpawn(ctx, name, task), nil
+	}
+	id := t.startAsyncJob(ctx, batchTask{SubagentType: name, Prompt: task}, inputs["context"])
+	if id == "" {
+		return tools.ToolResult{Success: false,
+			Error: fmt.Sprintf("background subagent limit reached (%d running). Wait for a running subagent to finish or cancel one.", maxRunningJobs)}, nil
+	}
+	return tools.ToolResult{Success: true, Data: map[string]interface{}{
+		"status": "started",
+		"ids":    []string{id},
+		"note":   "subagent launched in the background; its result resumes your turn when it finishes, or use the subagents tool with action=wait and this id",
+	}}, nil
+}
 
-	name, err := t.resolveAgentName(name)
+func (t *SubAgentTool) startAsyncBatch(ctx context.Context, globalContext, rawTasks string) tools.ToolResult {
+	var tasks []batchTask
+	if err := json.Unmarshal([]byte(rawTasks), &tasks); err != nil {
+		return tools.ToolResult{Success: false, Error: fmt.Sprintf("failed to parse tasks array: %v", err)}
+	}
+	if len(tasks) == 0 {
+		return tools.ToolResult{Success: false, Error: "tasks array is empty"}
+	}
+	if bad := firstBadTask(tasks); bad != "" {
+		return tools.ToolResult{Success: false, Error: bad}
+	}
+	ids := make([]string, 0, len(tasks))
+	skipped := 0
+	for _, item := range tasks {
+		id := t.startAsyncJob(ctx, item, globalContext)
+		if id == "" {
+			skipped++
+			continue
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return tools.ToolResult{Success: false,
+			Error: fmt.Sprintf("background subagent limit reached (%d running). Wait for a running subagent to finish or cancel one.", maxRunningJobs)}
+	}
+	data := map[string]interface{}{"status": "started", "count": len(ids), "ids": ids}
+	if skipped > 0 {
+		data["skipped"] = skipped
+		data["note"] = fmt.Sprintf("%d task(s) not started: background subagent limit reached (%d running). Spawn the rest once capacity frees.", skipped, maxRunningJobs)
+	} else {
+		data["note"] = "subagents launched in the background; results resume your turn as they finish, or use the subagents tool with action=wait to collect them"
+	}
+	return tools.ToolResult{Success: true, Data: data}
+}
+
+func truthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "true", "1", "yes":
+		return true
+	}
+	return false
+}
+
+func (t *SubAgentTool) runSpawn(ctx context.Context, rawName, task string) tools.ToolResult {
+	if looksLikePlaceholderTask(task) {
+		return tools.ToolResult{Success: false,
+			Error: "task parameter looks like a placeholder, not a real instruction for the subagent"}
+	}
+	name, err := t.resolveAgentName(rawName)
 	if err != nil {
-		return tools.ToolResult{Success: false, Error: err.Error()}, nil
+		return tools.ToolResult{Success: false, Error: err.Error()}
 	}
-
 	if t.CurrentDepth >= t.MaxDepth {
-		return tools.ToolResult{Success: false, Error: fmt.Sprintf("max recursion depth (%d) reached", t.MaxDepth)}, nil
+		return tools.ToolResult{Success: false, Error: fmt.Sprintf("max recursion depth (%d) reached", t.MaxDepth)}
 	}
-
 	systemPrompt, err := t.loadSystemPrompt(name)
 	if err != nil {
-		return tools.ToolResult{Success: false, Error: err.Error()}, nil
+		return tools.ToolResult{Success: false, Error: err.Error()}
 	}
-
 	a, err := t.createAgent(name, systemPrompt, task)
 	if err != nil {
-		return tools.ToolResult{Success: false, Error: fmt.Sprintf("failed to create sub-agent %q: %v", name, err)}, nil
+		return tools.ToolResult{Success: false, Error: fmt.Sprintf("failed to create sub-agent %q: %v", name, err)}
 	}
-
-	
-	
 	if t.Store != nil {
 		t.saveParentHistory()
 	}
-
 	t.applyAgentPermissions(name, a)
-
-	if t.isReviewAgent(name) {
-		t.registerReadOnlyTools(a)
-		t.registerReviewTool(name, a)
-	} else {
-		t.registerMainTools(a)
-		t.registerSubAgentTool(name, a)
-		t.registerReviewTool(name, a)
-	}
-
+	t.registerChildTools(name, a)
 	a.SetThinkingCallback(t.makeThinkingCallback(name))
-
 	if t.SetActiveAgent != nil {
 		t.SetActiveAgent(name)
 	}
-
 	defer func() {
 		if r := recover(); r != nil {
 			t.cancelAgentSession()
 			panic(r)
 		}
 	}()
-
-	response, err := a.ProcessMessage(ctx, task, t.PeerID)
+	spawnCtx, cancelSpawn := context.WithCancel(ctx)
+	defer cancelSpawn()
+	spawnID := subagentRegistry.register(name, t.PeerID, t.CurrentDepth, cancelSpawn)
+	defer subagentRegistry.finish(spawnID)
+	response, err := a.ProcessMessage(spawnCtx, task, t.PeerID)
 	if err != nil {
-		
-		
 		if t.Store != nil {
 			t.saveSessionHistory(a, t.AgentSessionID, task)
 		}
 		t.cancelAgentSession()
-		return tools.ToolResult{Success: false, Error: fmt.Sprintf("sub-agent %q failed: %v", name, err)}, nil
+		return tools.ToolResult{Success: false, Error: fmt.Sprintf("sub-agent %q failed: %v", name, err)}
 	}
-
 	if t.Store != nil {
 		t.saveSessionHistory(a, t.AgentSessionID, task)
 	}
-	
-	
 	t.completeAgentSession()
+	return t.buildResult(name, response)
+}
 
-	return t.buildResult(name, response), nil
+func (t *SubAgentTool) registerChildTools(name string, a agent.Agent) {
+	if t.isReviewAgent(name) {
+		t.registerReadOnlyTools(a)
+		t.registerReviewTool(name, a)
+		return
+	}
+	t.registerMainTools(a)
+	t.registerSubAgentTool(name, a)
+	t.registerReviewTool(name, a)
 }
 
 func (t *SubAgentTool) buildResult(name, response string) tools.ToolResult {
@@ -371,30 +431,19 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 	cfg.EnableLoopAlert = false
 	cfg.EnableCompression = true
 	cfg.AgentName = name
-	cfg.SlotID = -1 
+	cfg.SlotID = -1
 	cfg.SlotSave = false
 
-	
-	
-	
-	
-	
-	
-	
 	t.AgentSessionID = t.generateUUID()
 	sessionID := t.AgentSessionID
 	cfg.SessionConfig.SessionID = sessionID
 	cfg.BGOwner = sessionID
+	cfg.SubagentWatch = jobWatcher{}
 	if t.BGOwner != "" {
 		cfg.BGParentOwner = t.BGOwner
 	}
 
-	
-	
-	
-	
-	
-	if t.ModelHolder != nil && t.ModelHolder.GetCurrentSlotSave() {
+	if t.ModelHolder != nil && t.ModelHolder.GetCurrentSlotSave() && !t.NoSlotSave {
 		cfg.SlotSave = true
 		if slotID := AssignSessionSlot(t.SlotManager, t.Slots, t.ModelHolder, sessionID, t.Log); slotID >= 0 {
 			cfg.SlotID = slotID
@@ -408,15 +457,13 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 	var a agent.Agent = agent.NewAgent(cfg)
 	a.GetSession(t.PeerID).UpdateSystemPrompt(systemPrompt)
 
-	
 	if t.Store != nil {
-		
+
 		chain := make([]string, len(t.Chain))
 		copy(chain, t.Chain)
 		chain = append(chain, sessionID)
 		t.Chain = chain
 
-		
 		t.Store.SaveAgentSession(&store.AgentSessionData{
 			ID:           sessionID,
 			ParentID:     t.ParentSessionID,
@@ -427,7 +474,6 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 			Status:       "active",
 		})
 
-		
 		t.Store.SaveAgentChain(t.PeerID, chain)
 	}
 
@@ -441,7 +487,6 @@ func (t *SubAgentTool) createAgent(name, systemPrompt, task string) (agent.Agent
 
 	return a, nil
 }
-
 
 func (t *SubAgentTool) persistChildCheckpoint(a agent.Agent, lastToolCall string) {
 	data, err := json.Marshal(a.GetSession(t.PeerID).GetHistory())
@@ -491,35 +536,81 @@ func (t *SubAgentTool) isReviewAgent(name string) bool {
 	return false
 }
 
+var placeholderTaskWords = map[string]bool{
+	"placeholder": true,
+	"todo":        true,
+	"tbd":         true,
+	"fixme":       true,
+}
+
+func looksLikePlaceholderTask(task string) bool {
+	trimmed := strings.TrimSpace(task)
+	if trimmed == "" {
+		return true
+	}
+	if utf8.RuneCountInString(trimmed) <= 1 {
+		return true
+	}
+	if placeholderTaskWords[strings.ToLower(trimmed)] {
+		return true
+	}
+	for _, r := range trimmed {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func (t *SubAgentTool) TargetsReviewAgent(args map[string]string) bool {
+	name := args["subagent_type"]
+	if name == "" {
+		name = args["name"]
+	}
+	if name == "" {
+		name = args["agent"]
+	}
+	if name == "" {
+		name = args["type"]
+	}
+	if name == "" {
+		return false
+	}
+	if strings.EqualFold(name, "reviewer") {
+		return true
+	}
+	return t.isReviewAgent(name)
+}
 func (t *SubAgentTool) registerSubAgentTool(name string, a agent.Agent) {
 	if t.isLeafAgent(name) {
 		return
 	}
 	subReg := tools.NewRegistry()
 	subReg.Register(&SubAgentTool{
-		AgentConfig:     t.AgentConfig,
-		ContextResolver: t.ContextResolver,
-		MainTools:       t.MainTools,
-		SystemPromptDir: t.SystemPromptDir,
-		AgentManager:    t.AgentManager,
-		CurrentDepth:    t.CurrentDepth + 1,
-		MaxDepth:        t.MaxDepth,
-		PeerID:          t.PeerID,
-		ThinkingPeerID:  t.ThinkingPeerID,
-		VKClient:        t.VKClient,
-		Log:             t.Log,
-		Debug:           t.Debug,
-		ModelHolder:     t.ModelHolder,
-		SetActiveAgent:  t.SetActiveAgent,
-		Store:           t.Store,
-		ParentSessionID: t.AgentSessionID,
-		ParentAgent:     a,
-		Chain:           t.Chain,
-		ParentAgentName: name,
+		AgentConfig:      t.AgentConfig,
+		ContextResolver:  t.ContextResolver,
+		MainTools:        t.MainTools,
+		SystemPromptDir:  t.SystemPromptDir,
+		AgentManager:     t.AgentManager,
+		CurrentDepth:     t.CurrentDepth + 1,
+		MaxDepth:         t.MaxDepth,
+		Blocking:         t.Blocking,
+		PeerID:           t.PeerID,
+		ThinkingPeerID:   t.ThinkingPeerID,
+		VKClient:         t.VKClient,
+		Log:              t.Log,
+		Debug:            t.Debug,
+		ModelHolder:      t.ModelHolder,
+		SetActiveAgent:   t.SetActiveAgent,
+		Store:            t.Store,
+		ParentSessionID:  t.AgentSessionID,
+		ParentAgent:      a,
+		Chain:            t.Chain,
+		ParentAgentName:  name,
 		AllowedSubagents: t.AgentManager.SubagentTypesFor(name),
-		SlotManager:     t.SlotManager,
-		Slots:           t.Slots,
-		BGOwner:         t.AgentSessionID,
+		SlotManager:      t.SlotManager,
+		Slots:            t.Slots,
+		BGOwner:          t.AgentSessionID,
 	})
 	if inserter, ok := a.(toolInserter); ok {
 		inserter.RegisterTools(subReg)
@@ -595,7 +686,6 @@ func (t *SubAgentTool) makeThinkingCallback(agentName string) func(peerID int64,
 	}
 }
 
-
 func newSessionUUID(parts ...string) string {
 	h := fnv.New128a()
 	for _, p := range parts {
@@ -607,11 +697,9 @@ func newSessionUUID(parts ...string) string {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", sum[:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
-
 func (t *SubAgentTool) generateUUID() string {
-	return newSessionUUID(t.ParentSessionID, strconv.Itoa(t.CurrentDepth), strconv.FormatInt(t.PeerID, 10))
+	return newSessionUUID(t.ParentSessionID, strconv.Itoa(t.CurrentDepth), strconv.FormatInt(t.PeerID, 10), t.spawnNonce)
 }
-
 
 func (t *SubAgentTool) saveSessionHistory(a agent.Agent, sessionID, task string) {
 	if t.Store == nil || sessionID == "" || a == nil {
@@ -630,7 +718,6 @@ func (t *SubAgentTool) saveSessionHistory(a agent.Agent, sessionID, task string)
 		}
 	}
 }
-
 
 func (t *SubAgentTool) saveParentHistory() {
 	if t.Store == nil || t.ParentAgent == nil || t.ParentSessionID == "" {
@@ -654,7 +741,6 @@ func (t *SubAgentTool) saveParentHistory() {
 	}
 }
 
-
 func (t *SubAgentTool) completeAgentSession() {
 	t.cleanupAgentSession()
 	if t.Store == nil || t.AgentSessionID == "" {
@@ -664,7 +750,6 @@ func (t *SubAgentTool) completeAgentSession() {
 	t.popChain()
 }
 
-
 func (t *SubAgentTool) cancelAgentSession() {
 	t.cleanupAgentSession()
 	if t.Store == nil || t.AgentSessionID == "" {
@@ -673,7 +758,6 @@ func (t *SubAgentTool) cancelAgentSession() {
 	t.Store.DeleteAgentSession(t.AgentSessionID)
 	t.popChain()
 }
-
 
 func (t *SubAgentTool) cleanupAgentSession() {
 	ReleaseSessionSlot(t.SlotManager, t.Slots, t.ModelHolder, t.AgentSessionID, t.Log)
@@ -686,7 +770,6 @@ func (t *SubAgentTool) cleanupAgentSession() {
 	}
 }
 
-
 func (t *SubAgentTool) popChain() {
 	parent := t.Chain
 	if len(parent) > 0 {
@@ -694,7 +777,6 @@ func (t *SubAgentTool) popChain() {
 	}
 	t.Store.SaveAgentChain(t.PeerID, parent)
 }
-
 
 func mainToolsWithoutTask(reg *tools.Registry) *tools.Registry {
 	if reg == nil {
@@ -711,7 +793,6 @@ func mainToolsWithoutTask(reg *tools.Registry) *tools.Registry {
 	}
 	return filtered
 }
-
 
 func (t *SubAgentTool) checkAllowedSubagent(name string) error {
 	if len(t.AllowedSubagents) == 0 {

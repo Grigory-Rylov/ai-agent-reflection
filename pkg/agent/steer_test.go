@@ -174,4 +174,3 @@ func TestSteer_DeliveredDuringRunningToolLoop(t *testing.T) {
 		t.Errorf("steer was NOT promoted into the request after the tool result:\n%s", bodies[1])
 	}
 }
-

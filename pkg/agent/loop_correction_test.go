@@ -86,9 +86,9 @@ func TestDuplicateSingleToolCallDoesNotTriggerFalseLoop(t *testing.T) {
 	a, executor, thinking, llmCalls := newDuplicateScenarioAgent(t, 99932, func(w http.ResponseWriter, num int) {
 		switch num {
 		case 1:
-			writeNativeCallEvent(w, "call_a", "shell_execute", echoArgs)
+			writeNativeCallEvent(w, "call_a", "bash", echoArgs)
 		case 2:
-			writeNativeCallEvent(w, "call_b", "shell_execute", echoArgs)
+			writeNativeCallEvent(w, "call_b", "bash", echoArgs)
 		default:
 			writeStopEvent(w, "Done.")
 		}
@@ -105,8 +105,8 @@ func TestDuplicateSingleToolCallDoesNotTriggerFalseLoop(t *testing.T) {
 	if *llmCalls < 3 {
 		t.Errorf("expected turn to continue after duplicate (>=3 LLM calls incl. nudge recovery), got %d", *llmCalls)
 	}
-	if got := executor.Count("[TOOL] Call: shell_execute"); got != 1 {
-		t.Errorf("expected shell_execute executed exactly once, got %d", got)
+	if got := executor.Count("[TOOL] Call: bash"); got != 1 {
+		t.Errorf("expected bash executed exactly once, got %d", got)
 	}
 	if got := countSubstring(*thinking, "[LOOP]"); got != 0 {
 		t.Errorf("expected no false [LOOP] alert for a single duplicate response, got %d: %v", got, *thinking)
@@ -119,8 +119,9 @@ func TestDuplicateSingleToolCallDoesNotTriggerFalseLoop(t *testing.T) {
 func TestPersistentDuplicateLoopAlertsOnceAndStaysBounded(t *testing.T) {
 	echoArgs := "\"{\\\"command\\\": \\\"echo hello\\\"}\""
 	a, executor, thinking, llmCalls := newDuplicateScenarioAgent(t, 99940, func(w http.ResponseWriter, num int) {
-		writeNativeCallEvent(w, "call_a", "shell_execute", echoArgs)
+		writeNativeCallEvent(w, "call_a", "bash", echoArgs)
 	})
+	a.config.MaxToolCallDepth = 4
 
 	ctx := context.Background()
 	_, err := a.ProcessMessage(ctx, "Test", 99940)
@@ -128,14 +129,14 @@ func TestPersistentDuplicateLoopAlertsOnceAndStaysBounded(t *testing.T) {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
 
-	maxCalls := 1 + 1 + maxDuplicateNudges
+	maxCalls := a.config.MaxToolCallDepth
 	t.Logf("llmCalls=%d thinking=%v", *llmCalls, *thinking)
 
 	if *llmCalls > maxCalls {
 		t.Errorf("expected bounded LLM calls (<= %d), got %d", maxCalls, *llmCalls)
 	}
-	if got := executor.Count("[TOOL] Call: shell_execute"); got != 1 {
-		t.Errorf("expected shell_execute executed exactly once, got %d", got)
+	if got := executor.Count("[TOOL] Call: bash"); got != 1 {
+		t.Errorf("expected bash executed exactly once, got %d", got)
 	}
 	if got := countSubstring(*thinking, "getting stuck in a loop"); got != 1 {
 		t.Errorf("expected exactly 1 genuine [LOOP] alert for persistent repetition, got %d: %v", got, *thinking)
@@ -148,10 +149,10 @@ func TestMixedDuplicateAndNewToolCallExecutesNewOne(t *testing.T) {
 	a, executor, thinking, llmCalls := newDuplicateScenarioAgent(t, 99941, func(w http.ResponseWriter, num int) {
 		switch num {
 		case 1:
-			writeNativeCallEvent(w, "call_a", "shell_execute", echoArgs)
+			writeNativeCallEvent(w, "call_a", "bash", echoArgs)
 		case 2:
-			w.Write([]byte("data: {\"choices\": [{\"delta\": {\"tool_calls\": [{\"index\": 0, \"id\": \"call_b\", \"type\": \"function\", \"function\": {\"name\": \"shell_execute\", \"arguments\": " + echoArgs + "}}]}, \"finish_reason\": null}]}\n\n"))
-			w.Write([]byte("data: {\"choices\": [{\"delta\": {\"tool_calls\": [{\"index\": 1, \"id\": \"call_c\", \"type\": \"function\", \"function\": {\"name\": \"shell_execute\", \"arguments\": " + pwdArgs + "}}]}, \"finish_reason\": null}]}\n\n"))
+			w.Write([]byte("data: {\"choices\": [{\"delta\": {\"tool_calls\": [{\"index\": 0, \"id\": \"call_b\", \"type\": \"function\", \"function\": {\"name\": \"bash\", \"arguments\": " + echoArgs + "}}]}, \"finish_reason\": null}]}\n\n"))
+			w.Write([]byte("data: {\"choices\": [{\"delta\": {\"tool_calls\": [{\"index\": 1, \"id\": \"call_c\", \"type\": \"function\", \"function\": {\"name\": \"bash\", \"arguments\": " + pwdArgs + "}}]}, \"finish_reason\": null}]}\n\n"))
 			w.Write([]byte("data: {\"choices\": [{\"delta\": {}, \"finish_reason\": \"tool_calls\"}]}\n\n"))
 		default:
 			writeStopEvent(w, "Mixed done.")
@@ -166,7 +167,7 @@ func TestMixedDuplicateAndNewToolCallExecutesNewOne(t *testing.T) {
 
 	t.Logf("llmCalls=%d response=%q log=%v", *llmCalls, response, executor.ReadLog())
 
-	if got := executor.Count("[TOOL] Call: shell_execute"); got != 2 {
+	if got := executor.Count("[TOOL] Call: bash"); got != 2 {
 		t.Errorf("expected 2 executions (echo once + pwd once), got %d", got)
 	}
 	if !executor.Contains("\"pwd\"") {

@@ -81,13 +81,13 @@ type captureAgent struct {
 func (c *captureAgent) ProcessMessage(ctx context.Context, message string, peerID int64) (string, error) {
 	return "", nil
 }
-func (c *captureAgent) ResetSession(peerID int64)                       {}
-func (c *captureAgent) GetSession(peerID int64) *session.Session        { return nil }
-func (c *captureAgent) SetThinkingCallback(cb agent.ThinkingCallback)   {}
-func (c *captureAgent) SetTools(toolSchemas []map[string]interface{})   {}
-func (c *captureAgent) SetToolExecutor(executor agent.ToolExecutor)     {}
-func (c *captureAgent) RegisterTools(reg *tools.Registry)               { c.reg = reg }
-func (c *captureAgent) ReplaceTools(reg *tools.Registry)                { c.reg = reg }
+func (c *captureAgent) ResetSession(peerID int64)                     {}
+func (c *captureAgent) GetSession(peerID int64) *session.Session      { return nil }
+func (c *captureAgent) SetThinkingCallback(cb agent.ThinkingCallback) {}
+func (c *captureAgent) SetTools(toolSchemas []map[string]interface{}) {}
+func (c *captureAgent) SetToolExecutor(executor agent.ToolExecutor)   {}
+func (c *captureAgent) RegisterTools(reg *tools.Registry)             { c.reg = reg }
+func (c *captureAgent) ReplaceTools(reg *tools.Registry)              { c.reg = reg }
 
 func TestOrchestratorReadOnlyToolsIncludeBackground(t *testing.T) {
 	o := NewOrchestrator(OrchestratorConfig{})
@@ -96,7 +96,7 @@ func TestOrchestratorReadOnlyToolsIncludeBackground(t *testing.T) {
 	if cap.reg == nil {
 		t.Fatal("addReadOnlyTools did not replace tools")
 	}
-	for _, name := range []string{"shell_execute", "shell_background", "shell_check"} {
+	for _, name := range []string{"bash", "shell_background", "shell_check"} {
 		if _, ok := cap.reg.Get(name); !ok {
 			t.Errorf("read-only registry missing tool %q", name)
 		}

@@ -24,8 +24,7 @@ type SessionData struct {
 	IsLooped   bool      `json:"is_looped"`
 	LastLooped string    `json:"last_looped,omitempty"`
 	Pinned     []string  `json:"pinned,omitempty"`
-	
-	
+
 	ResumePrompt string `json:"resume_prompt,omitempty"`
 }
 
@@ -38,12 +37,13 @@ type MessageData struct {
 	ToolName   string `json:"tool_name,omitempty"`
 	ToolCalls  string `json:"tool_calls,omitempty"`
 	Timestamp  string `json:"timestamp,omitempty"`
-	
-	
+
 	Summary     bool `json:"summary,omitempty"`
 	Internal    bool `json:"internal,omitempty"`
 	Compacted   bool `json:"compacted,omitempty"`
 	TailStartID int  `json:"tail_start_id,omitempty"`
+	UsageInput  int  `json:"usage_input,omitempty"`
+	UsageOutput int  `json:"usage_output,omitempty"`
 }
 
 type TodoItem struct {
@@ -74,12 +74,12 @@ type AgentSessionData struct {
 	Status       string    `json:"status"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
-	Messages     string    `json:"messages,omitempty"` 
+	Messages     string    `json:"messages,omitempty"`
 }
 
 type AgentChainData struct {
 	PeerID    int64     `json:"peer_id"`
-	Chain     []string  `json:"chain"` 
+	Chain     []string  `json:"chain"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -104,7 +104,6 @@ type Store interface {
 	SavePermission(sessionID, toolName, resource, decision string) error
 	ClearPermissions(sessionID string) error
 
-	
 	SaveAgentSession(s *AgentSessionData) error
 	GetAgentSession(id string) (*AgentSessionData, error)
 	GetActiveAgentSessions(peerID int64) ([]AgentSessionData, error)
@@ -117,9 +116,7 @@ type Store interface {
 	SaveAgentChain(peerID int64, chain []string) error
 	ClearAgentChain(peerID int64) error
 	GetAllActiveChains() ([]AgentChainData, error)
-	
-	
-	
+
 	ClearPeerData(peerID int64) error
 }
 

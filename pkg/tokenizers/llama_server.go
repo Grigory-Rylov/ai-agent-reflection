@@ -12,7 +12,6 @@ import (
 	"time"
 )
 
-
 type LlamaServerTokenizer struct {
 	serverURL      string
 	model          string
@@ -20,9 +19,8 @@ type LlamaServerTokenizer struct {
 	client         *http.Client
 	debug          bool
 	infoClient     *ServerInfoClient
-	actualCtxLimit int 
+	actualCtxLimit int
 }
-
 
 func NewLlamaServerTokenizer(serverURL, model string, maxTokens int) *LlamaServerTokenizer {
 	infoClient := NewServerInfoClient(serverURL)
@@ -32,19 +30,17 @@ func NewLlamaServerTokenizer(serverURL, model string, maxTokens int) *LlamaServe
 		maxTokens:      maxTokens,
 		debug:          false,
 		infoClient:     infoClient,
-		actualCtxLimit: -1, 
+		actualCtxLimit: -1,
 		client: &http.Client{
-			Timeout: 60 * time.Second, 
+			Timeout: 60 * time.Second,
 		},
 	}
 }
-
 
 func (t *LlamaServerTokenizer) SetDebug(debug bool) {
 	t.debug = debug
 	t.infoClient.SetDebug(debug)
 }
-
 
 func (t *LlamaServerTokenizer) GetActualContextLimit() int {
 	if t.actualCtxLimit > 0 {
@@ -53,7 +49,6 @@ func (t *LlamaServerTokenizer) GetActualContextLimit() int {
 	t.actualCtxLimit = t.infoClient.GetModelContextLength(t.model)
 	return t.actualCtxLimit
 }
-
 
 func (t *LlamaServerTokenizer) InitializeContextLimit() error {
 	ctxLen := t.infoClient.GetModelContextLength(t.model)
@@ -66,7 +61,6 @@ func (t *LlamaServerTokenizer) InitializeContextLimit() error {
 	}
 	return fmt.Errorf("failed to get actual context limit from server")
 }
-
 
 func (t *LlamaServerTokenizer) ResolveMaxTokens() int {
 	if actual := t.GetActualContextLimit(); actual > 0 {
@@ -81,7 +75,6 @@ func (t *LlamaServerTokenizer) logf(format string, args ...interface{}) {
 	}
 }
 
-
 func (t *LlamaServerTokenizer) CountTokens(text string) (int, error) {
 	if text == "" {
 		return 0, nil
@@ -91,13 +84,11 @@ func (t *LlamaServerTokenizer) CountTokens(text string) (int, error) {
 	return t.CountMessagesTokens(messages)
 }
 
-
 func (t *LlamaServerTokenizer) CountMessagesTokens(messages []Message) (int, error) {
 	if len(messages) == 0 {
 		return 0, nil
 	}
 
-	
 	var sb strings.Builder
 	for _, msg := range messages {
 		sb.WriteString(msg.Role)
@@ -152,16 +143,13 @@ func (t *LlamaServerTokenizer) CountMessagesTokens(messages []Message) (int, err
 	return len(apiResponse.Tokens), nil
 }
 
-
 func (t *LlamaServerTokenizer) Encode(text string) ([]int, error) {
 	return nil, fmt.Errorf("encode not supported by llama-server tokenizer")
 }
 
-
 func (t *LlamaServerTokenizer) Decode(tokens []int) (string, error) {
 	return "", fmt.Errorf("decode not supported by llama-server tokenizer")
 }
-
 
 func (t *LlamaServerTokenizer) MaxContextLength() int {
 	if actual := t.GetActualContextLimit(); actual > 0 {
@@ -169,7 +157,6 @@ func (t *LlamaServerTokenizer) MaxContextLength() int {
 	}
 	return t.maxTokens
 }
-
 
 func (t *LlamaServerTokenizer) Name() string {
 	return "llama-server-" + t.model
