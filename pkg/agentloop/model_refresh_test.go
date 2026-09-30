@@ -121,7 +121,7 @@ func TestSyncCurrentModel_ResolvingFailsUsesFallback(t *testing.T) {
 	config.ModelHolder = writeModelsHolder(t, &modelsconfig.ModelsConfig{
 		Default: "test",
 		Models: map[string]modelsconfig.ModelEntry{
-			"test":        {Name: "test-model", Host: "http://localhost:8081"},
+			"test":        {Name: "test-model", Host: "http://127.0.0.1:1"},
 			"unreachable": {Name: "bad-model", Host: "127.0.0.1:1"},
 		},
 	})

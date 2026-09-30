@@ -175,7 +175,7 @@ func TestLoadConfigFileWithAgents(t *testing.T) {
 	if len(cfg.Agents) != 3 {
 		t.Errorf("expected 3 agents, got %d", len(cfg.Agents))
 	}
-	
+
 	reviewer := cfg.Agents["reviewer"]
 	if reviewer.Permission.GetAction("write") != "deny" {
 		t.Errorf("write: got %q, want deny", reviewer.Permission.GetAction("write"))
@@ -190,9 +190,10 @@ func TestInitAgentManagerWithPrompts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	
+	isolateAgentEnv(t, dir)
+
 	leadPrompt := filepath.Join(agentsDir, "lead.md")
-	if err := os.WriteFile(leadPrompt, []byte("You are a Lead Agent. Delegate tasks."), 0644); err != nil {
+	if err := os.WriteFile(leadPrompt, []byte("---\nname: lead\ndescription: Lead agent\nmode: subagent\n---\nYou are a Lead Agent. Delegate tasks.\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -202,13 +203,13 @@ func TestInitAgentManagerWithPrompts(t *testing.T) {
 	}
 
 	reviewerPrompt := filepath.Join(agentsDir, "reviewer.md")
-	if err := os.WriteFile(reviewerPrompt, []byte("You are a Reviewer. Review code."), 0644); err != nil {
+	if err := os.WriteFile(reviewerPrompt, []byte("---\nname: reviewer\ndescription: Code reviewer\nmode: subagent\nleaf: true\nreview: true\ntools: [read, glob]\n---\nYou are a Reviewer. Review code.\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	agents := map[string]agentpolicy.AgentCfg{
 		"lead": {
-			Description: "Lead agent",
+			Description: "Legacy config lead",
 			Mode:        "primary",
 			Prompt:      "agents/lead.md",
 		},
@@ -218,14 +219,14 @@ func TestInitAgentManagerWithPrompts(t *testing.T) {
 			Prompt:      "agents/developer.md",
 		},
 		"reviewer": {
-			Description: "Code reviewer",
+			Description: "Legacy config reviewer",
 			Mode:        "subagent",
 			Leaf:        true,
 			Review:      true,
 			Prompt:      "agents/reviewer.md",
 			Permission: agentpolicy.NewPermissionFromConfig(map[string]string{
 				"write": "deny",
-				"edit":       "deny",
+				"edit":  "deny",
 			}),
 		},
 	}
@@ -239,9 +240,12 @@ func TestInitAgentManagerWithPrompts(t *testing.T) {
 			t.Fatal(err)
 		}
 		if info.Description != "Lead agent" {
-			t.Errorf("description: got %q", info.Description)
+			t.Errorf("description: got %q, want file value", info.Description)
 		}
-		if info.Prompt != "You are a Lead Agent. Delegate tasks." {
+		if info.Mode != agentpolicy.ModeSubagent {
+			t.Errorf("mode: got %q, want file value subagent", info.Mode)
+		}
+		if info.Prompt != "You are a Lead Agent. Delegate tasks.\n" {
 			t.Errorf("prompt: got %q, want resolved content", info.Prompt)
 		}
 	})
@@ -263,6 +267,9 @@ func TestInitAgentManagerWithPrompts(t *testing.T) {
 		info, err := am.GetAgent("reviewer")
 		if err != nil {
 			t.Fatal(err)
+		}
+		if info.Description != "Code reviewer" {
+			t.Errorf("description: got %q, want file value", info.Description)
 		}
 		if !info.Leaf {
 			t.Error("reviewer should be leaf")
@@ -289,7 +296,8 @@ func TestInitAgentManagerWithFrontmatter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	
+	isolateAgentEnv(t, dir)
+
 	mdPath := filepath.Join(agentsDir, "sample.md")
 	content := `---
 description: Sample agent
@@ -321,6 +329,8 @@ You are a Sample Agent. Do the thing.`
 }
 
 func TestInitAgentManagerMissingPromptFile(t *testing.T) {
+	dir := t.TempDir()
+	isolateAgentEnv(t, dir)
 	agents := map[string]agentpolicy.AgentCfg{
 		"missing": {
 			Description: "Missing prompt agent",
@@ -330,9 +340,8 @@ func TestInitAgentManagerMissingPromptFile(t *testing.T) {
 	}
 
 	log := &testLogger{}
-	am := initAgentManager(agents, "/tmp", log)
+	am := initAgentManager(agents, dir, log)
 
-	
 	_, err := am.GetAgent("missing")
 	if err == nil {
 		t.Error("expected error for agent with missing prompt file")
@@ -340,22 +349,33 @@ func TestInitAgentManagerMissingPromptFile(t *testing.T) {
 }
 
 func TestInitAgentManagerNilAgents(t *testing.T) {
+	dir := t.TempDir()
+	isolateAgentEnv(t, dir)
 	log := &testLogger{}
-	am := initAgentManager(nil, "/tmp", log)
+	am := initAgentManager(nil, dir, log)
 	if am == nil {
 		t.Fatal("AgentManager should not be nil")
 	}
-	
+
 	_, err := am.GetAgent("build")
 	if err != nil {
 		t.Errorf("default agent 'build' should exist: %v", err)
 	}
 }
 
+func isolateAgentEnv(t *testing.T, baseDir string) {
+	t.Helper()
+	home := filepath.Join(baseDir, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+}
+
 type testLogger struct{}
 
 func (l *testLogger) InfoLogf(format string, args ...interface{}) {
-	
+
 }
 
 func TestBuildQuestionTextKeepsOptions(t *testing.T) {

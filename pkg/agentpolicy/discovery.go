@@ -1,6 +1,7 @@
 package agentpolicy
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,23 +11,44 @@ import (
 )
 
 type agentFrontmatter struct {
-	Name          string   `yaml:"name"`
-	Description   string   `yaml:"description"`
-	Mode          string   `yaml:"mode"`
-	Model         string   `yaml:"model"`
-	ThinkingLevel string   `yaml:"thinkingLevel"`
-	Tools         []string `yaml:"tools"`
-	SubagentTypes []string `yaml:"subagentTypes"`
-	Spawns        []string `yaml:"spawns"`
-	Hidden        bool     `yaml:"hidden"`
-	Internal      bool     `yaml:"internal"`
-	Leaf          bool     `yaml:"leaf"`
-	Review        bool     `yaml:"review"`
-	Coordinator   bool     `yaml:"coordinator"`
-	Blocking      bool     `yaml:"blocking"`
-	OutputSchema  string   `yaml:"outputSchema"`
-	RequestBudget int      `yaml:"requestBudget"`
-	MaxRuntimeSec int      `yaml:"maxRuntimeSec"`
+	Name          string  `yaml:"name"`
+	Description   string  `yaml:"description"`
+	Mode          string  `yaml:"mode"`
+	Model         string  `yaml:"model"`
+	ThinkingLevel string  `yaml:"thinkingLevel"`
+	Tools         StrList `yaml:"tools"`
+	SubagentTypes StrList `yaml:"subagentTypes"`
+	Spawns        StrList `yaml:"spawns"`
+	Hidden        bool    `yaml:"hidden"`
+	Internal      bool    `yaml:"internal"`
+	Leaf          bool    `yaml:"leaf"`
+	Review        bool    `yaml:"review"`
+	Coordinator   bool    `yaml:"coordinator"`
+	Blocking      bool    `yaml:"blocking"`
+	OutputSchema  string  `yaml:"outputSchema"`
+	RequestBudget int     `yaml:"requestBudget"`
+	MaxRuntimeSec int     `yaml:"maxRuntimeSec"`
+}
+type StrList []string
+
+func (s *StrList) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.SequenceNode:
+		var items []string
+		if err := node.Decode(&items); err != nil {
+			return err
+		}
+		*s = items
+	case yaml.ScalarNode:
+		for _, part := range strings.Split(node.Value, ",") {
+			if trimmed := strings.TrimSpace(part); trimmed != "" {
+				*s = append(*s, trimmed)
+			}
+		}
+	default:
+		return fmt.Errorf("unexpected list node kind %d", node.Kind)
+	}
+	return nil
 }
 
 func splitFrontmatter(data string) (string, string, bool) {
@@ -106,6 +128,7 @@ func parseAgentMarkdown(path string) (string, AgentCfg, error) {
 
 func DiscoverAgentFiles(dirs []string) (map[string]AgentCfg, error) {
 	out := make(map[string]AgentCfg)
+	var errs error
 	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -118,10 +141,11 @@ func DiscoverAgentFiles(dirs []string) (map[string]AgentCfg, error) {
 			path := filepath.Join(dir, entry.Name())
 			name, cfg, err := parseAgentMarkdown(path)
 			if err != nil {
-				return nil, err
+				errs = errors.Join(errs, err)
+				continue
 			}
 			out[name] = cfg
 		}
 	}
-	return out, nil
+	return out, errs
 }
