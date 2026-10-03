@@ -383,10 +383,12 @@ func extractCommand(message string) string {
 }
 
 var restarterCommands = map[string]bool{
-	"/update":  true,
-	"/b":       true,
-	"/restart": true,
-	"/stop":    true,
+	"/update":   true,
+	"/b":        true,
+	"/restart":  true,
+	"/stop":     true,
+	"/shutdown": true,
+	"/reboot":   true,
 }
 
 func (h *BotHandler) handleCommand(input string, peerID int64) string {
@@ -420,6 +422,8 @@ func (h *BotHandler) handleCommand(input string, peerID int64) string {
 			"/pin <промпт> - Закрепить промпт (переживает компактизацию) и выполнить его\n" +
 			"/restart - Перезапустить агента без пересборки\n" +
 			"/update - git pull, пересобрать и перезапустить агента\n" +
+			"/shutdown - Выключить ПК (только для владельца, выполняет restarter)\n" +
+			"/reboot - Перезагрузить ПК (только для владельца, выполняет restarter)\n" +
 
 			"Перенаправление задачи агенту через #:\n"
 		for _, name := range knownNames {

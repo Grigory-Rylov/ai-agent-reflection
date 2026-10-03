@@ -27,6 +27,8 @@ type Config struct {
 	PeerID         int64  `json:"peer_id"`
 	ThinkingPeerID int64  `json:"thinking_peer_id"`
 	Debug          bool   `json:"debug"`
+	ShutdownCmd    string `json:"shutdown_cmd"`
+	RebootCmd      string `json:"reboot_cmd"`
 }
 
 type agentProc struct {
@@ -173,7 +175,7 @@ func main() {
 	go monitorAgent(ctx, &agent, agentPath, agentArgs, vkClient, config.PeerID)
 	go runVKListener(ctx, vkClient, config, &agent, agentPath, agentArgs)
 
-	sendWelcome(vkClient, config.PeerID)
+	sendWelcome(vkClient, config.PeerID, config.ShutdownCmd, config.RebootCmd)
 
 	if err := agent.start(agentPath, agentArgs); err != nil {
 		fmt.Fprintf(os.Stderr, "[restarter] Failed to auto-start agent: %v\n", err)
@@ -184,11 +186,17 @@ func main() {
 	fmt.Println("[restarter] Shutdown complete")
 }
 
-func sendWelcome(vkClient *vk.BotClient, peerID int64) {
+func sendWelcome(vkClient *vk.BotClient, peerID int64, shutdownCmd, rebootCmd string) {
 	if peerID <= 0 {
 		return
 	}
 	msg := fmt.Sprintf("🤖 Restarter v%s запущен. Агент стартовал автоматически.\nКоманды: /status, /stop, /restart, /update\n", Version)
+	if shutdownCmd != "" {
+		msg += "/shutdown - Выключить ПК (только владелец)\n"
+	}
+	if rebootCmd != "" {
+		msg += "/reboot - Перезагрузить ПК (только владелец)\n"
+	}
 	vkClient.SendMessage(peerID, msg)
 }
 
@@ -339,6 +347,13 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 			}
 			ts = newTs
 
+			power := &vk.PowerCommands{
+				OwnerPeerID: config.PeerID,
+				ShutdownCmd: config.ShutdownCmd,
+				RebootCmd:   config.RebootCmd,
+				Send:        func(peerID int64, text string) { vkClient.SendMessage(peerID, text) },
+			}
+
 			for _, msg := range messages {
 				if msg.EventID != "" {
 					continue
@@ -368,6 +383,10 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 						ap.stop()
 					case strings.HasPrefix(cmd, "/r "):
 						handleModelSwitch(vkClient, replyPeerID, cmd)
+					case cmd == "/shutdown":
+						power.Handle("shutdown", msg.PeerID)
+					case cmd == "/reboot":
+						power.Handle("reboot", msg.PeerID)
 					}
 					continue
 				}
@@ -466,6 +485,12 @@ func pollLoop(ctx context.Context, vkClient *vk.BotClient, server, key string, t
 				case strings.HasPrefix(cmd, "/r "):
 					handleModelSwitch(vkClient, replyPeerID, cmd)
 
+				case cmd == "/shutdown":
+					power.Handle("shutdown", msg.PeerID)
+
+				case cmd == "/reboot":
+					power.Handle("reboot", msg.PeerID)
+
 				default:
 				}
 			}
@@ -494,6 +519,8 @@ func restarterHelpText() string {
 		"/update - git pull, пересобрать, перезапустить\n" +
 		"/b <branch> - Переключиться на ветку, пересобрать, перезапустить\n" +
 		"/status - Статус агента и текущая ветка\n" +
+		"/shutdown - Выключить ПК (только для владельца)\n" +
+		"/reboot - Перезагрузить ПК (только для владельца)\n" +
 		"/help - Показать список команд"
 }
 

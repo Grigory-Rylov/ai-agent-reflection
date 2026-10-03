@@ -36,6 +36,8 @@ type Config struct {
 	TokenVK                 string                          `json:"token_vk"`
 	PeerID                  int64                           `json:"peer_id"`
 	ThinkingPeerID          int64                           `json:"thinking_peer_id"`
+	ShutdownCmd             string                          `json:"shutdown_cmd"`
+	RebootCmd               string                          `json:"reboot_cmd"`
 	ModelLimitInput         int                             `json:"model_limit_input"`
 	SummarizeReasoning      bool                            `json:"summarize_reasoning"`
 	Temperature             float64                         `json:"temperature"`
@@ -408,7 +410,7 @@ func main() {
 			startMsg += "\nVision: yes"
 		}
 		startMsg += fmt.Sprintf("\nBuild: %s", buildinfo.HumanReadable())
-		keyboard := vk.CreateCommandKeyboard()
+		keyboard := vk.CreateCommandKeyboard(config.ShutdownCmd, config.RebootCmd)
 		if _, err := vkClient.SendMessageWithKeyboard(config.PeerID, startMsg, keyboard); err != nil {
 			log.WarnLogf("Failed to send startup message: %v", err)
 		}
@@ -556,7 +558,7 @@ func handleQuestion(vkClient interface {
 	logger.DebugToFile("[handleQuestion] Waiting for answer from peer %d...", peerID)
 	answer, err := waitForAnswer(ch)
 	logger.DebugToFile("[handleQuestion] Got answer from peer %d: err=%v", peerID, err)
-	if _, err2 := vkClient.SendMessageWithKeyboard(peerID, "\u2705 Done", vk.CreateCommandKeyboard()); err2 != nil {
+	if _, err2 := vkClient.SendMessageWithKeyboard(peerID, "\u2705 Done", vk.CreateCommandKeyboard("", "")); err2 != nil {
 		logger.DebugToFile("[handleQuestion] Reset keyboard failed: %v", err2)
 	}
 	return answer, err

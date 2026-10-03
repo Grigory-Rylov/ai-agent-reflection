@@ -665,23 +665,36 @@ func CreateKeyboard(buttons [][]map[string]interface{}) map[string]interface{} {
 	}
 }
 
-func CreateCommandKeyboard() map[string]interface{} {
-	return map[string]interface{}{
-		"inline": false,
-		"buttons": [][]map[string]interface{}{
-			{
-				{"action": map[string]interface{}{"type": "text", "label": "/help"}, "color": "primary"},
-				{"action": map[string]interface{}{"type": "text", "label": "/status"}, "color": "secondary"},
-			},
-			{
-				{"action": map[string]interface{}{"type": "text", "label": "/test-llama"}, "color": "secondary"},
-				{"action": map[string]interface{}{"type": "text", "label": "/clear"}, "color": "negative"},
-			},
-			{
-				{"action": map[string]interface{}{"type": "text", "label": "/restart"}, "color": "primary"},
-				{"action": map[string]interface{}{"type": "text", "label": "/update"}, "color": "negative"},
-			},
+// CreateCommandKeyboard returns the standard command keyboard.
+// Non-empty shutdownCmd/rebootCmd add the corresponding power buttons.
+func CreateCommandKeyboard(shutdownCmd, rebootCmd string) map[string]interface{} {
+	rows := [][]map[string]interface{}{
+		{
+			{"action": map[string]interface{}{"type": "text", "label": "/help"}, "color": "primary"},
+			{"action": map[string]interface{}{"type": "text", "label": "/status"}, "color": "secondary"},
 		},
+		{
+			{"action": map[string]interface{}{"type": "text", "label": "/test-llama"}, "color": "secondary"},
+			{"action": map[string]interface{}{"type": "text", "label": "/clear"}, "color": "negative"},
+		},
+		{
+			{"action": map[string]interface{}{"type": "text", "label": "/restart"}, "color": "primary"},
+			{"action": map[string]interface{}{"type": "text", "label": "/update"}, "color": "negative"},
+		},
+	}
+	if shutdownCmd != "" {
+		rows = append(rows, []map[string]interface{}{
+			{"action": map[string]interface{}{"type": "text", "label": "/shutdown"}, "color": "negative"},
+		})
+	}
+	if rebootCmd != "" {
+		rows = append(rows, []map[string]interface{}{
+			{"action": map[string]interface{}{"type": "text", "label": "/reboot"}, "color": "negative"},
+		})
+	}
+	return map[string]interface{}{
+		"inline":  false,
+		"buttons": rows,
 	}
 }
 
