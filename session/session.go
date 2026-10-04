@@ -973,6 +973,23 @@ func (s *Session) RecordAssistantUsage(input, output int) {
 	}
 }
 
+func (s *Session) RecordOverflowPromptTokens(input int) {
+	if input <= 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := len(s.messages) - 1; i >= 0; i-- {
+		if s.messages[i].Role == AssistantRole && !s.messages[i].Summary {
+			s.messages[i].UsageInputTokens = input
+			s.updatedAt = time.Now()
+			s.saveNow()
+			return
+		}
+	}
+}
+
 func (s *Session) LastUsageInputTokens() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

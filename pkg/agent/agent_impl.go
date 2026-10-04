@@ -161,6 +161,7 @@ func (a *agentImpl) GetSystemPrompt() string {
 
 func (a *agentImpl) initCompactor() {
 	compressor := compress.NewLLMCompressor(a.config.LlamaServerURL, a.config.Model, a.config.Temperature)
+	compressor.SetContextWindow(a.config.MaxTokens)
 	a.compactor = compress.NewCompactor(compressor)
 }
 

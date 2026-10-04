@@ -40,6 +40,7 @@ func (a *agentImpl) buildNonStreamingRequestJSON(messages []Message, toolsSchema
 	if len(toolsSchema) > 0 {
 		reqBody["tools"] = toolsSchema
 	}
+	a.applyOutputTokenBudget(reqBody)
 
 	jsonData, _ := json.Marshal(reqBody)
 

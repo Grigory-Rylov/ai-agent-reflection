@@ -71,12 +71,15 @@ func ResolveReserve(s Settings) int {
 	return DefaultReserveTokens
 }
 
-func EffectiveReserve(contextWindow, reserveTokens int) int {
+func EffectiveReserve(contextWindow, reserveTokens, outputCap int) int {
 	proportional := contextWindow * 15 / 100
 	reserve := ResolveReserve(Settings{ReserveTokens: reserveTokens})
 
 	if proportional > reserve {
-		return proportional
+		reserve = proportional
+	}
+	if outputFloor := outputCap + OutputSafetyMarginTokens; outputFloor > reserve {
+		reserve = outputFloor
 	}
 	if reserve >= contextWindow {
 		if proportional < 1 {
@@ -97,7 +100,7 @@ func baseWindow(limits WindowLimits) int {
 
 func ThresholdTokens(limits WindowLimits, s Settings) int {
 	base := baseWindow(limits)
-	threshold := base - EffectiveReserve(limits.Context, s.ReserveTokens)
+	threshold := base - EffectiveReserve(limits.Context, s.ReserveTokens, OutputCapForWindow(base))
 	if threshold < 1 {
 		threshold = 1
 	}
@@ -242,7 +245,7 @@ func (c *Compactor) Compact(ctx context.Context, messages []tokenizers.Message, 
 	}
 
 	head, tail := work[:cut.FirstKept], work[cut.FirstKept:]
-	reserve := EffectiveReserve(limits.Context, s.ReserveTokens)
+	reserve := EffectiveReserve(limits.Context, s.ReserveTokens, OutputCapForWindow(baseWindow(limits)))
 	target := TargetTokens(reserve)
 
 	summary, err := c.summarizeHead(ctx, head, latestSummaryContent(messages), target, baseWindow(limits))
@@ -261,31 +264,53 @@ func (c *Compactor) Compact(ctx context.Context, messages []tokenizers.Message, 
 func (c *Compactor) summarizeHead(ctx context.Context, head []tokenizers.Message, previousSummary string, targetTokens, inputWindow int) (string, error) {
 	summary := previousSummary
 	remaining := head
+	budget := summaryChunkBudget(inputWindow, targetTokens)
 
 	for len(remaining) > 0 {
-		budget := summaryChunkBudget(inputWindow, targetTokens) - c.estimator.Estimate(summary)
-		if budget < minSummaryChunkBudget {
-			budget = minSummaryChunkBudget
+		window := budget - c.estimator.Estimate(summary)
+		if window < minSummaryChunkBudget {
+			window = minSummaryChunkBudget
 		}
 
-		chunk, rest := takeOldestFit(remaining, budget)
+		chunk, rest := takeOldestFit(remaining, window)
 		if len(chunk) == 0 {
-			chunk = []tokenizers.Message{truncateToBudget(remaining[0], budget)}
+			chunk = []tokenizers.Message{truncateToBudget(remaining[0], window)}
 			rest = remaining[1:]
 		}
 
 		next, err := c.summarizeWindow(ctx, chunk, summary, targetTokens)
-		if err != nil {
+		if err == nil {
+			summary = next
+			remaining = rest
+			continue
+		}
+		halved := halvedSummaryBudget(budget, c.sentSummaryTokens(chunk, summary))
+		if halved == 0 || !IsContextOverflowMessage(err.Error()) {
 			return "", err
 		}
-		summary = next
-		remaining = rest
+		budget = halved
 	}
 
 	if strings.TrimSpace(summary) == "" {
 		return "", errors.New("empty summary generated")
 	}
 	return summary, nil
+}
+
+func (c *Compactor) sentSummaryTokens(chunk []tokenizers.Message, summary string) int {
+	return c.estimator.EstimateMessages(chunk) + c.estimator.Estimate(summary)
+}
+
+func halvedSummaryBudget(budget, sentTokens int) int {
+	halved := budget
+	if sentTokens < halved {
+		halved = sentTokens
+	}
+	halved /= 2
+	if halved < minSummaryChunkBudget {
+		return 0
+	}
+	return halved
 }
 
 func summaryChunkBudget(inputWindow, targetTokens int) int {

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/Grigory-Rylov/ai-agent-reflection/pkg/compress"
 )
 
 type ContextOverflowError struct {
@@ -18,17 +20,13 @@ func (e *ContextOverflowError) Error() string {
 }
 
 func IsContextOverflowError(err error) bool {
-	_, ok := err.(*ContextOverflowError)
-	if ok {
+	if err == nil {
+		return false
+	}
+	if _, ok := err.(*ContextOverflowError); ok {
 		return true
 	}
-
-	if err != nil {
-		errStr := strings.ToLower(err.Error())
-		return strings.Contains(errStr, "exceed") &&
-			strings.Contains(errStr, "context")
-	}
-	return false
+	return compress.IsContextOverflowMessage(err.Error())
 }
 
 func ParseContextOverflowError(err error) *ContextOverflowError {
@@ -37,40 +35,49 @@ func ParseContextOverflowError(err error) *ContextOverflowError {
 	}
 
 	errStr := err.Error()
-
-	if !strings.Contains(errStr, "exceed") || !strings.Contains(errStr, "context") {
+	if !compress.IsContextOverflowMessage(errStr) {
 		return nil
 	}
 
-	overflow := &ContextOverflowError{
-		RawError: errStr,
+	overflow := &ContextOverflowError{RawError: errStr, Message: errStr}
+
+	if promptTokens, maxContext, message, ok := parseAPITokenCounts(errStr); ok {
+		overflow.PromptTokens = promptTokens
+		overflow.MaxContext = maxContext
+		overflow.Message = message
+		return overflow
 	}
 
-	if idx := strings.Index(errStr, "{"); idx >= 0 {
-		jsonPart := errStr[idx:]
-
-		var apiError struct {
-			Error struct {
-				Code         interface{} `json:"code"`
-				Message      string      `json:"message"`
-				Type         string      `json:"type"`
-				PromptTokens int         `json:"n_prompt_tokens"`
-				MaxContext   int         `json:"n_ctx"`
-			} `json:"error"`
-		}
-
-		if parseErr := json.Unmarshal([]byte(jsonPart), &apiError); parseErr == nil {
-			if apiError.Error.PromptTokens > 0 || apiError.Error.MaxContext > 0 {
-				overflow.PromptTokens = apiError.Error.PromptTokens
-				overflow.MaxContext = apiError.Error.MaxContext
-				overflow.Message = apiError.Error.Message
-				return overflow
-			}
-		}
+	if promptTokens, _, maxContext, ok := compress.ParseOverflowTokenCounts(errStr); ok {
+		overflow.PromptTokens = promptTokens
+		overflow.MaxContext = maxContext
 	}
-
-	overflow.Message = errStr
 	return overflow
+}
+
+func parseAPITokenCounts(errStr string) (promptTokens, maxContext int, message string, ok bool) {
+	idx := strings.Index(errStr, "{")
+	if idx < 0 {
+		return 0, 0, "", false
+	}
+
+	var apiError struct {
+		Error struct {
+			Code         interface{} `json:"code"`
+			Message      string      `json:"message"`
+			Type         string      `json:"type"`
+			PromptTokens int         `json:"n_prompt_tokens"`
+			MaxContext   int         `json:"n_ctx"`
+		} `json:"error"`
+	}
+
+	if err := json.Unmarshal([]byte(errStr[idx:]), &apiError); err != nil {
+		return 0, 0, "", false
+	}
+	if apiError.Error.PromptTokens <= 0 && apiError.Error.MaxContext <= 0 {
+		return 0, 0, "", false
+	}
+	return apiError.Error.PromptTokens, apiError.Error.MaxContext, apiError.Error.Message, true
 }
 
 func ContextOverflowStats(err error) (promptTokens, maxContext int, isOverflow bool) {

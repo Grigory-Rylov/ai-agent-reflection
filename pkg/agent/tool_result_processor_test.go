@@ -146,6 +146,7 @@ func TestRunTurn_OverflowRecovery_AddsOverflowContinueText(t *testing.T) {
 	config.LlamaServerURL = server.URL
 	config.Model = "test-model"
 	config.MaxTokens = 100000
+	config.CompactionKeepRecentTokens = 50
 	config.RetryDelay = 5 * time.Millisecond
 
 	agent := NewAgent(config)

@@ -3,6 +3,7 @@ package compress
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -14,19 +15,22 @@ func TestEffectiveReserve(t *testing.T) {
 		name          string
 		window        int
 		reserveTokens int
+		outputCap     int
 		want          int
 	}{
-		{"default reserve below 15 percent", 200_000, 0, 30_000},
-		{"explicit small reserve loses to 15 percent", 200_000, 10_000, 30_000},
-		{"explicit large reserve wins", 1_000_000, 500_000, 500_000},
-		{"reserve exceeding window falls to proportional", 64_000, 100_000, 9_600},
-		{"default reserve survives small window", 32_000, 0, 16_384},
-		{"tiny window proportional clamped to one", 6, 16_384, 1},
+		{"output budget beats proportional", 200_000, 0, 32_768, 34_816},
+		{"explicit small reserve loses to output budget", 200_000, 10_000, 32_768, 34_816},
+		{"explicit large reserve wins", 1_000_000, 500_000, 32_768, 500_000},
+		{"reserve exceeding window falls to proportional", 64_000, 100_000, 32_768, 9_600},
+		{"output budget beats default reserve on small window", 32_000, 0, 27_904, 29_952},
+		{"tiny window proportional clamped to one", 6, 16_384, 1_024, 1},
+		{"zero output cap keeps proportional reserve", 200_000, 0, 0, 30_000},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := EffectiveReserve(tt.window, tt.reserveTokens); got != tt.want {
-				t.Errorf("EffectiveReserve(%d, %d) = %d, want %d", tt.window, tt.reserveTokens, got, tt.want)
+			got := EffectiveReserve(tt.window, tt.reserveTokens, tt.outputCap)
+			if got != tt.want {
+				t.Errorf("EffectiveReserve(%d, %d, %d) = %d, want %d", tt.window, tt.reserveTokens, tt.outputCap, got, tt.want)
 			}
 		})
 	}
@@ -39,8 +43,8 @@ func TestThresholdTokens(t *testing.T) {
 		s      Settings
 		want   int
 	}{
-		{"context only", WindowLimits{Context: 200_000}, Settings{}, 170_000},
-		{"input limit narrows base", WindowLimits{Context: 200_000, InputLimit: 150_000}, Settings{}, 120_000},
+		{"context only", WindowLimits{Context: 200_000}, Settings{}, 165_184},
+		{"input limit narrows base", WindowLimits{Context: 200_000, InputLimit: 150_000}, Settings{}, 115_184},
 		{"explicit reserve", WindowLimits{Context: 200_000}, Settings{ReserveTokens: 50_000}, 150_000},
 		{"clamped below window", WindowLimits{Context: 100}, Settings{}, 85},
 	}
@@ -50,6 +54,17 @@ func TestThresholdTokens(t *testing.T) {
 				t.Errorf("ThresholdTokens() = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestThresholdTokensLeavesRoomForOutput(t *testing.T) {
+	for _, window := range []int{32_768, 150_000, 262_144} {
+		limits := WindowLimits{Context: window}
+		threshold := ThresholdTokens(limits, Settings{})
+		if threshold+OutputCapForWindow(window) > window {
+			t.Errorf("window %d: threshold %d + output cap %d exceeds window, server would reject a request the threshold allows",
+				window, threshold, OutputCapForWindow(window))
+		}
 	}
 }
 
@@ -338,6 +353,65 @@ func (e *errorCompressor) Compress(ctx context.Context, req *CompressionRequest)
 
 func (e *errorCompressor) Complete(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error) {
 	return "", errors.New("boom")
+}
+
+type overflowUntilBudgetSummarizer struct {
+	maxPromptChars int
+	attempts       int
+}
+
+func (f *overflowUntilBudgetSummarizer) Compress(context.Context, *CompressionRequest) (*CompressionResult, error) {
+	return &CompressionResult{}, nil
+}
+
+func (f *overflowUntilBudgetSummarizer) Complete(_ context.Context, _, userPrompt string, _ int) (string, error) {
+	f.attempts++
+	if len(userPrompt) > f.maxPromptChars {
+		return "", fmt.Errorf(`API error: status 400, body: {"error":{"type":"invalid_request_error","message":"prompt (%d tokens) + max tokens (32768) exceeds the context (262144); requests are never truncated"}}`, len(userPrompt)/4)
+	}
+	return "## Goal\nrecovered summary", nil
+}
+
+func wideConversation(turns int) []tokenizers.Message {
+	body := strings.Repeat("x", 12_800)
+	messages := make([]tokenizers.Message, 0, turns)
+	for i := range turns {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		messages = append(messages, tokenizers.Message{Role: role, Content: fmt.Sprintf("turn %d: %s", i, body)})
+	}
+	return messages
+}
+
+func TestCompactRetriesSummarizationWithHalvedWindow(t *testing.T) {
+	fake := &overflowUntilBudgetSummarizer{maxPromptChars: 100_000}
+
+	result, err := NewCompactor(fake).Compact(context.Background(), wideConversation(20),
+		WindowLimits{Context: 200_000}, Settings{KeepRecentTokens: 1_000})
+	if err != nil {
+		t.Fatalf("compaction must survive summarization overflow, got %v after %d attempts", err, fake.attempts)
+	}
+	if strings.TrimSpace(result.Summary) == "" {
+		t.Fatal("compaction produced empty summary")
+	}
+	if fake.attempts < 2 {
+		t.Fatalf("expected retry with a smaller window, attempts = %d", fake.attempts)
+	}
+}
+
+func TestCompactGivesUpWhenWindowCannotShrink(t *testing.T) {
+	fake := &overflowUntilBudgetSummarizer{}
+
+	_, err := NewCompactor(fake).Compact(context.Background(), wideConversation(4),
+		WindowLimits{Context: 200_000}, Settings{KeepRecentTokens: 1_000})
+	if err == nil {
+		t.Fatal("expected error when every summarization window overflows")
+	}
+	if fake.attempts < 2 {
+		t.Errorf("expected budget halving before giving up, attempts = %d", fake.attempts)
+	}
 }
 
 func TestSerializeConversationForSummary(t *testing.T) {

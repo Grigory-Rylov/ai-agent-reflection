@@ -103,6 +103,7 @@ func (a *agentImpl) buildRequestJSON(config StreamingConfig, messages []Message)
 	if len(config.Tools) > 0 {
 		reqBody["tools"] = config.Tools
 	}
+	a.applyOutputTokenBudget(reqBody)
 
 	jsonData, _ := json.Marshal(reqBody)
 
@@ -114,16 +115,11 @@ func (a *agentImpl) buildRequestJSON(config StreamingConfig, messages []Message)
 }
 
 func (a *agentImpl) buildBaseRequestJSON(model string, messages []Message, stream bool) map[string]interface{} {
-
-	maxOutput := compress.OUTPUT_TOKEN_MAX
-	if a.config.MaxTokens > 0 && a.config.MaxTokens < maxOutput {
-		maxOutput = a.config.MaxTokens
-	}
 	req := map[string]interface{}{
 		"model":       model,
 		"messages":    messages,
 		"temperature": a.config.Temperature,
-		"max_tokens":  maxOutput,
+		"max_tokens":  compress.OutputCapForWindow(a.config.MaxTokens),
 		"stream":      stream,
 	}
 	if a.config.EngineType == "ninfer" {
@@ -133,11 +129,38 @@ func (a *agentImpl) buildBaseRequestJSON(model string, messages []Message, strea
 			"enable_thinking": true,
 		}
 	}
+	if stream && a.config.EngineType != "ninfer" {
+		req["stream_options"] = map[string]interface{}{"include_usage": true}
+	}
 
 	if a.config.SlotID >= 0 {
 		req["slot_id"] = a.config.SlotID
 	}
+	a.applyOutputTokenBudget(req)
 	return req
+}
+
+func (a *agentImpl) applyOutputTokenBudget(reqBody map[string]interface{}) {
+	reqBody["max_tokens"] = compress.ClampOutputTokens(estimateRequestTokens(reqBody), a.config.MaxTokens)
+}
+
+func estimateRequestTokens(reqBody map[string]interface{}) int {
+	messages, _ := reqBody["messages"].([]Message)
+	tools, _ := reqBody["tools"].([]map[string]interface{})
+	return requestPayloadTokens(messages, tools)
+}
+
+func requestPayloadTokens(messages []Message, tools []map[string]interface{}) int {
+	total := 0
+	if data, err := json.Marshal(messages); err == nil {
+		total += len(data)
+	}
+	if len(tools) > 0 {
+		if data, err := json.Marshal(tools); err == nil {
+			total += len(data)
+		}
+	}
+	return (total + 3) / 4
 }
 
 func (a *agentImpl) saveDebugPrompt(jsonData []byte) {

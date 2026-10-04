@@ -17,10 +17,15 @@ import (
 )
 
 type LLMCompressor struct {
-	serverURL   string
-	model       string
-	client      *http.Client
-	temperature float64
+	serverURL     string
+	model         string
+	client        *http.Client
+	temperature   float64
+	contextWindow int
+}
+
+func (c *LLMCompressor) SetContextWindow(tokens int) {
+	c.contextWindow = tokens
 }
 
 func (c *LLMCompressor) Model() string {
@@ -164,7 +169,7 @@ func (c *LLMCompressor) sendCompressionRequestStreaming(ctx context.Context, sys
 			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": userPrompt},
 		},
-		"max_tokens":  targetTokens,
+		"max_tokens":  c.outputBudget(systemPrompt, userPrompt, targetTokens),
 		"temperature": c.temperature,
 		"stream":      true,
 	}
@@ -188,7 +193,8 @@ func (c *LLMCompressor) sendCompressionRequestStreaming(ctx context.Context, sys
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("API error: status %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return "", "", fmt.Errorf("API error: status %d, body: %s", resp.StatusCode, string(body))
 	}
 
 	var (
@@ -240,6 +246,14 @@ func (c *LLMCompressor) sendCompressionRequestStreaming(ctx context.Context, sys
 	summary := fmt.Sprintf("Summary: %d → %d tokens", 0, completionN)
 
 	return compressedText, summary, nil
+}
+
+func (c *LLMCompressor) outputBudget(systemPrompt, userPrompt string, requestedTokens int) int {
+	if c.contextWindow <= 0 {
+		return requestedTokens
+	}
+	promptTokens := EstimateTokensSimple(systemPrompt) + EstimateTokensSimple(userPrompt)
+	return ClampOutputTokens(promptTokens, c.contextWindow)
 }
 
 func (c *LLMCompressor) simpleCountTokens(messages []tokenizers.Message) int {

@@ -198,31 +198,79 @@ func (a *agentImpl) streamWithOverflowRecovery(ctx context.Context, tc *turnCont
 	if err != nil {
 		return roundResult{}, nil, err
 	}
+	messages = a.ensureContextFits(ctx, tc, messages)
 
 	round, err := a.streamRound(ctx, tc, messages)
 	if err == nil || !IsContextOverflowError(err) || a.compactor == nil {
 		return round, messages, err
 	}
 
+	return a.recoverFromOverflow(ctx, tc, messages, err)
+}
+
+func (a *agentImpl) ensureContextFits(ctx context.Context, tc *turnContext, messages []Message) []Message {
+	if a.config.MaxTokens <= 0 || a.requestFitsContext(messages) {
+		return messages
+	}
+	a.logContextGuard(tc.session, len(messages))
+
+	if a.compactor != nil && a.forceCompact(ctx, tc.session, false) {
+		messages = a.prepareContextNoCompact(tc.session)
+		if a.requestFitsContext(messages) {
+			return messages
+		}
+	}
+	if a.applyAggressivePruning(tc.session) == 0 {
+		return messages
+	}
+	return a.prepareContextNoCompact(tc.session)
+}
+
+func (a *agentImpl) recoverFromOverflow(ctx context.Context, tc *turnContext, rejected []Message, cause error) (roundResult, []Message, error) {
+	a.recordOverflowPromptTokens(tc.session, cause)
 	fmt.Printf("%s[OMP-COMPACT] Reactive overflow recovery for peer %d\n", a.agentPrefix(), tc.session.GetPeerID())
 	logger.DebugToFile("%s[OMP-COMPACT] Peer %d: reactive overflow, compacting", a.agentPrefix(), tc.session.GetPeerID())
 
-	a.forceCompact(ctx, tc.session, false)
-	if shouldAddAutoContinue(tc.session) {
+	if a.forceCompact(ctx, tc.session, false) && shouldAddAutoContinue(tc.session) {
 		tc.session.AddUserMessage(tokenizers.CompactionOverflowContinueText)
 	}
 
-	round, messages, err = a.streamRoundAgain(ctx, tc)
-	if err == nil || a.applyAggressivePruning(tc.session) == 0 {
-		return round, messages, err
+	messages := a.prepareContextNoCompact(tc.session)
+	if !a.requestFitsContext(messages) && a.applyAggressivePruning(tc.session) > 0 {
+		messages = a.prepareContextNoCompact(tc.session)
+	}
+	if !payloadShrank(rejected, messages) {
+		logger.DebugToFile("%s[OMP-COMPACT] Peer %d: recovery reduced nothing, keeping original error",
+			a.agentPrefix(), tc.session.GetPeerID())
+		return roundResult{}, nil, cause
 	}
 
-	return a.streamRoundAgain(ctx, tc)
-}
-func (a *agentImpl) streamRoundAgain(ctx context.Context, tc *turnContext) (roundResult, []Message, error) {
-	messages := a.prepareContextNoCompact(tc.session)
 	round, err := a.streamRound(ctx, tc, messages)
 	return round, messages, err
+}
+
+func payloadShrank(rejected, retry []Message) bool {
+	return requestPayloadTokens(retry, nil) < requestPayloadTokens(rejected, nil)
+}
+
+func (a *agentImpl) requestFitsContext(messages []Message) bool {
+	estimate := requestPayloadTokens(messages, a.currentToolSchemas())
+	return compress.FitsContext(estimate, compress.OutputCapForWindow(a.config.MaxTokens), a.config.MaxTokens)
+}
+
+func (a *agentImpl) recordOverflowPromptTokens(s *sess.Session, err error) {
+	promptTokens, _, isOverflow := ContextOverflowStats(err)
+	if !isOverflow || promptTokens <= 0 {
+		return
+	}
+	s.RecordOverflowPromptTokens(promptTokens)
+}
+
+func (a *agentImpl) logContextGuard(s *sess.Session, messageCount int) {
+	fmt.Printf("%s[OMP-COMPACT] Pre-flight: %d messages do not fit window %d, compacting peer %d\n",
+		a.agentPrefix(), messageCount, a.config.MaxTokens, s.GetPeerID())
+	logger.DebugToFile("%s[OMP-COMPACT] Pre-flight: peer %d, %d messages, window %d",
+		a.agentPrefix(), s.GetPeerID(), messageCount, a.config.MaxTokens)
 }
 
 func (a *agentImpl) prepareContext(ctx context.Context, s *sess.Session) ([]Message, error) {
@@ -639,11 +687,19 @@ func (a *agentImpl) collectStreamAndLog(ctx context.Context, messages []Message)
 	return responseText, reasoningText, finishReason, streamToolCalls, promptTokens, completionTokens, nil
 }
 
-func (a *agentImpl) buildToolsStreamConfig(toolsSchema []map[string]interface{}) StreamingConfig {
-	schema := toolsSchema
-	if schema == nil && len(a.toolSchemas) > 0 {
-		schema = a.toolSchemas
+func (a *agentImpl) resolveToolSchemas(toolsSchema []map[string]interface{}) []map[string]interface{} {
+	if toolsSchema == nil && len(a.toolSchemas) > 0 {
+		return a.toolSchemas
 	}
+	return toolsSchema
+}
+
+func (a *agentImpl) currentToolSchemas() []map[string]interface{} {
+	return a.resolveToolSchemas(a.toolsRegistry.ToOpenAISchema())
+}
+
+func (a *agentImpl) buildToolsStreamConfig(toolsSchema []map[string]interface{}) StreamingConfig {
+	schema := a.resolveToolSchemas(toolsSchema)
 	return StreamingConfig{
 		Model:       a.config.Model,
 		MaxTokens:   a.config.MaxTokens,

@@ -141,6 +141,7 @@ func NewAgentLoop(config LoopConfig, vk VKClient, registry ToolRegistry) (AgentL
 	}
 
 	llmCompressor := compress.NewLLMCompressor(llamaURL, modelName, config.Temperature)
+	llmCompressor.SetContextWindow(config.MaxTokens)
 	compactor := compress.NewCompactor(llmCompressor)
 
 	if l != nil {
@@ -300,7 +301,9 @@ func (al *agentLoop) refreshModelResources(alias string) {
 		tok.SetDebug(al.config.Debug)
 	}
 	al.tokenizer = tok
-	al.compactor = compress.NewCompactor(compress.NewLLMCompressor(llamaURL, modelName, al.config.Temperature))
+	switchingCompressor := compress.NewLLMCompressor(llamaURL, modelName, al.config.Temperature)
+	switchingCompressor.SetContextWindow(al.config.MaxTokens)
+	al.compactor = compress.NewCompactor(switchingCompressor)
 
 	if al.log != nil {
 		al.log.InfoLogf("Model switched: %s (%s) at %s, maxTokens=%d", alias, modelName, llamaURL, al.config.MaxTokens)
